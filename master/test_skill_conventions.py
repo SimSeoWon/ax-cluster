@@ -25,6 +25,8 @@ import yaml
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
+from master import testkit_tmp  # noqa: E402 — `#970` D14: 만든 임시 디렉터리를 끝날 때 지운다
+testkit_tmp.track()
 from master.client import spec
 
 ROOTS = (REPO / "master/skills", REPO / "master/client/skills", REPO / "master/client/workshop/skills")

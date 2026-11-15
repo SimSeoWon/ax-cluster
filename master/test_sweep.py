@@ -12,6 +12,8 @@ import tempfile
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from master import testkit_tmp  # noqa: E402 — `#970` D14: 만든 임시 디렉터리를 끝날 때 지운다
+testkit_tmp.track()
 from master import sweep as S  # noqa: E402
 
 PASS = FAIL = 0
@@ -100,6 +102,20 @@ def test_timeout_and_child_env() -> None:
     check("__pycache__ 를 만들지 않는다", not list(root.rglob("__pycache__")))
 
 
+def test_unittest_ok_variants_and_timeout_bytes_970() -> None:
+    """`#970` D13 (R422-3·4 · R416-1·2) — `OK (expected failures=N)` 도 읽고, 시간 초과의 bytes 출력도 버리지 않는다."""
+    c = S.parse_counts("Ran 4 tests in 0.2s\n\nOK (skipped=1, expected failures=1)\n")
+    check("D13 expected failures 가 있어도 통과로 읽는다", c == {"format": "C", "passed": 4, "total": 4}, str(c))
+    c = S.parse_counts("Ran 2 tests in 0.2s\n\nOK (unexpected successes=1)\n")
+    check("D13 unexpected successes 도 읽는다", c["passed"] == 2, str(c))
+
+    def runner(argv, **kw):
+        raise subprocess.TimeoutExpired(argv, 1, output=b"3/9 \xed\x86\xb5\xea\xb3\xbc\n", stderr=b"boom\n")
+    r = S.run_file(Path(__file__), Path(__file__).resolve().parents[1], python=sys.executable, timeout=1,
+                   runner=runner)
+    check("D13 시간 초과의 bytes 출력이 꼬리에 남는다", "boom" in r["tail"] and "통과" in r["tail"], r["tail"])
+
+
 def test_cli_setting_source() -> None:
     """CLI 는 실제 저장소 설정을 읽는다 — `--only` 로 이 파일 하나(재귀 방지: 가벼운 대상)만."""
     repo = Path(__file__).resolve().parents[1]
@@ -121,7 +137,7 @@ def test_cli_setting_source() -> None:
 
 def main() -> int:
     for t in (test_parse_counts, test_sweep_real_children, test_parallel_is_actually_parallel,
-              test_timeout_and_child_env, test_cli_setting_source):
+              test_timeout_and_child_env, test_unittest_ok_variants_and_timeout_bytes_970, test_cli_setting_source):
         t()
     print(f"\n{PASS}/{PASS + FAIL} 통과")
     return 0 if FAIL == 0 else 1

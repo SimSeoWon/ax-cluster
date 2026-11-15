@@ -13,6 +13,8 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from master import testkit_tmp  # noqa: E402 — `#970` D14: 만든 임시 디렉터리를 끝날 때 지운다
+testkit_tmp.track()
 
 from master.task_queue.logic import claim_task, register_task, register_work   # noqa: E402
 from master.task_queue.logic_lifecycle import submission, submit_result        # noqa: E402

@@ -1043,5 +1043,10 @@
     "path": "master/test_skill_scripts.py",
     "count_pattern": "(?m)^OK test_skill_scripts: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
     "timeout": 120
+  },
+  {
+    "path": "master/test_testkit_tmp.py",
+    "count_pattern": "(?m)^OK test_testkit_tmp: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 120
   }
 ]

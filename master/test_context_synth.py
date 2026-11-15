@@ -24,6 +24,8 @@ from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
+from master import testkit_tmp  # noqa: E402 — `#970` D14: 만든 임시 디렉터리를 끝날 때 지운다
+testkit_tmp.track()
 
 from master.context_search.paths import ProjectPaths            # noqa: E402
 from master.context_synth import md, prompt, synth, verify      # noqa: E402

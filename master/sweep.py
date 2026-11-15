@@ -36,7 +36,14 @@ _RE_A = re.compile(r"([0-9]+)/([0-9]+) 통과")
 _RE_B_PASS = re.compile(r"통과 ([0-9]+)")
 _RE_B_FAIL = re.compile(r"실패 ([0-9]+)")
 _RE_C_RAN = re.compile(r"^Ran ([0-9]+) tests? in", re.M)
-_RE_C_OK = re.compile(r"^OK(?: \((?:[a-z_]+=[0-9]+(?:, )?)+\))?\s*$", re.M)
+# `#970` D13 — unittest 의 `OK (expected failures=1, unexpected successes=1)` 처럼 공백이 든 이름도 받는다
+_RE_C_OK = re.compile(r"^OK(?: \((?:[a-z_ ]+=[0-9]+(?:, )?)+\))?\s*$", re.M)
+
+
+def _text(v) -> str:
+    if isinstance(v, bytes):
+        return v.decode("utf-8", "replace")
+    return v or ""
 
 
 def parse_counts(out: str) -> dict:
@@ -78,8 +85,7 @@ def run_file(path: Path, root: Path, *, python: str, timeout: float, runner=None
         out, rc = (proc.stdout or "") + "\n" + (proc.stderr or ""), proc.returncode
         reason = "" if rc == 0 else f"rc={rc}"
     except subprocess.TimeoutExpired as e:
-        out = ((e.stdout or "") if isinstance(e.stdout, str) else "") + "\n" + \
-              ((e.stderr or "") if isinstance(e.stderr, str) else "")
+        out = _text(e.stdout) + "\n" + _text(e.stderr)     # `#970` D13 — 시간 초과 출력은 bytes 일 수 있다
         rc, reason = None, f"타임아웃 {timeout:g}초"
     except OSError as e:
         out, rc, reason = "", None, f"실행 실패: {type(e).__name__}"
