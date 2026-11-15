@@ -1,13 +1,17 @@
 # 현재 AX 작업 인수인계
 
-> 2026-11-15 — **#970 마감 직전 — Claude 토큰 소진으로 Codex 가 이어받는다(사용자 「토큰없다 인수인계서 써 코덱스에서 진행할게」).** T1~T10·T5 완료, 체크리스트 C1~C4 충족. `issue_finish_tool(970)` 미리보기가 `step: checklist` 로 멈췄다 — **C5(재기동·배달은 마감 wrapup 판정) 미확인.** 사용자에게 「C5 제외로 기록하고 마감까지 진행할까」를 물었고 **답은 아직 없다** — 승인 없이 C5 제외·마감하지 않는다.
+> 2026-11-15 23:45 — **#970 마감 완료**(main `1b16b0c`, 완료·100). Codex가 T5를 실증 재확인하고 마감했다. `ax-task-queue`·`ax-broker`·`ax-projects` 23:45:17 재기동·재판정 깨끗. 이 문서 커밋·push 직후 같은 `master.issue_wrapup 970 --project AXCluster`로 세 워커 배달·대조를 이어간다. 최종 결과는 Redmine #970 마감 노트.
 
-## #970 진행 중 — 자동 리뷰 「낮음」 지적 대조·수정 (worktree `.ax-issues/970`, 잠금 활성)
+## #970 마감 — 자동 리뷰 「낮음」 지적 대조·수정
 
-- 브랜치 `issue/970`(미push): `4f6754e` T1 리뷰 프롬프트에 범위 밖 파일 절·러너가 거르기 전 목록 전달 · `6569345` T6 · `1cad28f` T7 · `4e3fa21` T8(`master/testkit_tmp.py` 신규) · `2a01d32`·`7a23fb3` T9(D11 사용자 A안: 한도 초과=0%) · `ed60bd9` T10(sweep·run_check 파일별 TMPDIR) · `ab75a16` 리포트 `reports/198-970-review-defects-low.md`. 이 인계서 커밋도 같은 브랜치.
+- main 반영 커밋: `4f6754e` T1 리뷰 프롬프트에 범위 밖 파일 절·러너가 거르기 전 목록 전달 · `6569345` T6 · `1cad28f` T7 · `4e3fa21` T8(`master/testkit_tmp.py` 신규) · `2a01d32`·`7a23fb3` T9(D11 사용자 A안: 한도 초과=0%) · `ed60bd9` T10(sweep·run_check 파일별 TMPDIR) · `ab75a16` 리포트 `reports/198-970-review-defects-low.md` · `1b16b0c` 교대 기록.
 - 검사(`ed60bd9`): 전수 236파일 12240/12240 · unittest 542 · 통합 Ran 210 OK · `/tmp ax-*` 증가 0.
 - 리뷰 상태: 대조 246건 중 열림은 R193-1 하나(사용자 결정으로 열어 둠) · 전체 open 5 · dismissed 358 · applied 166.
-- 다음(사용자 승인 뒤): ① `plan_transition_tool(970, C5, 제외, 사유, user_answer=사용자 원문)` ② `issue_finish_tool(970, confirm=True)` ③ 운영 저장소에서 `AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -m master.issue_wrapup 970 --project AXCluster` → rc2 면 인계서 갱신 커밋·push 뒤 재실행(배달 `.2`·`.33`·`.43`) ④ `master-local --check`. `client_mcp.py` 변경 없음.
+- 사용자 「970 마감 진행해」·「응 T5 처리 진짜 모두 했는지 확인먼저 하고 진행해」: T5 재확인은 실제 worktree에서 전수 rc0(236파일 12240/12240·unittest542/542·43.0초), 공식 통합 rc0(210건 실패0·37.5초). 색인 dismissed197(규약72·오탐118·이미수정7)·applied48·보류R193-1로 246건 일치. 리포트 ab75a16 실재 확인. `master-local --check` rc0·13/13.
+- C5는 마감 전 게이트에서만 제외(요구 유지). `issue_finish_tool(970, confirm=True)` repo `/home/sim/ax-cluster/.ax-issues/970`, done `[push,ff,worktree_remove,delete_branch,register,link,release,close,redmine]`, registered/closed/lock_released true, why `""`. 해시9·라운드1·작성계열 `['claude']`. worktree·issue/970 삭제 완료.
+- wrapup 1차 rc1: oneshot `ax-indexer`·`ax-review-queue` 900초 초과, 재기동·배달 미실행. 주기 조회 뒤 사용자 「좋아 시도하자」로 재시도: 세 서비스 23:45:17 재기동·재판정 깨끗, 인계서 대기 rc2. 이 문서 커밋·push 직후 같은 명령으로 배달·기록을 이어간다(`client_mcp.py` 변경 없음).
+- **컨텍스트 생성은 미완**: 23:43:36 회차 종료 시 508/510그룹. `master/plan_metrics`(related_classes Plan·Task)·`master/test_plan_block`(Plan) 사실 게이트 거부로 커서 `6569345` 처리에서 멈춤·다음 회차 재시도. 두 서비스의 종료는 합성 성공이 아니다. 코드·설정·타이머 변경 안 함. #970 남은 리뷰도 색인 진행 대기.
+- Codex 세션 `~/.codex/sessions/2026/11/15/rollout-2026-11-15T22-54-21-01a1df7c-d169-76b1-a69b-5b3745b6372e.jsonl`. 조회 중 worktree `.agents`·운영 `.codex` 경로 부재는 실제 목록 파일 재조회로 처리.
 - 그 뒤 사용자 순서상 남은 것: #968(기각 후보 웹 UI) · agy 우선 관측 · R193-1 판단.
 
 > 2026-11-15 21:50 — **#969 마감 완료**(main `76f25c3`, 완료·100). `ax-task-queue`·`ax-broker` 21:47:50 · `ax-projects` 21:47:55 재기동, 재판정 깨끗. 이 문서 커밋·push 직후 `master.issue_wrapup 969` 재실행으로 세 워커(`.2`·`.33`·`.43`)에 배달하고 `master-local --check` 를 확인한다(`client_mcp.py` 변경 — C5 는 게이트에서만 제외). #965 는 같은 날 19:45 마감·배달 완료.
@@ -135,7 +139,7 @@
 
 ## 바로 다음 작업
 
-1. 이 문서 커밋·push 직후 `master.issue_wrapup 969 --project AXCluster` 재실행 → 배달(세 워커) · `master-local --check`. 결과는 #969 노트.
-2. 「낮음」 206건 대조를 별도 일감으로 등록(#969 비범위, 사용자 결정) → 그다음 #968 웹 UI. R193-1 은 열어 둠.
+1. 이 문서 커밋·push 직후 `master.issue_wrapup 970 --project AXCluster` 재실행 → 배달(세 워커)·대조. 결과는 #970 노트(`master-local --check` 13/13은 확인 완료).
+2. #970 합성 미완 2그룹 사실 게이트 거부와 후속 리뷰 진행 확인(위 근거). #968 웹 UI는 사용자 착수 지시를 기다린다. R193-1은 열어 둠.
 3. #964·#966 배포 후 관측(위 C6 ①②) · agy 우선 뒤 처리량 감소(56→10)는 사용자에게 올릴 발견이다. 자동 배치·타이머를 끄지 않는다.
 4. 확인해 둘 실물: 토요일 22시 이후 `ax-batch` 로그의 `recipe_synthesis` 줄(#383) · 다음 rejected 라운드의 큐 로그 `[history] … rejected(큐 내부 종결)` 줄(#943) · 운영 relay에서 한도 20% 이하 제안 배너(#368) · 합성이 멈춘 회차의 `색인 걷기가 아직 안 지났다` 줄(#950). 다른 일감은 사용자 선택을 기다린다.
