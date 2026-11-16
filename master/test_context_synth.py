@@ -933,6 +933,8 @@ UActiveThing 은 ULegacyLoader 를 통해 FOldPayload 를 비동기로 관리한
     test_related_grounding(tmp)
     print("\n[#971] 동명 클래스 — 짧은 이름 + 선언 파일 폴백")
     test_homonym_fallback(tmp)
+    print("\n[#972] 관계 근거는 합성 대상 커밋의 선언 파일")
+    test_commit_pinned_related(tmp)
     print("\n[#840] cloud 순서·quota 전용 로컬 대체·재검증 경계")
     test_gemini_primary(tmp)
     print("\n[#782] 레인별 프롬프트 — 상용 무제한 · 로컬 종전 상한")
@@ -1220,6 +1222,64 @@ def test_homonym_fallback(tmp):
                             caller=llm(doc("Plan: pkg/metrics.py")))
     check("#971 실제 합성 진입점이 틀린 선언 파일은 거부한다",
           not result.written and result.verify.unknown_related == ["Plan"], result.reason)
+
+
+def test_commit_pinned_related(tmp):
+    """`#972` — 관계 근거는 합성 대상 커밋의 선언 파일이다. 그 뒤 개명돼 HEAD·그래프에서 사라져도 통과한다."""
+    import subprocess
+    from master.context_search.paths import SourceScope
+    repo = tmp / "pinned" / "repo"
+    (repo / "pkg").mkdir(parents=True)
+    old = {"pkg/a.py": "class Plan:\n    pass\n\n\nclass Task:\n    pass\n",
+           "pkg/metrics.py": "def count(block):\n    return len(block.tasks)\n"}
+    for rel, body in old.items():
+        (repo / rel).write_text(body, encoding="utf-8")
+
+    def git(*a):
+        return subprocess.run(["git", "-C", str(repo), *a], check=True, capture_output=True,
+                              text=True).stdout.strip()
+    git("init", "-q", "-b", "main")
+    git("add", "-A")
+    git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "old")
+    c_old = git("rev-parse", "HEAD")
+    (repo / "pkg/a.py").write_text("class IssuePlan:\n    pass\n\n\nclass IssuePlanTask:\n    pass\n",
+                                   encoding="utf-8")
+    git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qam", "rename")
+    paths = ProjectPaths(name="PY", root=tmp / "pinned", scope=SourceScope(roots=("pkg",), exts=(".py",)))
+    cg.build_full(paths, git=lambda _r, *a: (0, "pkg/a.py\npkg/metrics.py"))
+
+    def doc(*entries):
+        return HOMONYM_DOC.format(related="\n".join(f"  - {e}" for e in entries))
+
+    known = synth.project_symbols(paths)
+    src = {"pkg/metrics.py": old["pkg/metrics.py"]}
+
+    def run(d, commit):
+        cf = synth._merge_class_files(synth.homonym_class_files(paths), synth.commit_class_files(paths, commit, d))
+        return verify.verify(d, sources=src, declared=[], known=known, class_files=cf)
+
+    check("#972 재현: 개명 뒤 그래프에 옛 이름이 없다", "Plan" not in known and "IssuePlan" in known)
+    r = run(doc("Plan: pkg/a.py", "Task: pkg/a.py"), "")
+    check("#972 HEAD 기준이면 옛 이름 관계는 거부(종전과 같다)", not r.ok and r.unknown_related == ["Plan", "Task"],
+          r.reason)
+    r = run(doc("Plan: pkg/a.py", "Task: pkg/a.py"), c_old)
+    check("#972 합성 대상 커밋 기준이면 그 커밋의 선언으로 통과", r.ok, r.reason)
+    for label, entries, name in (
+            ("없는 클래스", ("Ghost: pkg/a.py",), "Ghost"),
+            ("틀린 선언 파일", ("Plan: pkg/metrics.py",), "Plan"),
+            ("커밋에 없는 파일", ("Plan: pkg/none.py",), "Plan"),
+            ("경로 미상", ('Plan: "?"',), "Plan"),
+            ("저장소 밖 경로", ("Plan: ../a.py",), "Plan"),
+            ("한 항목이라도 틀린 파일", ("Plan: pkg/a.py", "Plan: pkg/metrics.py"), "Plan")):
+        r = run(doc(*entries), c_old)
+        check(f"#972 반례 {label}: 근거 없이 통과하지 않는다", not r.ok and name in r.unknown_related, r.reason)
+    check("#972 HEAD 의 새 이름은 커밋 없이도 통과", run(doc("IssuePlan: pkg/a.py"), "").ok)
+
+    out = paths.context / "pkg/metrics.md"
+    result = injected_group(paths, "pkg/metrics", ["pkg/metrics.py"], commit=c_old,
+                            caller=llm(doc("Plan: pkg/a.py", "Task: pkg/a.py")))
+    check("#972 실제 합성 진입점(커밋 고정)이 그 커밋 기준 관계 문서를 저장한다",
+          result.written and out.is_file() and "Plan: pkg/a.py" in out.read_text(encoding="utf-8"), result.reason)
 
 
 def test_cloud_scope_rules_only_for_cloud():

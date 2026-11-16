@@ -293,6 +293,59 @@ def homonym_class_files(paths) -> dict:
     return out
 
 
+def commit_class_files(paths, commit: str, doc: str) -> dict:
+    """🔴 관계 근거를 **합성 대상 커밋**의 선언 파일로 (`#972`) — `{이름: {그 이름을 선언한 경로}}`.
+
+    문서 `related_classes` 의 `이름: 경로` 항목마다 그 경로를 `commit` 시점으로 읽어(`git show commit:경로`,
+    `commit` 이 비면 현재 작업 트리) 기존 파서로 최상위 클래스를 센다(.py → pyparse · C++ → gparse).
+    [중요] 상용 레인은 커밋 고정 트리에서 돌므로 문서는 **그 커밋 기준**으로 쓴다. 그래프·`project_symbols`
+    는 현재 HEAD 라, 그 사이에 이름이 바뀌면 사실인 관계가 근거 없음이 됐다(#971 개명 뒤 실측).
+    인정 판정은 `verify.declared_by_file` 그대로다 — 경로 없음·`?`·틀린 파일은 계속 거부된다.
+    읽기·파싱 실패는 그 경로를 근거에서 뺄 뿐이다(통과가 아니다).
+    """
+    import subprocess
+    from ..graph import pyparse
+    out: dict = {}
+    seen: set = set()
+    repo = Path(paths.repo)
+    for _name, where in verify_mod.related_entries(doc):
+        rel = verify_mod._norm_path(where)
+        if not rel or rel == "?" or rel in seen or rel.startswith("/") or ".." in rel.split("/"):
+            continue
+        seen.add(rel)
+        try:
+            if commit:
+                r = subprocess.run(["git", "-C", str(repo), "show", f"{commit}:{rel}"],
+                                   capture_output=True, timeout=30)
+                if r.returncode:
+                    continue
+                text = r.stdout.decode("utf-8", errors="replace")
+            else:
+                text = (repo / rel).read_text(encoding="utf-8", errors="replace")
+            suffix = Path(rel).suffix.lower()
+            if suffix == ".py":
+                classes = pyparse.parse_source(text)
+            elif suffix in gparse.PARSE_EXTS:
+                classes = gparse.parse_source(text)
+            else:
+                continue
+        except Exception:                                    # noqa: BLE001 — 근거를 못 얻은 것이지 통과가 아니다
+            continue
+        for c in classes:
+            name = c.get("name") if isinstance(c, dict) else None
+            if isinstance(name, str) and name:
+                out.setdefault(name, set()).add(rel)
+    return out
+
+
+def _merge_class_files(*maps) -> dict:
+    out: dict = {}
+    for m in maps:
+        for k, v in (m or {}).items():
+            out.setdefault(k, set()).update(v or ())
+    return out
+
+
 # 저장소 소스 디렉토리 → (파일 서명, 식별자 집합). 배치 하나가 그룹마다 부르므로 캐시한다.
 _LIVE_CACHE: dict = {}
 
@@ -846,7 +899,9 @@ def _synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
                                        declared=grounding.declared_classes,
                                        known=project_symbols(paths),
                                        live_counts=_index_only(paths),
-                                       class_files=homonym_class_files(paths))
+                                       class_files=_merge_class_files(
+                                           homonym_class_files(paths),
+                                           commit_class_files(paths, commit, doc)))
             res.verify = report
             attempt.update(facts={"ok": report.ok, "reason": report.reason,
                                   "ghosts": report.ghosts, "declared": report.declared,
