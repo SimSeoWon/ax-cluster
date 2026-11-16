@@ -1,6 +1,6 @@
 # 203 — #211 AXCluster 실사용 한글 검색 정합성 평가
 
-작성: Codex · 2026-11-16 · 진행 중. 아직 품질 측정·정답 확정·마감 전이다.
+작성: Codex · 2026-11-16 시작, 11-17 계속 · 진행 중. 품질 측정·마감 전이다.
 
 ## 사용자 결정·작업 위치
 
@@ -48,14 +48,15 @@ jq -cs 'map(select(.task_type == "user_command" and .ts < "2026-11-16T23:25:00")
 3. 기존 `run_variant`는 baseline 검색의 기본 pool=45(limit15×3)와 gated BM25 limit15를 사용한다.
    비교 조건과 반환 cutoff를 명시하여 반복 가능한 실측을 설계해야 한다. 아직 우열·회귀로 판정하지 않는다.
 
-현재 운영 측정·평가 도구 실행·테스트는 하지 않았다. 정답 확정 전이다.
+현재 운영 측정·평가 도구 실행·테스트는 하지 않았다. 11-17 첫5건 정답을 사용자 확인으로 확정했다.
 
 ## 후보 산출물 검증
 
 `reports/203-211-candidates.json`은 Q01~Q30과 원본 search_id·주제·선정 근거를 담는다.
 원문 query/user_request/request_id/ts/result_snapshot은 동결 파일과 search_id로 연결한다.
-첫5개 소스 대조 제안(Q02·Q05·Q10·Q21·Q23)은 proposed_expected/basis에만 기록했다.
-expected=[]·confirmed=false라 아직 채점 정답이 아니다.
+첫5개 소스 대조 제안(Q02·Q05·Q10·Q21·Q23)은 최초에는 proposed_expected/basis에만 기록했다.
+11-17 사용자 「맞는 것 같아!」를 직전 표의 5건 확인으로 해석하고 expected·confirmed=true·confirmation에 기록했다.
+이 다섯은 현재 재측정용 정답이며, 나머지25건은 expected=[]·confirmed=false다.
 
 `jq -s --slurpfile c reports/203-211-candidates.json … reports/203-211-search-snapshot.jsonl` 검증(rc0):
 후보30·원본 일치30·요청30·고유 질의30·원문 누락0·스냅샷 누락0·스냅샷 문서188·
@@ -74,7 +75,7 @@ T1은 데이터 산출물로 검증했고 아직 코드 변경이 없어 실행 
 ## 재개 근거
 
 - T1 커밋 `740ac72f871c94d0375edf87b490112c536044a4`, 완료 전이 성공. C1 충족.
-- T2 작업중, T3~T4 대기. 첫5건 사용자 확정 질문 대기, 현재 확정0/30.
+- T2 작업중, T3~T4 대기. Q02/Q05/Q10/Q21/Q23 사용자 확인, 현재 확정5/30.
 - 후보30건 소스 대조 제안은 `203-211-answer-proposals.md`에 보존했다.
   Q19(스킬·훅·타이머 전반 분석)·Q24(등록 해제 기능 부재/수동 경로)는 정량 정답을 억지 지정하지 않고 미판정 권고다.
   Q14·Q26·Q29·Q30은 요구 전체와 부분 책임의 차이를 명시했다. 정답 수를 맞추려고 미확정을 확정하지 않는다.
