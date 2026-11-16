@@ -200,7 +200,7 @@ def test_runner_and_queue_carry_flag() -> None:
         rebuilt.rebuild()
         check("  재기동(rebuild) 뒤에도 표지 유지",
               rebuilt.tasks[t["task_id"]].get("infra_undecided") is True)
-        kind, why = WM.Task(rec).classify()
+        kind, why = WM.WorkTask(rec).classify()
         check("  workmodel 분류 = verification", kind == WM.VERIFICATION and "infra_undecided" in why,
               f"{kind} {why}")
 

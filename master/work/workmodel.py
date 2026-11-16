@@ -210,11 +210,11 @@ def _fp_of(detail: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────────
-# Task
+# WorkTask
 # ─────────────────────────────────────────────────────────────
 
 @dataclass
-class Task:
+class WorkTask:
     """조각 하나. `raw` 는 큐의 dict 그대로다(복사본)."""
 
     raw: dict = field(default_factory=dict)
@@ -359,11 +359,11 @@ class Work:
     """분산 work 하나. `Work.load` 는 큐에서 읽고, `Work.from_record` 는 이미 읽은 dict 를 감싼다."""
 
     raw: dict = field(default_factory=dict)
-    tasks: list = field(default_factory=list)       # [Task]
+    tasks: list = field(default_factory=list)       # [WorkTask]
 
     @classmethod
     def from_record(cls, work: dict, tasks) -> "Work":
-        return cls(raw=dict(work or {}), tasks=[Task(dict(t or {})) for t in (tasks or [])])
+        return cls(raw=dict(work or {}), tasks=[WorkTask(dict(t or {})) for t in (tasks or [])])
 
     @classmethod
     def load(cls, work_id: str, api=None, *, fetch=None) -> "Work":

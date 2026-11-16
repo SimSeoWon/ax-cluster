@@ -184,7 +184,7 @@ class TerminalTests(unittest.TestCase):
         self.assertEqual(rec["status"], "failed")
         self.assertEqual(rec["fail_reason"], "verify:reject")
         self.assertEqual(rec["fail_detail"], "layer2 reject: invented enum")
-        self.assertNotEqual(WM.Task(rec).classify()[0], WM.QUOTA)
+        self.assertNotEqual(WM.WorkTask(rec).classify()[0], WM.QUOTA)
 
     def test_quota_stale_and_identity_rejections_preserve_record(self):
         self.tasks(1)

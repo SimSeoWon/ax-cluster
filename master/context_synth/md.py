@@ -148,7 +148,7 @@ def _repair_missing_open(s: str) -> str:
 
 
 @dataclass(frozen=True)
-class Check:
+class ContextDocCheck:
     """게이트 결과. **`ok` 가 아니면 저장하지 않는다.**"""
 
     ok: bool
@@ -160,7 +160,7 @@ class Check:
         return "통과" if self.ok else f"거부 — {self.reason}"
 
 
-def check(md: str) -> Check:
+def check(md: str) -> ContextDocCheck:
     """σ.7-B 저장 전 게이트.
 
     거부는 **실패가 아니라 보류**다 — 기존 파일이 남고 다음 사이클에 다시 시도된다.
@@ -168,18 +168,18 @@ def check(md: str) -> Check:
     """
     s = (md or "").strip()
     if len(s) < MIN_CHARS:
-        return Check(False, f"응답이 너무 짧다 ({len(s)}자 < {MIN_CHARS})", s[:80])
+        return ContextDocCheck(False, f"응답이 너무 짧다 ({len(s)}자 < {MIN_CHARS})", s[:80])
     if not s.startswith("---"):
-        return Check(False, "frontmatter 가 없다 (펜스 잔존·파싱 실패)",
+        return ContextDocCheck(False, "frontmatter 가 없다 (펜스 잔존·파싱 실패)",
                      s[:80].replace("\n", " "))
     if not _FRONTMATTER_RE.match(s):
-        return Check(False, "frontmatter 가 닫히지 않았다", s[:80].replace("\n", " "))
+        return ContextDocCheck(False, "frontmatter 가 닫히지 않았다", s[:80].replace("\n", " "))
     import yaml
     try:
         fields = yaml.safe_load(_FRONTMATTER_RE.match(s).group(2))
     except yaml.YAMLError as error:
         why = getattr(error, "problem", None) or str(error)      # `#969` 13 — ReaderError 엔 problem 이 없다
-        return Check(False, f"frontmatter YAML 파싱 실패: {why}", s[:80])
+        return ContextDocCheck(False, f"frontmatter YAML 파싱 실패: {why}", s[:80])
     tags = fields.get("tags", []) if isinstance(fields, dict) else []
     if isinstance(tags, str):
         tags = [tags]
@@ -191,8 +191,8 @@ def check(md: str) -> Check:
             if (re.fullmatch(r"(?:영문태그|한글개념태그|한글태그)\d*:?", token)
                     or token in {"...", "…"}
                     or re.match(r"^(?:영문태그|한글개념태그|한글태그):", token)):
-                return Check(False, f"tags 에 형식 예시·지시문 잔재가 있다: {token}", str(tags))
-    return Check(True)
+                return ContextDocCheck(False, f"tags 에 형식 예시·지시문 잔재가 있다: {token}", str(tags))
+    return ContextDocCheck(True)
 
 
 def _set_field(md: str, key: str, value: str) -> str:
@@ -261,7 +261,7 @@ def merge_comments(new_md: str, existing_md: str) -> str:
     return strip_comments(new_md) + "\n\n" + comments + "\n"
 
 
-def finalize(raw: str, *, existing: str = "", commit: str = "") -> tuple[str, Check]:
+def finalize(raw: str, *, existing: str = "", commit: str = "") -> tuple[str, ContextDocCheck]:
     """LLM 원문 → 저장할 문서. **한 곳에서 순서를 고정한다.**
 
         벗기기(σ.7) → 미상 경로 YAML 인용(#750) → 게이트(σ.7-B) → 코멘트 이월 → 스탬프

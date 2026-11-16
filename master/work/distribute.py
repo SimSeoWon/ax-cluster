@@ -151,7 +151,7 @@ def stage_register(paths, *, slug: str, title: str, target_repo: str, target_bra
     [주의] **게이트를 안 주는 것은 통과가 아니라 미확인이다** — 결과에 그렇게 적는다.
     """
     pieces, rec = load_plan(paths, slug)
-    plan = decompose.Plan(pieces=pieces)
+    plan = decompose.DecompositionPlan(pieces=pieces)
     v = plan.violations()
     if v:
         return Staged("register", ok=False,

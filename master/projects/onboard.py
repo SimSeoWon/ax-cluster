@@ -78,7 +78,7 @@ INDEX_ONLY_NA = {"conventions": "색인 전용 — 워커 매니페스트가 없
 
 
 @dataclass
-class Plan:
+class OnboardingPlan:
     """온보딩 계획. [중요] **무엇이 남았는지를 이름으로** 답한다 (§12.6)."""
 
     project: str
@@ -446,12 +446,12 @@ def probe_server(name: str, *, registry: Registry | None = None) -> list:
     return out
 
 
-def plan(name: str, *, registry: Registry | None = None, hosts: bool = True) -> Plan:
+def plan(name: str, *, registry: Registry | None = None, hosts: bool = True) -> OnboardingPlan:
     """온보딩 계획 — **아무것도 쓰지 않는다.**
 
     `hosts=False` 로 기계 조회를 끈다(SSH 를 타지 않는다 — 유닛·빠른 확인용).
     """
-    p = Plan(project=name)
+    p = OnboardingPlan(project=name)
     reg = registry or Registry.load()
     try:
         p.steps = probe_server(name, registry=reg)

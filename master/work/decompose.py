@@ -68,7 +68,7 @@ class Piece:
 
 
 @dataclass
-class Plan:
+class DecompositionPlan:
     pieces: list = field(default_factory=list)
     cycles: list = field(default_factory=list)      # [주의] 순환 — 보고만 한다
     notes: list = field(default_factory=list)
@@ -230,14 +230,14 @@ def _order_by_includes(paths: ProjectPaths, pieces: list) -> tuple:
 
 
 def plan(paths: ProjectPaths, items: list, *, skeletons: dict | None = None,
-         order: bool = True) -> Plan:
+         order: bool = True) -> DecompositionPlan:
     """분해 계획을 세운다. **읽기 전용이고 LLM 을 쓰지 않는다.**
 
     `items` — `[(클래스, 파일)]`. `skeletons` — `{stem: 골조텍스트}`(뎁스 분할용, 선택).
 
     [중요] **파견하지 않는다.** 계획을 돌려줄 뿐이고, `preview()` 를 사람이 본 뒤에 나간다.
     """
-    p = Plan(pieces=pieces_from(items))
+    p = DecompositionPlan(pieces=pieces_from(items))
     if not p.pieces:
         p.notes.append("[중요] 조각이 없다 — 분해할 대상이 비었다")
         return p
@@ -265,7 +265,7 @@ def plan(paths: ProjectPaths, items: list, *, skeletons: dict | None = None,
     return p
 
 
-def to_specs(p: Plan, *, instruction: str = "", requires: list | None = None) -> list:
+def to_specs(p: DecompositionPlan, *, instruction: str = "", requires: list | None = None) -> list:
     """계획 → `register.TaskSpec` 들. [중요] **위반이 있으면 만들지 않는다.**"""
     from .register import RegisterError, TaskSpec
     v = p.violations()

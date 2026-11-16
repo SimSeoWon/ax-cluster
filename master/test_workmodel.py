@@ -41,11 +41,11 @@ FB_STUB = ("[fp:0123456789ab] [중요] 층1 — 층1 이 막았다 — 커밋하
            "master/work/x.py: 본문이 안 채워졌다 (스텁 그대로) — f")
 
 
-def T(**kw) -> WM.Task:
-    return WM.Task(dict(kw))
+def T(**kw) -> WM.WorkTask:
+    return WM.WorkTask(dict(kw))
 
 
-def kind_of(task: WM.Task, peers: int = 0) -> str:
+def kind_of(task: WM.WorkTask, peers: int = 0) -> str:
     return task.classify(peers_frozen=peers)[0]
 
 
@@ -223,7 +223,7 @@ def test_work_from_record_and_load():
     check("base_branch: 없으면 work_id 에서 유도 (branch_names)", w2.base_branch == BN.base_branch(wid),
           w2.base_branch)
     check("round 기본 1", w2.round == 1)
-    check("from_record 는 원본을 복사한다", w.raw is not None and isinstance(w.tasks[0], WM.Task))
+    check("from_record 는 원본을 복사한다", w.raw is not None and isinstance(w.tasks[0], WM.WorkTask))
     calls = []
 
     def fetch(work_id, *, api=None):

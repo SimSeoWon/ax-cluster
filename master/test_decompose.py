@@ -170,7 +170,7 @@ def test_plain_pseudo_is_one_task() -> None:
 
 def test_concurrent_overlap_is_caught() -> None:
     """[중요] 같은 물결에서 파일이 겹치면 **파견하면 안 된다.**"""
-    p = D.Plan(pieces=[D.Piece(stem="X", files=["M/Same.h"], order=0),
+    p = D.DecompositionPlan(pieces=[D.Piece(stem="X", files=["M/Same.h"], order=0),
                        D.Piece(stem="Y", files=["M/Same.h"], order=0)])
     v = p.violations()
     check("겹침을 잡는다", len(v) == 1 and "Same.h" in v[0], str(v))
@@ -181,7 +181,7 @@ def test_concurrent_overlap_is_caught() -> None:
 def test_to_specs_refuses_broken_plans() -> None:
     """[중요] 불변식이 깨진 계획으로 태스크를 만들지 않는다."""
     from master.work.register import RegisterError
-    bad = D.Plan(pieces=[D.Piece(stem="X", files=["M/S.h"], order=0),
+    bad = D.DecompositionPlan(pieces=[D.Piece(stem="X", files=["M/S.h"], order=0),
                          D.Piece(stem="Y", files=["M/S.h"], order=0)])
     try:
         D.to_specs(bad)
@@ -189,7 +189,7 @@ def test_to_specs_refuses_broken_plans() -> None:
     except RegisterError as e:
         check("[중요] 깨진 계획은 거부", "파견하지 않는다" in str(e), str(e))
 
-    good = D.Plan(pieces=[D.Piece(stem="M/C", files=["M/C.h"], order=0),
+    good = D.DecompositionPlan(pieces=[D.Piece(stem="M/C", files=["M/C.h"], order=0),
                           D.Piece(stem="M/A", files=["M/A.h"], order=1)])
     specs = D.to_specs(good, instruction="만든다", requires=["ue5"])
     check("순서대로 만든다", [s.stem for s in specs] == ["M/C", "M/A"],
