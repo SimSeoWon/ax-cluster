@@ -177,7 +177,7 @@ def set_plan(issue_id, tasks: list, why: str, *, user_answer: str = "", getter=N
                 raise PlanToolError("스펙 영역이 없다 — 착수 전 인터뷰(분류→조사→명세→재현→파급 측정)를 마치고 "
                                     "스펙 영역을 쓴 뒤에 플랜을 등록한다 (#960)")
         old = {t.id: t for t in (current.tasks if current else [])}
-        new_tasks: list[PB.Task] = []
+        new_tasks: list[PB.IssuePlanTask] = []
         for raw in tasks:
             if not isinstance(raw, dict):
                 raise PlanToolError(f"태스크 항목이 객체가 아니다: {raw!r}")
@@ -189,7 +189,7 @@ def set_plan(issue_id, tasks: list, why: str, *, user_answer: str = "", getter=N
             if not tid or not goal:
                 raise PlanToolError(f"id·goal 은 필수다: {raw!r}")
             prev = old.get(tid)
-            new_tasks.append(PB.Task(tid, prev.state if prev else PS.WAITING, goal,
+            new_tasks.append(PB.IssuePlanTask(tid, prev.state if prev else PS.WAITING, goal,
                                      str(raw.get("target") or "").strip(), _deps_of(raw.get("deps")),
                                      str(raw.get("check") or "").strip(),
                                      prev.evidence if prev else "", _steps_of(raw.get("steps"))))

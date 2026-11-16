@@ -109,7 +109,7 @@ def test_edit_after_flow_needs_new_proposal_and_keeps_states():
 
 
 def test_legacy_plan_edit_unchanged():
-    legacy = TK.FakeIssue(PB.append(TK.BARE, [PB.Task("T1", "대기", "옛 목표")]))
+    legacy = TK.FakeIssue(PB.append(TK.BARE, [PB.IssuePlanTask("T1", "대기", "옛 목표")]))
     out = PT.set_plan(1, [{"id": "T1", "goal": "옛 목표(고침)"}], "옛 편집", getter=legacy.get, updater=legacy.update)
     plan = PB.parse(legacy.body)
     check("제안 노트 없는 옛 플랜 편집은 지금처럼", out["ok"] and plan.version == 2 and plan.task("T1").goal

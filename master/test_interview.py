@@ -88,7 +88,7 @@ def test_rejections():
     check("조사 건너뛰고 명세 거절", _raises(lambda: _rec(fi, "specify"), "순서 건너뜀"))
     check("적용 안 되는 재현 거절", _raises(lambda: _rec(fi, "reproduce"), "적용하지 않는다"))
     check("분류는 분류 단계에서만", _raises(lambda: _rec(fi, "investigate", "bug"), "분류 단계에서만"))
-    planned = FakeIssue(body=PB.append("## 문제\n\n본문\n", [PB.Task("T1", "대기", "목표")]))
+    planned = FakeIssue(body=PB.append("## 문제\n\n본문\n", [PB.IssuePlanTask("T1", "대기", "목표")]))
     check("플랜 있는 일감 거절", _raises(lambda: _rec(planned, "classify", "bug"), "플랜 영역이 이미"))
 
 

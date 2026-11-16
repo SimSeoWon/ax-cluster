@@ -29,7 +29,7 @@ SPEC = "## 스펙\n\n요구와 완료 조건\n"
 
 
 def _body(*rows, spec=SPEC) -> str:
-    return PB.append(spec, [PB.Task(tid, st, "목표", deps=list(deps), evidence=ev)
+    return PB.append(spec, [PB.IssuePlanTask(tid, st, "목표", deps=list(deps), evidence=ev)
                             for tid, st, deps, ev in rows])
 
 
@@ -149,7 +149,7 @@ def test_spec_missing_reports_absent_sections():
 
 
 def test_spec_missing_ignores_plan_area():
-    plan = PB.append(SPEC, [PB.Task("T1", "대기", "목표")])
+    plan = PB.append(SPEC, [PB.IssuePlanTask("T1", "대기", "목표")])
     fake = plan.replace("<!-- ax:plan:end -->", "## 문제 분류 관측 범위 완료 조건 열린 결정\n<!-- ax:plan:end -->")
     check("플랜 영역 안의 제목은 세지 않는다", ST.spec_missing(fake) == ALL_KEYS, str(ST.spec_missing(fake)))
 

@@ -86,7 +86,7 @@ def test_set_requires_spec_area():
     broken = FakeIssue(BARE + "<!-- ax:spec:begin v=1 -->\n")
     check("스펙 태그 깨짐 → 거절", "스펙 영역이 깨졌다" in _err(lambda: PT.set_plan(
         960, _tasks(), "등록", getter=broken.get, updater=broken.update)))
-    legacy = FakeIssue(PB.append(BARE, [PB.Task("T1", "대기", "옛 목표")]))
+    legacy = FakeIssue(PB.append(BARE, [PB.IssuePlanTask("T1", "대기", "옛 목표")]))
     out = TK.register(legacy, 960, _tasks(), "옛 일감 편집")
     check("플랜이 이미 있는 옛 일감은 스펙 없이도 편집", out["ok"] and not out["created"], str(out))
 

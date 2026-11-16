@@ -57,7 +57,7 @@ class IssueContext:
     subject: str = ""                                  # 일감 제목
     spec: str = ""                                     # 본문에서 플랜 영역을 뺀 것
     requested: tuple[str, ...] = ()                    # 메시지가 밝힌 T#
-    tasks: list = field(default_factory=list)          # 밝힌 T# 중 플랜에 있는 것(plan_block.Task)
+    tasks: list = field(default_factory=list)          # 밝힌 T# 중 플랜에 있는 것(plan_block.IssuePlanTask)
     missing: tuple[str, ...] = ()                      # 밝혔으나 플랜에 없는 T#
     others: list = field(default_factory=list)         # 플랜의 나머지 태스크
     plan_tasks: list = field(default_factory=list)     # 플랜 전체(범위 리뷰용)

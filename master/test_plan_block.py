@@ -136,7 +136,7 @@ def test_append_creates_region():
               plan is not None and [t.id for t in plan.tasks] == ["T1", "T2", "T3"])
         if nl == "\r\n":
             check("CRLF 본문에 붙여도 LF 단독 줄이 없다", "\n" not in out.replace("\r\n", ""))
-    out = PB.append("", [PB.Task("T1", "대기", "목표")])
+    out = PB.append("", [PB.IssuePlanTask("T1", "대기", "목표")])
     check("빈 본문에도 붙인다", PB.parse(out).task("T1").goal == "목표", out)
 
 
@@ -172,19 +172,19 @@ def test_v2_roundtrip_and_v1_untouched():
     check("올린 뒤 다시 읽힌다", plan.version == 2 and plan.task("T2").steps == [4])
     check("올려도 영역 밖은 그대로", out.split("<!-- ax:plan:begin")[0] == BODY.split("<!-- ax:plan:begin")[0]
           and out.split(PB.END_TAG)[1] == BODY.split(PB.END_TAG)[1])
-    check("새 플랜은 v2 로 붙인다", "v=2" in PB.append("## 스펙\n", [PB.Task("T1", "대기", "x")]))
+    check("새 플랜은 v2 로 붙인다", "v=2" in PB.append("## 스펙\n", [PB.IssuePlanTask("T1", "대기", "x")]))
 
 
 def test_render_v1_refuses_steps():
     check("v1 표에 단계를 쓰려 하면 거절",
-          bool(_err(lambda: PB.render([PB.Task("T1", "대기", "x", steps=[4])], version=1))))
+          bool(_err(lambda: PB.render([PB.IssuePlanTask("T1", "대기", "x", steps=[4])], version=1))))
     check("1~7 밖 단계는 렌더 거절",
-          bool(_err(lambda: PB.render([PB.Task("T1", "대기", "x", steps=[9])]))))
+          bool(_err(lambda: PB.render([PB.IssuePlanTask("T1", "대기", "x", steps=[9])]))))
 
 
 def test_render_refuses_unknown_state():
     check("모르는 상태는 쓰지 않는다",
-          bool(_err(lambda: PB.render([PB.Task("T1", "진행", "x")]))))
+          bool(_err(lambda: PB.render([PB.IssuePlanTask("T1", "진행", "x")]))))
 
 
 def _raises(fn, needle: str) -> bool:
@@ -198,13 +198,13 @@ def _raises(fn, needle: str) -> bool:
 def test_v3_checklist_and_autonomy():
     """#963 T1 — 표지 autonomy 속성 · 체크리스트 표 · v2 호환."""
     spec = "## 스펙\r\n\r\n본문\r\n"
-    tasks = [PB.Task("T1", "대기", "목표")]
+    tasks = [PB.IssuePlanTask("T1", "대기", "목표")]
     v2 = PB.append(spec, tasks)
     p2 = PB.parse(v2)
     check("v2 는 autonomy 기본 0.5 · 체크리스트 없음", p2.version == 2 and p2.autonomy == 0.5
           and p2.autonomy_raw is None and p2.checklist == [])
     check("v2 갱신은 v2 그대로(바이트)", PB.replace(v2, p2.tasks) == v2)
-    cl = [PB.Check("C1", "미확인", "제안 없는 plan_set 거절"), PB.Check("C2", "충족", "회귀", "검사 rc 0")]
+    cl = [PB.IssuePlanCheck("C1", "미확인", "제안 없는 plan_set 거절"), PB.IssuePlanCheck("C2", "충족", "회귀", "검사 rc 0")]
     v3 = PB.replace(v2, tasks, checklist=cl, autonomy=0.5)
     p3 = PB.parse(v3)
     check("체크리스트가 실리면 v3", p3.version == 3 and "<!-- ax:plan:begin v=3 autonomy=0.5 -->" in v3, v3)
@@ -212,7 +212,7 @@ def test_v3_checklist_and_autonomy():
           == [("C1", "미확인", "제안 없는 plan_set 거절", ""), ("C2", "충족", "회귀", "검사 rc 0")])
     check("CRLF 유지", "\n" not in v3.replace("\r\n", ""))
     check("v3 왕복 바이트", PB.replace(v3, p3.tasks) == v3)
-    check("태스크만 바꿔도 체크리스트·자율성 유지", PB.parse(PB.replace(v3, [PB.Task("T1", "작업중", "목표")])).checklist == p3.checklist)
+    check("태스크만 바꿔도 체크리스트·자율성 유지", PB.parse(PB.replace(v3, [PB.IssuePlanTask("T1", "작업중", "목표")])).checklist == p3.checklist)
     v3b = PB.replace(v3, p3.tasks, autonomy=0.8)
     check("자율성만 바꾸면 표지만 바뀐다", PB.parse(v3b).autonomy == 0.8 and "autonomy=0.8" in v3b
           and v3b.split("-->", 1)[1] == v3.split("-->", 1)[1])
@@ -228,8 +228,8 @@ def test_v3_checklist_and_autonomy():
     check("체크리스트 상태 오류 거절", _raises(lambda: PB.parse(v3.replace("| C1 | 미확인 |", "| C1 | 끝 |")), "체크리스트 상태"))
     check("체크리스트 ID 형식 거절", _raises(lambda: PB.parse(v3.replace("| C2 |", "| X2 |")), "C<숫자>"))
     check("체크리스트 ID 중복 거절", _raises(lambda: PB.parse(v3.replace("| C2 |", "| C1 |")), "겹친다"))
-    check("빈 항목 거절", _raises(lambda: PB.replace(v3, tasks, checklist=[PB.Check("C1", "미확인", " ")]), "항목이 비었다"))
-    check("태스크 ID 에 C<숫자> 거절", _raises(lambda: PB.append(spec, [PB.Task("C1", "대기", "x")]), "체크리스트 ID"))
+    check("빈 항목 거절", _raises(lambda: PB.replace(v3, tasks, checklist=[PB.IssuePlanCheck("C1", "미확인", " ")]), "항목이 비었다"))
+    check("태스크 ID 에 C<숫자> 거절", _raises(lambda: PB.append(spec, [PB.IssuePlanTask("C1", "대기", "x")]), "체크리스트 ID"))
 
 
 def test_region_doc_names_real_helper_970():

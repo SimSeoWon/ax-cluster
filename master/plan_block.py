@@ -65,7 +65,7 @@ class PlanError(ValueError):
 
 
 @dataclass
-class Task:
+class IssuePlanTask:
     id: str
     state: str
     goal: str
@@ -77,7 +77,7 @@ class Task:
 
 
 @dataclass
-class Check:
+class IssuePlanCheck:
     """개발 완료 체크리스트 한 줄 (v3)."""
     id: str
     state: str
@@ -86,20 +86,20 @@ class Check:
 
 
 @dataclass
-class Plan:
+class IssuePlan:
     version: int
-    tasks: list[Task]
-    checklist: list[Check] = field(default_factory=list)
+    tasks: list[IssuePlanTask]
+    checklist: list[IssuePlanCheck] = field(default_factory=list)
     autonomy_raw: float | None = None          # 표지에 적힌 값 — 없으면 None
 
     @property
     def autonomy(self) -> float:
         return DEFAULT_AUTONOMY if self.autonomy_raw is None else self.autonomy_raw
 
-    def task(self, task_id: str) -> Task | None:
+    def task(self, task_id: str) -> IssuePlanTask | None:
         return next((t for t in self.tasks if t.id == task_id), None)
 
-    def check(self, check_id: str) -> Check | None:
+    def check(self, check_id: str) -> IssuePlanCheck | None:
         return next((c for c in self.checklist if c.id == check_id), None)
 
 
@@ -182,7 +182,7 @@ def _check_version(version: int) -> tuple:
     return COLUMNS_BY_VERSION[version]
 
 
-def parse(body: str) -> Plan | None:
+def parse(body: str) -> IssuePlan | None:
     """본문에서 플랜을 읽는다. 플랜 영역이 없으면 None, 형식이 어긋나면 `PlanError`."""
     region = _region(body or "")
     if region is None:
@@ -203,7 +203,7 @@ def parse(body: str) -> Plan | None:
         raise PlanError(f"플랜 표 머리줄이 다르다: {_cells(lines[0])}")
     if not all(re.fullmatch(r":?-{3,}:?", c) for c in _cells(lines[1])):
         raise PlanError("플랜 표 구분줄이 아니다")
-    tasks: list[Task] = []
+    tasks: list[IssuePlanTask] = []
     for ln in lines[2:]:
         c = _cells(ln)
         if len(c) != len(columns):
@@ -221,7 +221,7 @@ def parse(body: str) -> Plan | None:
             raise PlanError(f"ID 가 겹친다: {tid}")
         if CHECK_ID.match(tid):
             raise PlanError(f"{tid}: C<숫자> 는 체크리스트 ID 다 — 태스크 ID 로 쓸 수 없다")
-        tasks.append(Task(tid, state, goal, target, _deps(deps), check, evidence,
+        tasks.append(IssuePlanTask(tid, state, goal, target, _deps(deps), check, evidence,
                           _steps(steps)))
     known = {t.id for t in tasks}
     for t in tasks:
@@ -230,15 +230,15 @@ def parse(body: str) -> Plan | None:
             raise PlanError(f"{t.id}: 없는 선행 태스크 {', '.join(missing)}")
     checklist = _parse_checklist(check_lines)
     autonomy = autonomy_value(attrs["autonomy"]) if "autonomy" in attrs else None
-    return Plan(version, tasks, checklist, autonomy)
+    return IssuePlan(version, tasks, checklist, autonomy)
 
 
-def _parse_checklist(lines: list[str]) -> list[Check]:
+def _parse_checklist(lines: list[str]) -> list[IssuePlanCheck]:
     if not lines:
         return []
     if len(lines) < 2 or not all(re.fullmatch(r":?-{3,}:?", c) for c in _cells(lines[1])):
         raise PlanError("체크리스트 표 구분줄이 아니다")
-    out: list[Check] = []
+    out: list[IssuePlanCheck] = []
     for ln in lines[2:]:
         c = _cells(ln)
         if len(c) != len(CHECK_COLUMNS):
@@ -252,11 +252,11 @@ def _parse_checklist(lines: list[str]) -> list[Check]:
             raise PlanError(f"{cid}: 항목이 비었다")
         if any(x.id == cid for x in out):
             raise PlanError(f"체크리스트 ID 가 겹친다: {cid}")
-        out.append(Check(cid, state, item, evidence))
+        out.append(IssuePlanCheck(cid, state, item, evidence))
     return out
 
 
-def _needed_version(tasks: list[Task], current: int, checklist=(), autonomy=None) -> int:
+def _needed_version(tasks: list[IssuePlanTask], current: int, checklist=(), autonomy=None) -> int:
     """단계를 선언한 태스크가 있으면 v2 이상, 체크리스트·자율성이 있으면 v3. 아니면 지금 버전을 지킨다."""
     if checklist or autonomy is not None:
         return max(current, 3)
@@ -268,7 +268,7 @@ def _begin(version: int, autonomy: float | None) -> str:
     return f"<!-- ax:plan:begin v={version}{attr} -->"
 
 
-def render_checklist(checklist: list[Check]) -> str:
+def render_checklist(checklist: list[IssuePlanCheck]) -> str:
     """체크리스트 표(LF, 앞에 빈 줄). 비면 ""."""
     if not checklist:
         return ""
@@ -286,7 +286,7 @@ def render_checklist(checklist: list[Check]) -> str:
     return "\n" + "\n".join(rows) + "\n"
 
 
-def render(tasks: list[Task], *, version: int = FORMAT_VERSION) -> str:
+def render(tasks: list[IssuePlanTask], *, version: int = FORMAT_VERSION) -> str:
     """태그 사이에 들어갈 표(LF). 앞뒤 줄바꿈 포함."""
     columns = _check_version(version)
     rows = ["| " + " | ".join(columns) + " |",
@@ -312,7 +312,7 @@ def render(tasks: list[Task], *, version: int = FORMAT_VERSION) -> str:
 _KEEP = object()
 
 
-def replace(body: str, tasks: list[Task], *, checklist=_KEEP, autonomy=_KEEP) -> str:
+def replace(body: str, tasks: list[IssuePlanTask], *, checklist=_KEEP, autonomy=_KEEP) -> str:
     """플랜 영역 안만 `tasks` 로 바꾼 본문. 영역 밖은 바이트 그대로다.
 
     `checklist`·`autonomy` 를 주지 않으면 지금 값을 그대로 둔다(v3). 주면 바꾼다.
@@ -338,7 +338,7 @@ def replace(body: str, tasks: list[Task], *, checklist=_KEEP, autonomy=_KEEP) ->
     return body[:tag] + begin + inner + body[end:]
 
 
-def append(body: str, tasks: list[Task], *, heading: str = "## 플랜", checklist=(), autonomy=None) -> str:
+def append(body: str, tasks: list[IssuePlanTask], *, heading: str = "## 플랜", checklist=(), autonomy=None) -> str:
     """플랜 영역이 없는 본문 끝에 제목과 영역을 붙인다. 이미 있으면 `PlanError`."""
     if _region(body or "") is not None:
         raise PlanError("플랜 영역이 이미 있다 — 갱신은 replace")

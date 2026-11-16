@@ -24,8 +24,8 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
-def _plan(*rows) -> PB.Plan:
-    return PB.Plan(1, [PB.Task(tid, state, "목표", deps=list(deps), evidence=ev)
+def _plan(*rows) -> PB.IssuePlan:
+    return PB.IssuePlan(1, [PB.IssuePlanTask(tid, state, "목표", deps=list(deps), evidence=ev)
                        for tid, state, deps, ev in rows])
 
 

@@ -85,5 +85,5 @@ def issue_with_plan(tasks, *, iid=1, checklist=(), autonomy=None, base: str = BA
     return iss
 
 
-def plan_of(iss: FakeIssue) -> PB.Plan | None:
+def plan_of(iss: FakeIssue) -> PB.IssuePlan | None:
     return PB.parse(iss.body)

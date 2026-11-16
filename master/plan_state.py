@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import copy
 
-from master.plan_block import CHECK_ID, Plan, PlanError
+from master.plan_block import CHECK_ID, IssuePlan, PlanError
 
 WAITING, WORKING, DONE, BLOCKED, SKIPPED = "대기", "작업중", "완료", "차단", "해당없음"
 
@@ -52,7 +52,7 @@ def is_check_id(item_id: str) -> bool:
     return bool(CHECK_ID.match(item_id or ""))
 
 
-def check_transition(plan: Plan, check_id: str, to: str, *, note: str = "", user_answer: str = "") -> Plan:
+def check_transition(plan: IssuePlan, check_id: str, to: str, *, note: str = "", user_answer: str = "") -> IssuePlan:
     """체크리스트 항목 하나를 옮긴 **새** 플랜. 원본은 건드리지 않는다."""
     c = plan.check(check_id)
     if c is None:
@@ -77,12 +77,12 @@ class TransitionError(PlanError):
     """상태 전이 규칙 위반 — 사유 문장을 담는다."""
 
 
-def _unsettled_deps(plan: Plan, task_id: str) -> list[str]:
+def _unsettled_deps(plan: IssuePlan, task_id: str) -> list[str]:
     t = plan.task(task_id)
     return [d for d in t.deps if (plan.task(d) is None or plan.task(d).state not in SETTLED)]
 
 
-def transition(plan: Plan, task_id: str, to: str, *, note: str = "") -> Plan:
+def transition(plan: IssuePlan, task_id: str, to: str, *, note: str = "") -> IssuePlan:
     """`task_id` 를 `to` 로 옮긴 **새** 플랜. 원본은 건드리지 않는다.
 
     `note` 는 완료면 근거, 차단·해당없음이면 사유다(필수). 작업중·대기로 갈 때는 선택이고,
@@ -109,7 +109,7 @@ def transition(plan: Plan, task_id: str, to: str, *, note: str = "") -> Plan:
     return out
 
 
-def violations(plan: Plan) -> list[str]:
+def violations(plan: IssuePlan) -> list[str]:
     """본문을 사람이 고친 플랜이 규칙을 어긴 곳. 비어 있으면 깨끗하다."""
     found = []
     for t in plan.tasks:

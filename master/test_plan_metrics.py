@@ -42,10 +42,10 @@ def j(at: str, notes: str = "", status=None) -> dict:
 
 
 def plan_issue() -> dict:
-    tasks = [PB.Task("T1", "완료", "읽기", "`master/a.py` · master/test_a.py", [], "", "abc1234"),
-             PB.Task("T2", "완료", "쓰기", "docs/ 문서", ["T1"], "", "3/3"),
-             PB.Task("T3", "작업중", "검사", "자유 서술만", ["T2"]),
-             PB.Task("T4", "대기", "나중", "master/*.json")]
+    tasks = [PB.IssuePlanTask("T1", "완료", "읽기", "`master/a.py` · master/test_a.py", [], "", "abc1234"),
+             PB.IssuePlanTask("T2", "완료", "쓰기", "docs/ 문서", ["T1"], "", "3/3"),
+             PB.IssuePlanTask("T3", "작업중", "검사", "자유 서술만", ["T2"]),
+             PB.IssuePlanTask("T4", "대기", "나중", "master/*.json")]
     body = PB.append("## 스펙\n", tasks)
     return {"id": 900, "subject": "가짜 플랜", "status": {"id": 4, "name": "완료"},
             "created_on": "2026-10-31T09:00:00Z", "closed_on": "2026-10-31T15:00:00Z",
@@ -242,13 +242,13 @@ def test_work_commits_865() -> None:
 
 def test_plan_changes_865() -> None:
     """`#865` T3 — 플랜 갱신 노트마다 전후 본문으로 무엇이 바뀌었나."""
-    t1 = PB.Task("T1", "대기", "고침", "client/a.py; master/test_a.py")
-    t2 = PB.Task("T2", "대기", "실측", ".43 임시 폴더", ["T1"])
+    t1 = PB.IssuePlanTask("T1", "대기", "고침", "client/a.py; master/test_a.py")
+    t2 = PB.IssuePlanTask("T2", "대기", "실측", ".43 임시 폴더", ["T1"])
     v1 = PB.append("## 스펙\n", [t1, t2])
-    t1b = PB.Task("T1", "작업중", "고침", "client/a.py; master/test_a.py; master/test_b.py")
+    t1b = PB.IssuePlanTask("T1", "작업중", "고침", "client/a.py; master/test_a.py; master/test_b.py")
     v2 = PB.append("## 스펙\n", [t1b, t2])
-    t3 = PB.Task("T3", "대기", "추가", "docs/x.md", ["T2"])
-    t1c = PB.Task("T1", "작업중", "고침", "client/a.py")
+    t3 = PB.IssuePlanTask("T3", "대기", "추가", "docs/x.md", ["T2"])
+    t1c = PB.IssuePlanTask("T1", "작업중", "고침", "client/a.py")
     v3 = PB.append("## 스펙\n", [t1c, t2, t3])
 
     def dj(at, note, old, new):
@@ -278,7 +278,7 @@ def test_plan_changes_865() -> None:
 
 def test_unreadable_old_body_969() -> None:
     """`#969` 11 (R198-2) — 갱신인데 이전 본문을 못 읽으면 diff 를 만들지 않는다(전부 「추가」로 세지 않는다)."""
-    v = PB.append("## 스펙\n", [PB.Task("T1", "대기", "고침")])
+    v = PB.append("## 스펙\n", [PB.IssuePlanTask("T1", "대기", "고침")])
     broken = "## 스펙\n<!-- ax:plan:begin v=2 -->\n깨진 표\n"
     js = [{"created_on": "2026-11-01T08:00:00Z", "notes": "플랜 갱신 — 추가 없음\n사유: 이전 본문 손상",
            "details": [{"property": "attr", "name": "description", "old_value": broken, "new_value": v}]}]
@@ -289,8 +289,8 @@ def test_unreadable_old_body_969() -> None:
 
 def test_render_reason_one_line_970() -> None:
     """`#970` D9 (R198-3) — 사유에 줄바꿈이 있어도 렌더는 한 줄이다(종전: 들여쓰기 형식이 깨졌다)."""
-    v1 = PB.append("## 스펙\n", [PB.Task("T1", "대기", "고침")])
-    v2 = PB.append("## 스펙\n", [PB.Task("T1", "대기", "고침"), PB.Task("T2", "대기", "더함")])
+    v1 = PB.append("## 스펙\n", [PB.IssuePlanTask("T1", "대기", "고침")])
+    v2 = PB.append("## 스펙\n", [PB.IssuePlanTask("T1", "대기", "고침"), PB.IssuePlanTask("T2", "대기", "더함")])
     js = [{"created_on": "2026-11-01T09:00:00Z", "notes": "플랜 갱신 — 추가 T2\n사유: 첫 줄\n둘째 줄",
            "details": [{"property": "attr", "name": "description", "old_value": v1, "new_value": v2}]}]
     line = M._render_changes(M.plan_changes(js))

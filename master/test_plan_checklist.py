@@ -25,8 +25,8 @@ def check(name: str, cond: bool, detail: str = "") -> None:
 
 
 def _body(*states):
-    cl = [PB.Check(f"C{i}", st, f"항목{i}", "근거" if st != "미확인" else "") for i, st in enumerate(states, 1)]
-    return PB.append("## 스펙\n\n본문\n", [PB.Task("T1", "대기", "목표")], checklist=cl, autonomy=0.5)
+    cl = [PB.IssuePlanCheck(f"C{i}", st, f"항목{i}", "근거" if st != "미확인" else "") for i, st in enumerate(states, 1)]
+    return PB.append("## 스펙\n\n본문\n", [PB.IssuePlanTask("T1", "대기", "목표")], checklist=cl, autonomy=0.5)
 
 
 def main() -> int:
@@ -35,7 +35,7 @@ def main() -> int:
           and v.counts == {"미확인": 2, "충족": 1, "제외": 0}, str(v))
     check("사람에게 묻는 문장", "사용자에게 항목별로 묻는다" in v.why and "C1, C3" in v.why)
     check("모두 표시 → 통과", PC.judge(_body("충족", "제외")).ok)
-    check("옛 플랜 → 통과", PC.judge(PB.append("본문\n", [PB.Task("T1", "대기", "x")])).ok)
+    check("옛 플랜 → 통과", PC.judge(PB.append("본문\n", [PB.IssuePlanTask("T1", "대기", "x")])).ok)
     check("플랜 없음 → 통과", PC.judge("본문만").ok)
     check("깨진 플랜 → 미통과", not PC.judge("<!-- ax:plan:begin v=3 -->\n").ok)
     check("읽기 오류 → 미통과", not PC.check(1, lambda i: {"error": "HTTP 500"}).ok)

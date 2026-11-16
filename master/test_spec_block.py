@@ -66,7 +66,7 @@ def test_block_format():
     check("누락 항목 보고", SB.missing("### 문제\n\nx") == ["triage", "observe", "scope", "done", "open"])
     check("표지 주입 거절", _raises(lambda: SB.put(ORIGINAL, SIX + "\n<!-- ax:plan:end -->"), "표지", SB.SpecError))
     check("깨진 태그 거절", _raises(lambda: SB.parse("<!-- ax:spec:begin v=1 -->"), "한 쌍", SB.SpecError))
-    planned = PB.append(ORIGINAL, [PB.Task("T1", "대기", "목표")])
+    planned = PB.append(ORIGINAL, [PB.IssuePlanTask("T1", "대기", "목표")])
     b3 = SB.put(planned, SIX)
     check("플랜이 있으면 그 앞에 끼운다", b3.index("ax:spec:begin") < b3.index("## 플랜") < b3.index("ax:plan:begin"),
           b3)
@@ -94,14 +94,14 @@ def test_write_only_after_impact():
         lambda: IV.record(1, "impact", "r", "a", getter=fi.get, noter=fi.note, cats=CATS), "스펙 영역이 이미"))
     out = _write(fi, content=SIX.replace("없음", "하나 남음"))
     check("스펙 다시 쓰기 = 갱신", out["replaced"] and "하나 남음" in SB.parse(fi.body))
-    planned = FakeSpecIssue(body=PB.append(ORIGINAL, [PB.Task("T1", "대기", "목표")]),
+    planned = FakeSpecIssue(body=PB.append(ORIGINAL, [PB.IssuePlanTask("T1", "대기", "목표")]),
                             notes=[j["notes"] for j in fi.journals])
     check("플랜 있으면 거절", _raises(lambda: _write(planned), "플랜 영역이 이미"))
 
 
 def test_plan_heading_first_line_969():
     """`#969` 12 (R397-9 · R392-2) — 본문 첫 줄이 플랜 제목이어도 스펙은 제목 앞에 들어간다."""
-    planned = PB.append("", [PB.Task("T1", "대기", "목표")]).lstrip("\n")
+    planned = PB.append("", [PB.IssuePlanTask("T1", "대기", "목표")]).lstrip("\n")
     check("12 픽스처: 본문이 플랜 제목으로 시작", planned.startswith("## 플랜"), planned[:40])
     b = SB.put(planned, SIX)
     check("12 스펙이 플랜 제목 앞", b.index("ax:spec:begin") < b.index("## 플랜") < b.index("ax:plan:begin"), b[:200])

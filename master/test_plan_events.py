@@ -40,8 +40,8 @@ def FakeIssue(body: str, answer: str = ""):
 
 
 def _plan_body(states=("대기", "대기")) -> str:
-    tasks = [PB.Task("T1", states[0], "읽기", "a.py"),
-             PB.Task("T2", states[1], "쓰기", "b.py", ["T1"])]
+    tasks = [PB.IssuePlanTask("T1", states[0], "읽기", "a.py"),
+             PB.IssuePlanTask("T2", states[1], "쓰기", "b.py", ["T1"])]
     return PB.append("## 스펙\n", tasks)
 
 

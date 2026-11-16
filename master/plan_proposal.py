@@ -79,17 +79,17 @@ def normalize_checklist(items) -> list[dict]:
     return out
 
 
-def to_tasks(norm: list[dict], old: dict) -> list[PB.Task]:
+def to_tasks(norm: list[dict], old: dict) -> list[PB.IssuePlanTask]:
     """정규화 목록 → Task. 이미 있던 태스크는 상태·근거를 지킨다."""
     from master import plan_state as PS
-    return [PB.Task(t["id"], old[t["id"]].state if t["id"] in old else PS.WAITING, t["goal"], t["target"],
+    return [PB.IssuePlanTask(t["id"], old[t["id"]].state if t["id"] in old else PS.WAITING, t["goal"], t["target"],
                     list(t["deps"]), t["check"], old[t["id"]].evidence if t["id"] in old else "", list(t["steps"]))
             for t in norm]
 
 
-def to_checklist(norm: list[dict], old: list[PB.Check]) -> list[PB.Check]:
+def to_checklist(norm: list[dict], old: list[PB.IssuePlanCheck]) -> list[PB.IssuePlanCheck]:
     prev = {c.id: c for c in old}
-    return [PB.Check(c["id"], prev[c["id"]].state if c["id"] in prev else "미확인", c["item"],
+    return [PB.IssuePlanCheck(c["id"], prev[c["id"]].state if c["id"] in prev else "미확인", c["item"],
                      prev[c["id"]].evidence if c["id"] in prev else "") for c in norm]
 
 
@@ -217,7 +217,7 @@ def gate(journals, body: str, tasks, user_answer: str) -> dict | None:
 AUTONOMY_MARK = f"[ax:plan-autonomy v={VERSION}]"
 
 
-def _task_dict(t: PB.Task) -> dict:
+def _task_dict(t: PB.IssuePlanTask) -> dict:
     return {"id": t.id, "goal": t.goal, "target": t.target, "deps": list(t.deps), "check": t.check,
             "steps": list(t.steps)}
 
