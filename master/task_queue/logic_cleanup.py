@@ -68,7 +68,9 @@ def _read_redmine_config(root: Path, project: str = "") -> dict:
         #    `config.json` 이 없어서 넣은 것인데 **모든 루트**에 걸려 있었다 — 테스트가 임시 루트로
         #    `register_work` 를 부르면, 셸에 `AX_PROJECTS_ROOT` 가 있을 때 진짜 키로 **진짜 이슈**가
         #    났다(NS 에 198건). 임시 루트는 원전과 같이 `config.json` 만 본다 — 없으면 건너뛴다.
-        if not is_live_queue_root(root):
+        pinned = getattr(_PIN, "live", None)
+        live = pinned if pinned is not None else is_live_queue_root(root)
+        if not live:
             return {"url": url, "api_key": key, "project": proj}
         try:
             from ..redmine import base_url, api_key, project_of
@@ -78,6 +80,27 @@ def _read_redmine_config(root: Path, project: str = "") -> dict:
         except Exception:                                    # noqa: BLE001
             pass
     return {"url": url, "api_key": key, "project": proj}
+
+
+# 🔴 `#973` — 비동기 레드마인 작업의 라이브 판정은 **예약 시점(호출 스레드)** 에 고정한다.
+#    종전에는 스레드 안의 `_read_redmine_config` 가 늦게 판정했다. 테스트가 같은 임시 루트를
+#    `AX_TASK_QUEUE_ROOT` 로 라이브 선언한 틈에 늦게 돈 등재 스레드가 진짜 키로 **진짜 이슈**를
+#    만들었다(NS #974, 2026-11-16 실측 · #872 동일 제목). 서비스는 늘 라이브 루트라 동작이 같다.
+_PIN = threading.local()
+
+
+def _spawn_redmine_job(root, job) -> None:
+    """`job` 을 데몬 스레드로 돌리되, 그 스레드의 라이브 판정을 지금(예약 시점) 값으로 고정한다."""
+    live = is_live_queue_root(root)
+
+    def _run():
+        _PIN.live = live
+        try:
+            job()
+        finally:
+            _PIN.live = None
+
+    threading.Thread(target=_run, daemon=True).start()
 
 
 def _work_branch(root: Path, work_id: str, wmeta: dict) -> str:
@@ -299,7 +322,7 @@ def create_work_issue_async(idx: TaskIndex, work_id: str):
         except Exception as e:                               # noqa: BLE001
             _tq_log(f"[redmine] {work_id} 등재 이슈 예외: {e}", idx.root)
 
-    threading.Thread(target=_job, daemon=True).start()
+    _spawn_redmine_job(idx.root, _job)
 
 
 def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
@@ -679,7 +702,7 @@ def _try_create_review_issue_async(idx: TaskIndex, work_id: str,
                     error=f"종결 통보 예외: {type(e).__name__}: {e}")
             _tq_log(f"[redmine] {work_id} 예외: {e}", idx.root)
 
-    threading.Thread(target=_job, daemon=True).start()
+    _spawn_redmine_job(idx.root, _job)
 
 
 _TERMINAL = ("verified", "failed", "cancelled")
@@ -825,7 +848,7 @@ def _notify_piece_failed(idx: TaskIndex, task_id: str, *, resend: bool = False) 
                                       error=f"즉시 통보 예외: {type(e).__name__}: {e}")
             _tq_log(f"[piece-fail] {work_id} task={task_id} 예외: {e}", idx.root)
 
-    threading.Thread(target=_job, daemon=True).start()
+    _spawn_redmine_job(idx.root, _job)
     return True
 
 

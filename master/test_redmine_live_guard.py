@@ -25,6 +25,7 @@ import json
 import os
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -140,9 +141,55 @@ def test_register_work_on_temp_root_posts_nothing() -> None:
         check("등재 이슈 게시 1회", f.posts == ["[분산 작업] 상호작용"], str(f.posts))
 
 
+def test_liveness_is_pinned_at_scheduling() -> None:
+    """🔴 `#973` — 비동기 작업의 라이브 판정은 예약 시점에 고정된다.
+
+    실측 2026-11-16: `test_rounds` 가 임시 루트를 `AX_TASK_QUEUE_ROOT` 로 라이브 선언한 틈에, 그 루트에서
+    앞서 예약됐지만 늦게 돈 등재 스레드가 진짜 키로 NS #974 를 만들었다. 여기서는 `idx.lock` 을 쥐어
+    스레드를 붙잡은 채 환경을 바꾼다 — 게시는 기록 대역이라 네트워크를 타지 않는다.
+    """
+    print("\n[6] 🔴 예약 뒤 루트가 라이브로 바뀌어도 늦게 도는 스레드는 실제 설정을 쓰지 않는다 (#973)")
+    live, tmp = _tmp("ax-live-"), _tmp("ax-late-")
+    with _Fakes() as f:
+        os.environ[P.STATE_ROOT_ENV] = str(live)
+        idx = TaskIndex(tmp)
+        with idx.lock:                                  # 등재 스레드는 `with idx.lock:` 에서 기다린다
+            register_work(idx, title="상호작용", target_repo="/tmp/repo", project="NS",
+                          target_branch="task/W2/base")
+            os.environ[P.STATE_ROOT_ENV] = str(tmp)     # 예약 뒤 같은 루트를 라이브로 선언(test_rounds ⓑ 꼴)
+        _wait_posts(f, 1, sec=1.0)
+        check("[중요] 예약 때 임시였으면 게시 0회", f.posts == [], str(f.posts))
+
+        seen: list = []
+        done = threading.Event()
+
+        def job():
+            seen.append(LC._read_redmine_config(tmp, "NS"))
+            done.set()
+        os.environ[P.STATE_ROOT_ENV] = str(live)
+        gate = threading.Event()
+        LC._spawn_redmine_job(tmp, lambda: (gate.wait(2), job()))
+        os.environ[P.STATE_ROOT_ENV] = str(tmp)
+        gate.set()
+        done.wait(2)
+        check("  고정된 판정 — 해석자 폴백 없음", seen and not (seen[0]["url"] or seen[0]["api_key"]),
+              str(seen))
+
+        seen.clear()
+        done.clear()
+        os.environ[P.STATE_ROOT_ENV] = str(tmp)
+        LC._spawn_redmine_job(tmp, job)
+        done.wait(2)
+        check("  대조 — 예약 때 라이브면 종전대로 해석자 값", seen and seen[0]["url"] == "http://fake-redmine",
+              str(seen))
+        check("  예약 밖(직접 호출)은 종전대로 그때의 판정", LC._read_redmine_config(tmp, "NS")["api_key"]
+              == "fake-key")
+
+
 def main() -> int:
     for fn in (test_live_root_judgement, test_temp_root_does_not_fall_back,
-               test_config_json_still_honored, test_register_work_on_temp_root_posts_nothing):
+               test_config_json_still_honored, test_register_work_on_temp_root_posts_nothing,
+               test_liveness_is_pinned_at_scheduling):
         fn()
     total = _pass + _fail
     print(f"\n{'OK' if not _fail else 'FAIL'} test_redmine_live_guard: {_pass}/{total} 통과")
