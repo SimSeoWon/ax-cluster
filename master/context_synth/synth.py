@@ -265,6 +265,34 @@ def project_symbols(paths) -> set:
     return names
 
 
+def homonym_class_files(paths) -> dict:
+    """🔴 동명 클래스의 `{짧은 이름: {선언 파일}}` (`#971`) — 그래프의 **모듈 접두 전체 이름**에서만 만든다.
+
+    `pyparse.disambiguate` 는 파이썬 파일끼리 겹치는 이름을 `모듈.이름` 으로만 담는다. 이름의 모듈
+    접두가 그 행의 파일에서 나온 모듈명과 같을 때만 넣는다 — 그래프에 없는 것을 지어내지 않는다.
+    그래프가 없거나 읽기 실패면 빈 사전(폴백 없음 = 종전 판정)이다.
+    """
+    out: dict = {}
+    try:
+        from ..graph import db as gdb
+        from ..graph.pyparse import module_name
+        if not gdb.exists(paths):
+            return {}
+        with gdb.lock():
+            con = gdb.connect(paths)
+            rows = [(r[0], r[1]) for r in con.execute(
+                "SELECT name, file FROM classes WHERE name LIKE '%.%'")]
+    except Exception:                                        # noqa: BLE001 — 근거 없음 = 폴백 없음
+        return {}
+    for name, file in rows:
+        if not (isinstance(name, str) and isinstance(file, str) and file.endswith(".py")):
+            continue
+        mod, _, short = name.rpartition(".")
+        if short and mod == module_name(file):
+            out.setdefault(short, set()).add(file)
+    return out
+
+
 # 저장소 소스 디렉토리 → (파일 서명, 식별자 집합). 배치 하나가 그룹마다 부르므로 캐시한다.
 _LIVE_CACHE: dict = {}
 
@@ -817,7 +845,8 @@ def _synthesize_group(paths: ProjectPaths, key: str, files: list[str], *,
             report = verify_mod.verify(doc, sources=bodies,
                                        declared=grounding.declared_classes,
                                        known=project_symbols(paths),
-                                       live_counts=_index_only(paths))
+                                       live_counts=_index_only(paths),
+                                       class_files=homonym_class_files(paths))
             res.verify = report
             attempt.update(facts={"ok": report.ok, "reason": report.reason,
                                   "ghosts": report.ghosts, "declared": report.declared,

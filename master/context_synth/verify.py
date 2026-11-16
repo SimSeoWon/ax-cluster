@@ -413,38 +413,76 @@ _SUMMARY_RE = re.compile(r"^##\s*요약\s*$(.*?)(?=^##\s|\Z)", re.MULTILINE | re
 _RELATED_RE = re.compile(r"^related_classes:\s*$(.*?)(?=^\w|\n---)", re.MULTILINE | re.DOTALL)
 
 
-def related_names(doc: str) -> set[str]:
-    """frontmatter 에서 주장하는 이름. 경로만 있는 항목은 정규화가 먼저 푼다.
+def related_entries(doc: str) -> list[tuple[str, str]]:
+    """frontmatter `related_classes` 의 `(이름, 선언 파일)` 목록. 파일이 없거나 문자열이 아니면 `""`.
 
     매핑·인라인 목록을 함께 읽어 형식 차이로 사실 검사를 우회하지 못하게 한다.
-    Python 의 qualified 이름도 한 이름으로 대조한다.
     """
     import yaml
     fm = re.match(r"^---\s*\n(.*?)\n---(?:\s*\n|$)", doc or "", re.DOTALL)
     if not fm:
-        return set()
+        return []
     try:
         fields = yaml.safe_load(fm.group(1))
     except yaml.YAMLError:
-        return set()                    # 파싱 불가 문서의 형식은 기존 형식 게이트 몫
+        return []                       # 파싱 불가 문서의 형식은 기존 형식 게이트 몫
     if not isinstance(fields, dict):
-        return set()
+        return []
     entries = fields.get("related_classes") or []
     if isinstance(entries, dict):
         entries = [entries]
     elif isinstance(entries, str):
         entries = [entries]
     if not isinstance(entries, list):
-        return set()
-    names = set()
+        return []
+    out: list[tuple[str, str]] = []
     for entry in entries:
-        keys = entry.keys() if isinstance(entry, dict) else [entry]
-        for name in keys:
+        pairs = entry.items() if isinstance(entry, dict) else [(entry, "")]
+        for name, where in pairs:
             if isinstance(name, str) and name.startswith("<") and name.endswith(">"):
                 name = name[1:-1]
             if isinstance(name, str) and re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", name):
-                names.add(name)
-    return names
+                out.append((name, where if isinstance(where, str) else ""))
+    return out
+
+
+def related_names(doc: str) -> set[str]:
+    """frontmatter 에서 주장하는 이름. 경로만 있는 항목은 정규화가 먼저 푼다.
+
+    Python 의 qualified 이름도 한 이름으로 대조한다.
+    """
+    return {name for name, _ in related_entries(doc)}
+
+
+def _norm_path(p: str) -> str:
+    p = (p or "").strip().replace("\\", "/")
+    while p.startswith("./"):
+        p = p[2:]
+    return p
+
+
+def declared_by_file(doc: str, names, class_files: dict | None) -> set[str]:
+    """🔴 동명 클래스 폴백 (`#971`) — 짧은 이름을 **문서가 적은 선언 파일**로 그래프 전체 이름에 잇는다.
+
+    그래프는 파이썬 파일끼리 겹치는 이름을 `모듈.이름` 으로만 담는다(`pyparse.disambiguate`).
+    그래서 `Plan: master/plan_block.py` 처럼 올바른 문서가 짧은 이름 때문에 근거 없음으로 거부됐다.
+    `class_files` 는 `{짧은 이름: {선언 파일}}`(그래프의 전체 이름에서만 만든다).
+
+    [중요] 인정 조건은 **그 이름의 모든 항목**이 실제 선언 파일을 적은 것이다 — 경로가 없거나(`?`·빈 값)
+    틀린 파일이 하나라도 있으면 인정하지 않는다. 동명 후보 중 하나를 근거 없이 고르지 않는다.
+    """
+    if not class_files or not names:
+        return set()
+    by_name: dict[str, list[str]] = {}
+    for name, where in related_entries(doc):
+        if name in names:
+            by_name.setdefault(name, []).append(_norm_path(where))
+    ok = set()
+    for name, wheres in by_name.items():
+        files = {_norm_path(f) for f in class_files.get(name) or ()}
+        if files and wheres and all(w and w in files for w in wheres):
+            ok.add(name)
+    return ok
 
 
 def claimed(doc: str) -> set[str]:
@@ -488,7 +526,8 @@ class Report:
 
 
 def verify(doc: str, *, sources: dict[str, str], declared: list[str] | None = None,
-           known: set | None = None, live_counts: bool = False) -> Report:
+           known: set | None = None, live_counts: bool = False,
+           class_files: dict | None = None) -> Report:
     """문서 vs 소스 실측. `sources` 는 `{경로: 원문}`, `declared` 는 tree-sitter 실측 클래스.
 
     `declared` 를 주면 "실측 클래스를 하나도 안 쓴 문서" 도 잡는다 — 그룹을 잘못 묶었거나
@@ -538,7 +577,10 @@ def verify(doc: str, *, sources: dict[str, str], declared: list[str] | None = No
     if known:
         ghost_pool -= set(known)
     ghosts = sorted(said & ghost_pool)
-    unknown_related = sorted(related_names(doc) - related_evidence)
+    unknown = related_names(doc) - related_evidence
+    # `#971` — 동명 클래스는 짧은 이름 + 실제 선언 파일일 때만 그래프 전체 이름에 잇는다
+    unknown -= declared_by_file(doc, unknown, class_files)
+    unknown_related = sorted(unknown)
 
     # [중요] **언급 판정은 필터 전 집합으로 한다** (`#286`, 실측 2026-08-23). 위 `#270` 완화가
     #    *유령* 판정을 위해 「live 의 부분열」을 뺐는데, 같은 집합을 언급 판정이 쓰면서

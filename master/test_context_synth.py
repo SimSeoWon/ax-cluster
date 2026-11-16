@@ -931,6 +931,8 @@ UActiveThing 은 ULegacyLoader 를 통해 FOldPayload 를 비동기로 관리한
     test_attempt_records(tmp)
     print("\n[#750] related 근거 검증과 예시 잔재 거부")
     test_related_grounding(tmp)
+    print("\n[#971] 동명 클래스 — 짧은 이름 + 선언 파일 폴백")
+    test_homonym_fallback(tmp)
     print("\n[#840] cloud 순서·quota 전용 로컬 대체·재검증 경계")
     test_gemini_primary(tmp)
     print("\n[#782] 레인별 프롬프트 — 상용 무제한 · 로컬 종전 상한")
@@ -1127,6 +1129,97 @@ def test_969_claude_lane_and_tree_errors():
     finally:
         _pt.pinned_worktree = saved_pw
     check("#969 트리 OSError 는 GenerateError", got.startswith("GenerateError") and "디스크 가득" in got, got)
+
+
+HOMONYM_FILES = {
+    # 동명 Plan 이 두 파일에 — 그래프는 `pkg.a.Plan`·`pkg.b.Plan` 으로만 담는다
+    "pkg/a.py": "class Plan:\n    def tasks(self):\n        return []\n\n\nclass Task:\n    pass\n\n\n"
+                "class PlanError(ValueError):\n    pass\n",
+    "pkg/b.py": "class Plan:\n    pass\n\n\nclass Task:\n    pass\n",
+    # 합성 그룹 — 실재 사례(plan_metrics)처럼 Plan 이라는 낱말을 코드에 쓰지 않는다
+    "pkg/metrics.py": "from pkg import a\n\n\ndef count(block):\n    return len(block.tasks())\n",
+}
+
+HOMONYM_DOC = """---
+tags: [metrics, 계측]
+category: pkg/metrics
+related_classes:
+{related}
+---
+
+## 요약
+metrics 모듈의 count 는 플랜 블록의 태스크 수를 센다.
+
+## 개선 필요 사항
+없음
+"""
+
+
+def _homonym_project(tmp: Path) -> ProjectPaths:
+    import subprocess
+    from master.context_search.paths import SourceScope
+    repo = tmp / "repo"
+    for rel, body in HOMONYM_FILES.items():
+        f = repo / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(body, encoding="utf-8")
+    for args in (["init", "-q", "-b", "main"], ["add", "-A"],
+                 ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "r1"]):
+        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+    p = ProjectPaths(name="PY", root=tmp, scope=SourceScope(roots=("pkg",), exts=(".py",)))
+    cg.build_full(p, git=lambda _repo, *a: (0, "\n".join(HOMONYM_FILES)))
+    return p
+
+
+def test_homonym_fallback(tmp):
+    """`#971` — 동명 클래스는 짧은 이름 + 실제 선언 파일일 때만 그래프 전체 이름에 잇는다."""
+    def doc(*entries):
+        return HOMONYM_DOC.format(related="\n".join(f"  - {e}" for e in entries))
+
+    paths = _homonym_project(tmp / "homonym")
+    files = synth.homonym_class_files(paths)
+    check("#971 그래프 전체 이름에서 동명 선언 파일을 모은다",
+          files.get("Plan") == {"pkg/a.py", "pkg/b.py"} and files.get("Task") == {"pkg/a.py", "pkg/b.py"}
+          and "PlanError" not in files, str(files))
+    known = synth.project_symbols(paths)
+    src = {"pkg/metrics.py": HOMONYM_FILES["pkg/metrics.py"]}
+
+    def run(d, class_files=files):
+        return verify.verify(d, sources=src, declared=[], known=known, class_files=class_files)
+
+    # 재현 — 저장된 실패 산출물(plan_metrics: Plan·Task / test_plan_block: Plan)과 같은 꼴
+    for label, entries, names in (
+            ("plan_metrics 꼴", ("Plan: pkg/a.py", "Task: pkg/a.py", "PlanError: pkg/a.py"), ["Plan", "Task"]),
+            ("test_plan_block 꼴", ("Plan: pkg/a.py", "PlanError: pkg/a.py"), ["Plan"])):
+        before = run(doc(*entries), class_files=None)
+        check(f"#971 재현 {label}: 폴백 없으면 종전대로 거부",
+              not before.ok and before.unknown_related == names, before.reason)
+        after = run(doc(*entries))
+        check(f"#971 {label}: 실제 선언 파일을 적은 동명 관계는 통과", after.ok, after.reason)
+    check("#971 다른 동명 파일이어도 실제 선언이면 통과", run(doc("Plan: pkg/b.py")).ok)
+
+    for label, entries, name in (
+            ("없는 클래스", ("Ghost: pkg/a.py",), "Ghost"),
+            ("틀린 선언 파일", ("Plan: pkg/metrics.py",), "Plan"),
+            ("다른 전체 이름", ("pkg.other.Plan: pkg/a.py",), "pkg.other.Plan"),
+            ("경로 미상 동명", ('Plan: "?"',), "Plan"),
+            ("경로 없는 동명", ("Plan",), "Plan"),
+            ("한 항목이라도 틀린 파일", ("Plan: pkg/a.py", "Plan: pkg/metrics.py"), "Plan")):
+        r = run(doc(*entries))
+        check(f"#971 반례 {label}: 근거 없이 통과하지 않는다", not r.ok and name in r.unknown_related, r.reason)
+    check("#971 전체 이름 관계는 종전대로 통과", run(doc("pkg.a.Plan: pkg/a.py")).ok)
+
+    # 실제 합성 진입점 — 폴백이 배선돼 저장된다
+    out = paths.context / "pkg/metrics.md"
+    result = injected_group(paths, "pkg/metrics", ["pkg/metrics.py"],
+                            caller=llm(doc("Plan: pkg/a.py", "Task: pkg/a.py")))
+    check("#971 실제 합성 진입점이 동명 관계 문서를 저장한다",
+          result.written and out.is_file() and "Plan: pkg/a.py" in out.read_text(encoding="utf-8"),
+          result.reason)
+    result = injected_group(paths, "pkg/metrics", ["pkg/metrics.py"],
+                            caller=llm(doc("Plan: pkg/metrics.py")))
+    check("#971 실제 합성 진입점이 틀린 선언 파일은 거부한다",
+          not result.written and result.verify.unknown_related == ["Plan"], result.reason)
 
 
 def test_cloud_scope_rules_only_for_cloud():
