@@ -511,8 +511,24 @@ def test_range_note_retry_cap():
     shutil.rmtree(root)
 
 
+def test_range_homonym_notice_971():
+    """`#971` — 범위 리뷰 프롬프트에도 동명 클래스 고지가 실린다(자동 개명·차단 없음)."""
+    root, base, end = make_repo()
+    enqueue_range(root, base, end)
+    graph = {"AFoo": {"Source/M/A.cpp", "Source/X/Other.cpp"}}
+    calls = []
+    with patch("master.context_synth.synth.homonym_class_files", return_value=graph):
+        r = R.run_once(Paths(root), range_noter=noter, review_call=lambda p, **kw: calls.append(p) or BODY)
+    p = calls[0] if calls else ""
+    check("971 범위 프롬프트에 고지 절", R.HOMONYM_HEADER in p
+          and "`AFoo`: Source/M/A.cpp (이 변경) · Source/X/Other.cpp" in p and "이름 개선 검토 권고" in p,
+          p[-600:])
+    check("971 범위 리뷰는 그대로 완료", r is not None and r.state == "done", f"{r and r.state}")
+    shutil.rmtree(root)
+
+
 def main() -> int:
-    for fn in (test_enqueue_contract, test_run_range, test_bad_range_is_deterministic,
+    for fn in (test_range_homonym_notice_971, test_enqueue_contract, test_run_range, test_bad_range_is_deterministic,
                test_end_not_yet_in_mirror_is_transient, test_notify_issue,
                test_drain_waits_across_runs,
                test_commit_prompt_unchanged, test_verdict_contract,

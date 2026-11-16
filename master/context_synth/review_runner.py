@@ -251,11 +251,46 @@ def draft(diff: str, decls: str = "", *, model: str = DRAFT_MODEL,
     return out, ""
 
 
-def grounding_text(draft_body: str, decls: str) -> str:
-    """리뷰 프롬프트의 `grounding` 슬롯에 넣을 글. 둘 다 비면 빈 문자열."""
+HOMONYM_HEADER = "## 동명 클래스 (실측 — 클래스 그래프)"
+HOMONYM_ASK = (
+    "위 이름은 프로젝트의 여러 파일에 같은 이름으로 선언돼 있어 문서·검색·리뷰에서 서로 혼동될 수 있다. "
+    "변경분 버그·안전성 표에 「낮음」 행으로 이름마다 한 줄씩 남겨 "
+    "구체적인 이름으로 바꿀지 사람이 판단하게 한다(이름 개선 검토 권고 — 자동 개명·차단 대상이 아니다)."
+)
+
+
+def homonym_notice(paths, files: list, *, class_files: dict | None = None, logf=None) -> str:
+    """🔴 동명 클래스 리뷰 고지 (`#971`) — 변경 파일이 선언한 클래스 중 다른 파일에도 같은 이름이 있는 것.
+
+    재료는 합성 폴백과 같은 `synth.homonym_class_files`(그래프의 모듈 접두 전체 이름)다. 고지만 한다 —
+    자동 개명·일감 생성·차단은 없다. 그래프가 없거나 동명이 없으면 빈 문자열(종전 프롬프트 그대로).
+    """
+    log = logf or (lambda m: None)
+    if class_files is None:
+        from .synth import homonym_class_files                     # noqa: PLC0415
+        class_files = homonym_class_files(paths)
+    changed = {str(f).replace("\\", "/") for f in files or []}
+    rows = []
+    for name in sorted(class_files or {}):
+        decl = sorted(class_files[name] or ())
+        mine = [f for f in decl if f in changed]
+        if len(decl) > 1 and mine:
+            shown = " · ".join(f"{f} (이 변경)" if f in changed else f for f in decl)
+            rows.append(f"- `{name}`: {shown}")
+    if not rows:
+        return ""
+    log(f"[리뷰큐] 동명 클래스 고지 {len(rows)}건 — "
+        + ", ".join(r.split("`")[1] for r in rows[:6]))
+    return HOMONYM_HEADER + "\n" + "\n".join(rows) + "\n\n" + HOMONYM_ASK
+
+
+def grounding_text(draft_body: str, decls: str, homonyms: str = "") -> str:
+    """리뷰 프롬프트의 `grounding` 슬롯에 넣을 글. 모두 비면 빈 문자열."""
     parts = []
     if decls:
         parts.append("## 선언부 (실측 — 코드에서 그대로 읽었다)\n" + decls)
+    if homonyms:
+        parts.append(homonyms)
     if draft_body:
         parts.append(GROUNDING_HEADER + "\n\n## 로컬 초고\n" + draft_body)
     return "\n\n".join(parts)
@@ -541,6 +576,7 @@ def run_once(paths, *, draft_call=None, logf=None, model: str = DRAFT_MODEL,
         return res
 
     decls = declarations(repo, src, commit)
+    homonyms = homonym_notice(paths, src, logf=log)                # `#971` 퇴고에만 싣는다
     existing = find_draft(paths, commit)
     final = find_final_review(paths, commit)
     if final:
@@ -623,7 +659,7 @@ def run_once(paths, *, draft_call=None, logf=None, model: str = DRAFT_MODEL,
             # `#888` — 퇴고 diff 는 자르지 않는다(상한은 위 초고의 로컬 모델 몫).
             # `#970` — 거르기 전 목록을 넘긴다. review_gen 이 같은 필터로 다시 거르고, 뺀 파일 이름을 프롬프트에 싣는다
             reviewed = rg.review_commit(
-                paths, commit, files, chat=ask, grounding=grounding_text(body, decls),
+                paths, commit, files, chat=ask, grounding=grounding_text(body, decls, homonyms),
                 provenance={"draft_model": model, "review_model": label},
                 diff_max_chars=None, message=message, issue_context=issue_section,
                 issue_tasks=issue_tasks,
@@ -1008,6 +1044,7 @@ def run_range(paths, item: dict, res: RunnerResult, *, logf=None,
         notify_range(paths, item["id"], noter=range_noter, logf=log)
         return res
     decls = declarations(repo, src, end)
+    homonyms = homonym_notice(paths, src, logf=log)                # `#971`
     # `#946` T4 — 일감 스펙·플랜·커밋별 T# 대응. 수집기가 없거나 실패하면 빈 절(종전 그대로)
     issue_section, issue_tasks = range_context(paths, issue, base, end, context_collect, logf=log)
 
@@ -1034,7 +1071,7 @@ def run_range(paths, item: dict, res: RunnerResult, *, logf=None,
         with usage_mod.sink(paths.usage_log, source="review", task_id=f"issue{issue}"):
             # `#970` — 거르기 전 목록(뺀 파일 이름이 프롬프트에 실린다)
             reviewed = rg.review_range(
-                paths, issue, base, end, files, chat=ask, grounding=grounding_text("", decls),
+                paths, issue, base, end, files, chat=ask, grounding=grounding_text("", decls, homonyms),
                 provenance={"review_model": label}, commits=len(commits),
                 issue_round=rnum, findings=findings, uncovered=uncovered,
                 issue_context=issue_section, issue_tasks=issue_tasks,

@@ -1129,8 +1129,43 @@ def test_main_은_실물_수집기를_넘긴다():
           inspect.signature(R.run_range).parameters["context_collect"].default is None)
 
 
+def test_동명_클래스_고지_971():
+    """`#971` — 변경 파일이 선언한 동명 클래스를 퇴고 프롬프트에 고지한다(자동 개명·차단 없음)."""
+    graph = {"AFoo": {"Source/M/A.cpp", "Source/X/Other.cpp"}, "Solo": {"Source/M/A.cpp"},
+             "Far": {"Source/Y/P.py", "Source/Z/Q.py"}}
+    notice = R.homonym_notice(None, ["Source/M/A.cpp"], class_files=graph)
+    check("971 동명 이름·각 선언 파일·이 변경 표시", "`AFoo`: Source/M/A.cpp (이 변경) · Source/X/Other.cpp"
+          in notice and R.HOMONYM_HEADER in notice and "이름 개선 검토 권고" in notice, notice)
+    check("971 동명 아닌 이름·변경과 무관한 동명은 싣지 않는다", "Solo" not in notice and "Far" not in notice)
+    check("971 동명 없으면 빈 문자열", R.homonym_notice(None, ["Source/M/B.cpp"], class_files=graph) == "")
+    check("971 그래프 못 읽으면 빈 문자열(리뷰를 막지 않는다)", R.homonym_notice(object(), ["a.py"]) == "")
+
+    root, head = make_repo()
+    Q.enqueue(root, key=head, files=["Source/M/A.cpp"])
+    drafts, calls, logs = [], [], []
+    with patch("master.context_synth.synth.homonym_class_files", return_value=graph):
+        r = R.run_once(Paths(root), draft_call=lambda p: drafts.append(p) or "없음",
+                       review_call=lambda p: calls.append(p) or _review_body(), logf=logs.append)
+    pr = calls[0] if calls else ""
+    check("971 커밋 퇴고 프롬프트에 고지 절", r.state == "done" and R.HOMONYM_HEADER in pr
+          and "Source/X/Other.cpp" in pr and "이름 개선 검토 권고" in pr, pr[-600:])
+    check("971 고지는 DIFF 앞 근거 칸", 0 < pr.index(R.HOMONYM_HEADER) < pr.index("## DIFF"))
+    check("971 초고(로컬)에는 싣지 않는다", drafts and R.HOMONYM_HEADER not in drafts[0])
+    check("971 고지 로그 한 줄", any("동명 클래스 고지 1건 — AFoo" in x for x in logs), str(logs[-5:]))
+    check("971 리뷰는 그대로 완료(차단 없음)", Q.counts(root)["done"] == 1)
+    shutil.rmtree(root)
+
+    root, head = make_repo()
+    Q.enqueue(root, key=head, files=["Source/M/A.cpp"])
+    calls = []
+    with patch("master.context_synth.synth.homonym_class_files", return_value={}):
+        R.run_once(Paths(root), draft_call=lambda p: "없음", review_call=lambda p: calls.append(p) or _review_body())
+    check("971 동명 없는 커밋은 고지 절 없음(종전과 같음)", calls and R.HOMONYM_HEADER not in calls[0])
+    shutil.rmtree(root)
+
+
 if __name__ == "__main__":
-    for fn in (test_로컬뒤_antigravity가_퇴고한다, test_커밋_리뷰도_범위밖_파일을_싣는다_970, test_range_context_annotation_970,
+    for fn in (test_동명_클래스_고지_971, test_로컬뒤_antigravity가_퇴고한다, test_커밋_리뷰도_범위밖_파일을_싣는다_970, test_range_context_annotation_970,
                test_로컬_없음이어도_antigravity가_본다,
                test_초안_실패여도_antigravity가_마무리한다,
                test_기존_초안_재사용과_실패_보존,
