@@ -43,6 +43,31 @@ def check(label: str, ok: bool, detail: str = "") -> None:
         print(f"  [실패] {label}" + (f" — {detail}" if detail else ""))
 
 
+# 🔴 `#973` — 이 파일은 실제 레드마인에 닿지 않는다. 등재·라운드 공지는 데몬 스레드로 도는데, 그 스레드가
+#    다음 검사의 patch 창이나 라이브 선언 틈에 늦게 돌면 남의 본문을 섞거나(간헐 실패) 실제 이슈를 냈다(NS #974).
+#    ① 실행 내내 실제 게시·노트 함수는 「호출되면 기록 + 실패」 대역이다 ② 검사가 만든 작업은 그 검사 안에서 끝낸다.
+_BLOCKED: list = []
+
+
+def _block_real_redmine():
+    from master.task_queue import logic_cleanup as LC
+    LC._redmine_post_issue = lambda cfg, subj, desc, fv="": (_BLOCKED.append(("post", subj)) or 0)
+    LC._redmine_add_note = lambda cfg, iid, n, status_name="": (_BLOCKED.append(("note", iid)) or False)
+
+
+def _drain_redmine_jobs(sec: float = 30.0) -> bool:
+    """이 프로세스의 레드마인 작업 스레드가 모두 끝날 때까지 기다린다 — 다음 검사로 새지 않게."""
+    import threading
+    from master.task_queue import logic_cleanup as LC
+    end = time.monotonic() + sec
+    while any(t.name == LC.REDMINE_JOB_THREAD and t.is_alive() for t in threading.enumerate()):
+        if time.monotonic() > end:
+            check("레드마인 작업 스레드가 제한 시간 안에 끝난다", False, f"{sec}초 초과")
+            return False
+        time.sleep(0.01)
+    return True
+
+
 def _round(idx, wid: str, n: int = 1) -> list:
     """조각 `n` 개를 등재하고 전부 정상 종결시킨다 (= 라운드 하나)."""
     tids = []
@@ -193,6 +218,7 @@ def test_issue_is_created_at_registration() -> None:
         check("  work 에도 스탬프가 남는다", idx.works[wid].get("fixed_version") == "마일스톤 1",
               str(idx.works[wid].get("fixed_version")))
     finally:
+        _drain_redmine_jobs()               # `#973` 이 검사의 스레드는 대역 안에서 끝낸다
         LC._read_redmine_config, LC._redmine_post_issue = s_cfg, s_new
 
 
@@ -237,6 +263,7 @@ def test_completion_is_a_note_not_a_new_issue() -> None:
               int(idx.works[wid].get("noticed_round", 0)) == 1,
               str(idx.works[wid].get("noticed_round")))
     finally:
+        _drain_redmine_jobs()               # `#973` 이 검사의 스레드는 대역 안에서 끝낸다
         (LC._read_redmine_config, LC._redmine_post_issue,
          LC._redmine_add_note) = s_cfg, s_new, s_note
 
@@ -281,6 +308,7 @@ def _texts_for(kind: str, target_branch: str = "task/W/base") -> tuple:
     made: list = []
     notes: list = []
     logs: list = []     # `_tq_log` 은 하루 한 파일(첫 루트)에 쓰므로 파일이 아니라 호출을 본다
+    _drain_redmine_jobs()                     # 🔴 `#973` 앞 검사의 늦은 스레드가 이 patch 창에 들어오지 않게
     with patch.dict(os.environ, {"AX_PROJECTS_ROOT": str(_twin_root(kind))}), \
             patch.object(LC, "_tq_log", lambda msg, root: logs.append(msg)), \
             patch.object(LC, "_read_redmine_config",
@@ -292,7 +320,7 @@ def _texts_for(kind: str, target_branch: str = "task/W/base") -> tuple:
                          lambda cfg, iid, n, status_name="": (notes.append(n) or True)):
         root = Path(tempfile.mkdtemp(prefix="ax-rounds-"))
         idx = TaskIndex(root)
-        wid = register_work(idx, title="요청자", target_repo="/tmp/repo", project="NS",
+        wid = register_work(idx, title=f"요청자-{kind}", target_repo="/tmp/repo", project="NS",
                             target_branch=target_branch)["work_id"]
         for _ in range(300):
             if made:
@@ -303,7 +331,9 @@ def _texts_for(kind: str, target_branch: str = "task/W/base") -> tuple:
             if notes:
                 break
             time.sleep(0.01)
-    return (made[0] if made else ""), (notes[0] if notes else ""), wid, "\n".join(logs)
+        _drain_redmine_jobs()                 # 🔴 `#973` 이 검사의 스레드는 patch 안에서 끝낸다
+    mine = [d for d in made if f"- work_id: {wid}" in d]
+    return (mine[0] if mine else ""), (notes[0] if notes else ""), wid, "\n".join(logs)
 
 
 def _next_section(note: str) -> str:
@@ -422,12 +452,17 @@ def test_registration_itself_triggers_dispatch() -> None:
         check("🔴 임시 큐 루트에서는 신호를 안 쓴다 (라이브 스풀 오염 금지)",
               calls == [], str(calls))
 
-        # ⓑ 그 루트를 라이브로 선언하면 — 쓴다
+        # ⓑ 라이브로 선언한 루트면 — 쓴다. 🔴 `#973` ⓐ 와 **다른 새 루트**를 쓰고, 선언 전에 등재 스레드를
+        #    끝낸다 — 종전에는 ⓐ 루트를 라이브로 바꿔 늦게 돈 ⓐ 등재 스레드가 실제 이슈를 냈다(NS #974)
+        idx, wid = _work()
+        calls.clear()
+        _drain_redmine_jobs()
         prev = _os.environ.get("AX_TASK_QUEUE_ROOT")
         _os.environ["AX_TASK_QUEUE_ROOT"] = str(idx.root)
         try:
             register_task(idx, work_id=wid, type="code", task_data={},
                           target_file="Source/A/U.cpp", stem="u")
+            _drain_redmine_jobs()
         finally:
             if prev is None:
                 _os.environ.pop("AX_TASK_QUEUE_ROOT", None)
@@ -565,6 +600,7 @@ def test_skeleton_rework_reopens_only_with_advance_evidence():
 
 def main() -> int:
     print("=== work 은 라운드를 여러 번 돈다 — 마감은 사람이 한다 ===")
+    _block_real_redmine()
     for fn in (test_improve_request_reopens_the_work,
                test_round_value_is_a_check_not_a_command, test_dispatch_gate_agrees,
                test_issue_is_created_at_registration,
@@ -579,6 +615,8 @@ def main() -> int:
                test_work_branch_is_derived_when_unstored,
                test_requester_key_round_trips):
         fn()
+    _drain_redmine_jobs()
+    check("🔴 #973 실제 레드마인 게시·노트 함수가 한 번도 불리지 않았다", _BLOCKED == [], str(_BLOCKED[:5]))
     print(("\nFAIL" if _fail else "\nOK") + f" test_rounds: 실패 {_fail}건")
     return 1 if _fail else 0
 

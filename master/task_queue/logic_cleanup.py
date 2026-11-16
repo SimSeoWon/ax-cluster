@@ -87,6 +87,7 @@ def _read_redmine_config(root: Path, project: str = "") -> dict:
 #    `AX_TASK_QUEUE_ROOT` 로 라이브 선언한 틈에 늦게 돈 등재 스레드가 진짜 키로 **진짜 이슈**를
 #    만들었다(NS #974, 2026-11-16 실측 · #872 동일 제목). 서비스는 늘 라이브 루트라 동작이 같다.
 _PIN = threading.local()
+REDMINE_JOB_THREAD = "ax-redmine-job"   # 테스트가 이 이름으로 남은 작업을 기다린다(격리)
 
 
 def _spawn_redmine_job(root, job) -> None:
@@ -100,7 +101,7 @@ def _spawn_redmine_job(root, job) -> None:
         finally:
             _PIN.live = None
 
-    threading.Thread(target=_run, daemon=True).start()
+    threading.Thread(target=_run, daemon=True, name=REDMINE_JOB_THREAD).start()
 
 
 def _work_branch(root: Path, work_id: str, wmeta: dict) -> str:
