@@ -110,6 +110,25 @@ class RagLabelTests(unittest.TestCase):
                 self.assertEqual(L._main(["check"]), 0)
                 self.assertEqual(L._main(["list", "--request", self.r2]), 0)
 
+    def test_mcp_tools(self):
+        import json
+        from master.projects import mcp_server as M
+        with patch("master.context_search.paths.resolve", lambda name="": self.paths):
+            bad = json.loads(M.rag_label_tool("있음", "직접", search_id=self.s1, basis=["같은 모듈 수정"]))
+            self.assertFalse(bad["ok"])
+            self.assertIn("산출물 근거", bad["error"])
+            both = json.loads(M.rag_label_tool("있음", "간접", search_id=self.s1, request_id=self.r1))
+            self.assertFalse(both["ok"])
+            ok = json.loads(M.rag_label_tool("있음", "직접", search_id=self.s1, status="확정",
+                                             basis=["커밋 0ff78ea"], reviewer="claude"))
+            self.assertTrue(ok["ok"], ok)
+            got = json.loads(M.rag_labels_tool(issue_id=855))
+            self.assertEqual(got["problems"], [])
+            self.assertEqual(got["counts"]["search"]["labeled"], 1)
+            self.assertEqual(got["totals"]["searches"], 2)
+            one = json.loads(M.rag_labels_tool(request_id="없는요청"))
+            self.assertEqual(one["rows"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

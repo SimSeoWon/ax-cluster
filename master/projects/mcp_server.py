@@ -530,6 +530,50 @@ def _search_links(issue_id=0, purpose: str = "", *, source: str = "provided") ->
     return out
 
 
+
+@mcp.tool()
+def rag_label_tool(evidence: str, adoption: str, search_id: str = "", request_id: str = "",
+                   status: str = "후보", basis: list[str] | None = None, reviewer: str = "",
+                   note: str = "") -> str:
+    """RAG 검색·요청 하나에 **평가 판정**을 남긴다 (`#855`) — 원본 검색 로그는 바꾸지 않는다.
+
+    대상은 `search_id`(검색 하나) 또는 `request_id`(요청 묶음) 중 하나. 마운트된 프로젝트 트윈의
+    `rag_labels/labels.jsonl` 에 덧붙이고 같은 대상은 최신 판정이 유효하다.
+        evidence  근거 제공: 있음 · 일부 · 없음 · 확인불가
+        adoption  채택: 직접 · 간접 · 확인불가
+        status    후보 · 확정(확정은 reviewer 와 basis 필수)
+    [중요] 「직접」 채택은 basis 에 산출물 근거(커밋 해시 · `#N T#` · `파일:줄`)가 있어야 한다 — 같은 모듈이
+    나중에 수정됐다는 사실이나 자기 보고는 직접 증거가 아니다. 판정이 어려우면 「확인불가」로 남긴다.
+    """
+    from ..context_search import rag_labels as RL
+    from ..context_search.paths import resolve as resolve_paths
+    if bool(search_id) == bool(request_id):
+        return json.dumps({"ok": False, "error": "search_id 와 request_id 중 하나만 준다"}, ensure_ascii=False)
+    try:
+        rec = RL.add(resolve_paths(""), target="search" if search_id else "request",
+                     target_id=search_id or request_id, evidence=evidence, adoption=adoption,
+                     status=status, basis=basis or [], reviewer=reviewer, note=note)
+    except RL.LabelError as e:
+        return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
+    return json.dumps({"ok": True, "label": rec}, ensure_ascii=False)
+
+
+@mcp.tool()
+def rag_labels_tool(issue_id: int = 0, request_id: str = "", task_type: str = "user_command") -> str:
+    """RAG 평가 판정 조회 (`#855`) — 분모(요청·검색·문서)·행별 판정·요약 집계와 일치 검사 결과.
+
+    `issue_id` 면 그 일감에 **관측 연결된** 검색만 분모로 센다. `request_id` 면 그 요청의 판정 행만 돌려준다.
+    `problems` 가 비어 있지 않으면 집계가 행별 판정과 어긋난 것이다 — 수치를 쓰기 전에 본다.
+    [주의] 「결과 있음」 비율은 적중률·반영률이 아니다 — 판정된 것(labeled)과 아닌 것(unlabeled)을 나눠 읽는다.
+    """
+    from ..context_search import rag_labels as RL
+    from ..context_search.paths import resolve as resolve_paths
+    rep = RL.summary(resolve_paths(""), issue_id=issue_id, task_type=task_type)
+    problems = RL.check(rep)
+    if request_id:
+        rep["rows"] = [r for r in rep["rows"] if r.get("request_id") == request_id]
+    return json.dumps({"ok": True, **rep, "problems": problems}, ensure_ascii=False)
+
 def _search_context(query: str, limit: int) -> str:
     paths = None
     searcher = None
