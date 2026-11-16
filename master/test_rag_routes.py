@@ -59,6 +59,31 @@ class RAGRoutesTests(unittest.TestCase):
             self.assertEqual(status, 200)
             self.assertEqual(json.loads(body)["item"]["search_id"], "s1")
 
+    def test_855_api_public_link_fields_labels_and_filter(self):
+        from master.context_search import rag_labels
+        linked = dict(self.entry, search_id="s2", request_id="r2", issue_id=855, issue_id_source="issue_lock",
+                      purpose="목적", task_type="user_command")
+        with self.paths.search_log.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(linked, ensure_ascii=False) + "\n")
+        rag_labels.add(self.paths, target="search", target_id="s2", evidence="있음", adoption="간접",
+                       basis=["#855 노트 — 근거 인용"], reviewer="claude", note="메모 본문")
+        with patch("master.projects.config.Registry.load", side_effect=OSError("config unavailable")), \
+                patch.object(app, "_issue_titles", lambda ids: {}):
+            status, body = request(self.web, "/api/v1/rag-logs", b"issue_id=855")
+            self.assertEqual(status, 200)
+            data = json.loads(body)
+            self.assertEqual([i["search_id"] for i in data["items"]], ["s2"], "관측 연결 필터")
+            self.assertEqual((data["items"][0]["issue_id"], data["items"][0]["purpose"]), (855, "목적"))
+            self.assertEqual(data["labels"]["search:s2"]["adoption"], "간접")
+            self.assertNotIn("근거 인용".encode(), body, "근거 인용·메모는 공개 응답에 싣지 않는다")
+            self.assertNotIn("메모 본문".encode(), body)
+            status, _ = request(self.web, "/api/v1/rag-logs", b"issue_id=-3")
+            self.assertEqual(status, 400)
+            status, body = request(self.web, "/rag-logs", b"issue_id=855")
+            self.assertEqual(status, 200)
+            self.assertIn("#855 (진행 중 일감 잠금)", body.decode())
+            self.assertIn("검색 판정 1/1", body.decode())
+
     def test_registered_project_selection_does_not_mount(self):
         other = SimpleNamespace(name="Other", root=Path(self.tmp.name), search_log=Path(self.tmp.name) / "absent.jsonl")
         reg = SimpleNamespace(names=["Test", "Other"])

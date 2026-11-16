@@ -6,13 +6,18 @@
 from __future__ import annotations
 
 import html
+import re
 from datetime import date
 from urllib.parse import urlencode
 
 from ..status import _CSS
 from .nav import SIDE_CSS, nav_html
 
-_FIELDS = ("project", "start", "end", "query", "task_type", "status", "request_id", "search_id", "offset", "limit")
+_FIELDS = ("project", "start", "end", "query", "task_type", "status", "request_id", "search_id", "issue_id",
+           "offset", "limit")
+# 원문 속 세 자리 이상 숫자 — 일감 번호 **후보** 표시용. 연결로 확정하지 않는다(#855)
+_NUM = re.compile(r"(?<![\d.])(\d{3,5})(?![\d.])")
+_SOURCE = {"issue_lock": "진행 중 일감 잠금", "interview": "착수 전 인터뷰 재료", "provided": "세션 명시"}
 _CSS_EXTRA = """
 .filters{display:flex;flex-wrap:wrap;gap:.7rem;margin:1rem 0;padding:1rem;background:var(--card);border:1px solid var(--line);border-radius:10px}
 .filters label{display:flex;flex-direction:column;font-size:.8rem;gap:.25rem}
@@ -22,7 +27,7 @@ input,select,button{font:inherit;color:var(--fg);background:var(--bg);border:1px
 td.query{min-width:15rem;white-space:pre-wrap}.group{border:1px solid var(--line);border-radius:10px;padding:1rem;margin:1rem 0;background:var(--card)}
 pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:.85rem;border:1px solid var(--line);border-radius:6px;padding:.7rem;background:var(--bg)}
 .meta{font-size:.8rem;color:var(--dim);overflow-wrap:anywhere}.results td{overflow-wrap:anywhere;max-width:35rem}.results pre{min-width:15rem;margin:0}
-.pager{display:flex;gap:1rem;margin:1rem 0}details{margin:.7rem 0}summary{cursor:pointer;color:var(--accent)}
+.summary{margin:.5rem 0}.summary th{width:7rem;color:var(--dim)}.pager{display:flex;gap:1rem;margin:1rem 0}details{margin:.7rem 0}summary{cursor:pointer;color:var(--accent)}
 """
 
 
@@ -56,7 +61,7 @@ def _form(filters, projects):
     out.append('<label>프로젝트<select name="project">' + _options([(p, p or "현재 마운트") for p in names], current) + '</select></label>')
     for key, label, kind in (("start", "시작일 (로그 기록일 기준)", "date"), ("end", "종료일 (로그 기록일 기준)", "date"),
                              ("query", "검색어·원문", "search"), ("task_type", "작업 분류", "text"),
-                             ("request_id", "요청 ID", "text")):
+                             ("request_id", "요청 ID", "text"), ("issue_id", "일감 번호(관측 연결)", "number")):
         out.append(f'<label>{label}<input type="{kind}" name="{key}" value="{_e(filters.get(key, ""))}"></label>')
     out.append('<label>상태<select name="status">' + _options(
         [("", "전체"), ("success", "결과 있음"), ("empty", "결과 없음"), ("error", "검색 오류"), ("missing_origin", "사용자 원문 미수집")],
@@ -89,6 +94,38 @@ def _results(entry):
     return "".join(out)
 
 
+def _summary(entries, labels, titles) -> str:
+    """🔴 `#855` — 요청 묶음 머리 요약: 일감 연결 · 목적 · 판정 상태. 상세(질의·점수·발췌)는 아래 접힌 칸."""
+    rows = []
+    linked = {}
+    for e in entries:
+        if isinstance(e.get("issue_id"), int):
+            linked.setdefault(e["issue_id"], _SOURCE.get(e.get("issue_id_source"), e.get("issue_id_source") or "출처 미상"))
+    if linked:
+        parts = []
+        for n, src in sorted(linked.items()):
+            title = (titles or {}).get(n)
+            parts.append(f'#{_e(n)} ({_e(src)})' + (f' — 현재 제목: {_e(title)} <span class="meta">(현재 조회값 · 검색 당시 요구가 아니다)</span>'
+                                                  if title else ''))
+        rows.append('<tr><th>일감</th><td>' + "<br>".join(parts) + '</td></tr>')
+    else:
+        cands = sorted({m for e in entries for m in _NUM.findall(str(e.get("user_request") or ""))}, key=int)
+        rows.append('<tr><th>일감</th><td>연결 없음(확인불가)'
+                    + (f' · 원문 속 번호 후보: {_e(", ".join(cands))} <span class="meta">(후보 — 확정 아님)</span>' if cands else '')
+                    + '</td></tr>')
+    purposes = list(dict.fromkeys(str(e["purpose"]) for e in entries if e.get("purpose")))
+    rows.append('<tr><th>검색 목적</th><td>' + (" · ".join(_e(p) for p in purposes) if purposes else "미기록") + '</td></tr>')
+    labels = labels or {}
+    rid = next((e.get("request_id") for e in entries if e.get("request_id")), None)
+    req = labels.get(("request", rid)) if rid else None
+    sids = [e.get("search_id") for e in entries if e.get("search_id")]
+    judged = [labels[("search", s)] for s in sids if ("search", s) in labels]
+    verdict = (f'요청 판정: 근거 {_e(req.get("evidence"))} · 채택 {_e(req.get("adoption"))} · {_e(req.get("status"))}'
+               if req else "요청 판정 없음")
+    rows.append('<tr><th>평가</th><td>' + verdict + f' · 검색 판정 {len(judged)}/{len(sids)}</td></tr>')
+    return '<table class="summary">' + "".join(rows) + '</table>'
+
+
 def render(report) -> bytes:
     filters = report.get("filters", {})
     out = [_form(filters, report.get("projects", [])),
@@ -109,6 +146,7 @@ def render(report) -> bytes:
         out.append(f'<section class="group"><h2>요청 {_e(request_id)}</h2>')
         if separate_selection:
             out.append('<p class="note">선택한 검색 상세 · 아래 관련 검색 목록의 현재 페이지에 포함되지 않은 기록입니다. 목록 건수에는 추가하지 않습니다.</p>')
+        out.append(_summary(entries, report.get("labels"), report.get("titles")))
         out.append(f'<a href="{_e(_link(filters, request_id=request_id, search_id="", offset=0))}">이 요청의 검색 모아 보기</a>')
         origins = list(dict.fromkeys(str(e.get("user_request")) for e in entries if e.get("user_request") is not None))
         if origins:
@@ -123,6 +161,12 @@ def render(report) -> bytes:
             out.append('<details' + (' open' if filters.get("search_id") == search_id else '') + '><summary>'
                        + _e(entry.get("ts", "")) + ' · ' + _e(entry.get("task_type", "미분류"))
                        + ' · ' + _e(entry.get("status", "이전 로그")) + ' · ' + _e(entry.get("query", "")) + '</summary>')
+            if entry.get("purpose"):
+                out.append('<p class="meta">이 검색의 목적: ' + _e(entry["purpose"]) + '</p>')
+            lab = (report.get("labels") or {}).get(("search", search_id))
+            if lab:
+                out.append('<p class="meta">판정: 근거 ' + _e(lab.get("evidence")) + ' · 채택 ' + _e(lab.get("adoption"))
+                           + ' · ' + _e(lab.get("status")) + '</p>')
             out.append('<p class="meta">검색 ID: ' + _e(search_id or "미수집")
                        + ' · 호출: ' + _e(entry.get("caller", "")) + ' · 원문 출처: ' + _e(entry.get("user_request_source", "미수집"))
                        + ' · 소요(ms): ' + _e(entry.get("duration_ms", "미수집")) + '</p>')
@@ -148,8 +192,13 @@ def render(report) -> bytes:
     return _shell("".join(out))
 
 
-def page(paths, filters, *, projects=None, loader=None, detail_loader=None):
-    """외부에서 등록·마운트 경계를 확인한 paths만 전달한다."""
+def page(paths, filters, *, projects=None, loader=None, detail_loader=None, labels_loader=None,
+         title_loader=None):
+    """외부에서 등록·마운트 경계를 확인한 paths만 전달한다.
+
+    `labels_loader(paths)` → `{(target, id): 판정}`, `title_loader(issue_ids)` → `{번호: 현재 제목}` (`#855`).
+    둘 다 비우면 판정·제목 없이 그린다 — 읽기 실패도 화면을 막지 않는다.
+    """
     filters = {key: str(filters[key]) for key in _FIELDS if key in filters}
     filters["project"] = str(getattr(paths, "name", filters.get("project", "")))
     try:
@@ -175,15 +224,33 @@ def page(paths, filters, *, projects=None, loader=None, detail_loader=None):
                 for key in ("query", "status", "task_type", "start", "end"):
                     filters.pop(key, None)
                 offset = 0
+        extra = {}
+        if filters.get("issue_id"):
+            extra["issue_id"] = int(filters["issue_id"])
+            if extra["issue_id"] <= 0:
+                raise ValueError("invalid issue")
         report = loader(paths, task_type=filters.get("task_type", ""), query=filters.get("query", ""),
                         request_id=filters.get("request_id", ""), status=filters.get("status", ""),
-                        date_from=filters.get("start", ""), date_to=filters.get("end", ""), offset=offset, limit=limit)
+                        date_from=filters.get("start", ""), date_to=filters.get("end", ""), offset=offset, limit=limit,
+                        **extra)
         if filters.get("search_id") and not selected.get("request_id"):
             report = {"items": [selected], "total": 1, "offset": 0, "limit": limit}
         elif filters.get("search_id") and not any(
                 entry.get("search_id") == selected.get("search_id") for entry in report.get("items", [])):
             report = {**report, "selected_entry": selected}
-        return 200, render({**report, "filters": filters, "projects": projects or [filters["project"]]})
+        shown = list(report.get("items", [])) + ([report["selected_entry"]] if report.get("selected_entry") else [])
+        labels, titles = {}, {}
+        try:
+            labels = labels_loader(paths) if labels_loader else {}
+        except Exception:                                   # noqa: BLE001 — 판정을 못 읽어도 로그는 보인다
+            labels = {}
+        try:
+            ids = sorted({e["issue_id"] for e in shown if isinstance(e.get("issue_id"), int)})
+            titles = title_loader(ids) if (title_loader and ids) else {}
+        except Exception:                                   # noqa: BLE001 — 제목 조회 실패면 번호만
+            titles = {}
+        return 200, render({**report, "filters": filters, "projects": projects or [filters["project"]],
+                            "labels": labels, "titles": titles})
     except ValueError:
         return 400, _shell('<p class="note">조회 조건을 확인하세요.</p>')
     except Exception:  # 서버 경로·예외 문자열을 브라우저에 노출하지 않는다.

@@ -103,12 +103,54 @@ def rag_paths(paths, project: str):
     return resolve(project, registry=reg), reg.names
 
 
+_TITLE_CACHE: dict = {}
+_TITLE_TTL = 600
+
+
+def _issue_titles(ids) -> dict:
+    """`#855` — 일감 번호 → **현재** 제목(읽기 공개 API · 2초 제한 · 10분 캐시). 실패한 번호는 빠진다."""
+    import json as _json
+    import time
+    import urllib.request
+    from ..redmine import base_url
+    out, now = {}, time.monotonic()
+    for n in list(ids)[:20]:
+        hit = _TITLE_CACHE.get(n)
+        if hit and now - hit[0] < _TITLE_TTL:
+            out[n] = hit[1]
+            continue
+        try:
+            with urllib.request.urlopen(f"{base_url()}/issues/{int(n)}.json", timeout=2) as resp:
+                title = str(_json.load(resp)["issue"]["subject"])
+        except Exception:                                    # noqa: BLE001 — 번호만 보인다
+            continue
+        _TITLE_CACHE[n] = (now, title)
+        out[n] = title
+    return out
+
+
+def _public_rag_labels(paths, entries) -> dict:
+    """`#855` — 보이는 검색·요청의 최신 판정 요지만(근거 인용·검증자 메모는 싣지 않는다)."""
+    try:
+        from ..context_search import rag_labels
+        latest = rag_labels.latest(paths)
+    except Exception:                                        # noqa: BLE001
+        return {}
+    out = {}
+    for e in entries:
+        for target, tid in (("search", e.get("search_id")), ("request", e.get("request_id"))):
+            rec = latest.get((target, tid)) if tid else None
+            if rec:
+                out[f"{target}:{tid}"] = {k: rec.get(k) for k in ("evidence", "adoption", "status", "ts")}
+    return out
+
+
 def _public_rag_entry(entry):
     """원본 로그는 유지하고 공개 응답에서 서버 메타·오류 경로를 제외한다."""
     keys = ("schema_version", "ts", "project", "search_id", "request_id", "parent_search_id",
             "session_id", "work_id", "task_type", "user_request", "user_request_missing",
             "user_request_source", "llm_query", "query", "query_expanded", "query_used", "caller", "status",
-            "duration_ms")
+            "duration_ms", "issue_id", "issue_id_source", "purpose")
     result = {key: entry[key] for key in keys if key in entry}
     for collection in ("result_snapshot", "result_details"):
         if not isinstance(entry.get(collection), list):
@@ -177,12 +219,15 @@ class WebUI:
             try:
                 query = parse_qs((scope.get("query_string") or b"").decode("utf-8", "replace"),
                                  keep_blank_values=True)
-                keys = ("project", "start", "end", "query", "task_type", "status", "request_id", "search_id", "offset", "limit")
+                keys = ("project", "start", "end", "query", "task_type", "status", "request_id", "search_id",
+                        "issue_id", "offset", "limit")
                 filters = {key: query[key][0] for key in keys if key in query}
                 paths, names = rag_paths(self._paths_fn(), filters.get("project", ""))
                 if path != "/api/v1/rag-logs":
                     from . import rag_logs
-                    status, body = rag_logs.page(paths, filters, projects=names)
+                    from ..context_search import rag_labels
+                    status, body = rag_logs.page(paths, filters, projects=names,
+                                                 labels_loader=rag_labels.latest, title_loader=_issue_titles)
                     return await _send(send, status, body, HTML)
                 from ..context_search import search_log
                 offset, limit = int(filters.get("offset", "0")), int(filters.get("limit", "50"))
@@ -199,10 +244,14 @@ class WebUI:
                         return await _send(send, 404, _j({"error": "search log not found"}))
                     report = {"item": _public_rag_entry(entry)}
                 else:
+                    issue = int(filters.get("issue_id") or 0)
+                    if issue < 0:
+                        raise ValueError("invalid issue")
                     report = search_log.list_entries(paths, task_type=filters.get("task_type", ""),
                         query=filters.get("query", ""), request_id=filters.get("request_id", ""),
                         status=filters.get("status", ""), date_from=filters.get("start", ""),
-                        date_to=filters.get("end", ""), offset=offset, limit=limit)
+                        date_to=filters.get("end", ""), offset=offset, limit=limit, issue_id=issue)
+                    report["labels"] = _public_rag_labels(paths, report["items"])
                     report["items"] = [_public_rag_entry(entry) for entry in report["items"]]
                 return await _send(send, 200, _j(report))
             except ValueError:

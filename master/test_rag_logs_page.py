@@ -154,6 +154,49 @@ class RAGLogsPageTests(unittest.TestCase):
                                   detail_loader=Mock(return_value=None))
         self.assertEqual(status, 404)
 
+    def test_855_request_summary_linked_candidate_purpose_labels(self):
+        linked = dict(self.entry, issue_id=855, issue_id_source="issue_lock", purpose="로그 <필드> 위치")
+        second = dict(linked, search_id="search-two", purpose="화면 코드")
+        labels = {("request", "request-one"): {"evidence": "있음", "adoption": "직접", "status": "확정"},
+                  ("search", "search-one"): {"evidence": "일부", "adoption": "간접", "status": "후보"}}
+        text = rag_logs.render({"items": [linked, second], "total": 2, "labels": labels,
+                                "titles": {855: "<b>RAG 실사용</b>"}}).decode()
+        self.assertIn("#855 (진행 중 일감 잠금)", text)
+        self.assertIn("현재 제목: &lt;b&gt;RAG 실사용&lt;/b&gt;", text, "제목도 이스케이프")
+        self.assertIn("현재 조회값", text, "현재 제목은 당시 요구가 아니라고 밝힌다")
+        self.assertIn("로그 &lt;필드&gt; 위치 · 화면 코드", text)
+        self.assertIn("요청 판정: 근거 있음 · 채택 직접 · 확정", text)
+        self.assertIn("검색 판정 1/2", text)
+        self.assertIn("판정: 근거 일부 · 채택 간접 · 후보", text)
+
+        plain = dict(self.entry, user_request="936번 진행해 그리고 2026 계획")
+        text = rag_logs.render({"items": [plain], "total": 1}).decode()
+        self.assertIn("연결 없음(확인불가)", text)
+        self.assertIn("원문 속 번호 후보: 936, 2026", text)
+        self.assertIn("후보 — 확정 아님", text)
+        self.assertIn("검색 목적</th><td>미기록", text)
+        self.assertIn("요청 판정 없음 · 검색 판정 0/1", text)
+
+    def test_855_page_loaders_and_issue_filter(self):
+        entry = dict(self.entry, issue_id=855, issue_id_source="provided")
+        loader = Mock(return_value={"items": [entry], "total": 1, "offset": 0, "limit": 50})
+        titles = Mock(return_value={855: "제목"})
+        status, text = rag_logs.page(self.paths, {"issue_id": "855"}, loader=loader, detail_loader=Mock(),
+                                     labels_loader=lambda p: {}, title_loader=titles)
+        self.assertEqual(status, 200)
+        self.assertEqual(loader.call_args.kwargs["issue_id"], 855)
+        titles.assert_called_once_with([855])
+        self.assertIn("현재 제목: 제목".encode(), text)
+        status, _ = rag_logs.page(self.paths, {"issue_id": "abc"}, loader=loader, detail_loader=Mock())
+        self.assertEqual(status, 400)
+        def boom(*a):
+            raise OSError("/private/labels")
+        status, text = rag_logs.page(self.paths, {}, loader=loader, detail_loader=Mock(),
+                                     labels_loader=boom, title_loader=boom)
+        self.assertEqual(status, 200, "판정·제목 읽기 실패도 화면은 연다")
+        self.assertNotIn(b"/private/labels", text)
+        self.assertIn("#855 (세션 명시)".encode(), text)
+
 
 if __name__ == "__main__":
     unittest.main()
