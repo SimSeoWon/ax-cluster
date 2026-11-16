@@ -462,7 +462,8 @@ def mark_not_a_class_tool(term: str) -> str:
 @mcp.tool()
 def search_context_tool(query: str, limit: int = 8, *, task_type: str = "",
                         user_request: str | None = None, request_id: str = "",
-                        session_id: str = "", work_id: str = "") -> str:
+                        session_id: str = "", work_id: str = "", issue_id: int = 0,
+                        purpose: str = "") -> str:
     """[중요] **검색 입구는 이것 하나다.** 대괄호 해석 → 시소러스 확장 → 검색을 한 번에 한다.
 
     작업장의 Claude 는 이 도구만 부르면 된다. 순서를 스스로 조립할 필요가 없다 —
@@ -485,6 +486,10 @@ def search_context_tool(query: str, limit: int = 8, *, task_type: str = "",
 
     등록은 **검색을 막지 않는다.** 모르는 별칭이 있어도 결과는 그대로 돌려준다 —
     사람을 기다리는 인프라를 만들지 않는다(§2).
+
+    `issue_id`·`purpose` (`#855`) — 이 검색이 어느 일감의 무엇을 찾는지. `issue_id` 를 비우면 진행 중 일감
+    잠금(`issue_start`)에서 관측값을 찍고, 잠금이 없으면 비운다(지어내지 않는다). `purpose` 는 이 검색 하나의
+    목적(예: 「원인 코드 위치」)을 한 줄로 — 같은 요청 안에서도 검색마다 다르다.
     """
     # #837: user_request is the original command, never a paraphrase of query.
     # Native MCP callers supply it explicitly; only input hooks can mark it captured.
@@ -493,8 +498,36 @@ def search_context_tool(query: str, limit: int = 8, *, task_type: str = "",
                                    user_request=user_request,
                                    user_request_source="provided" if user_request is not None else "missing",
                                    request_id=request_id, session_id=session_id, work_id=work_id,
-                                   llm_query=query):
+                                   llm_query=query, **_search_links(issue_id, purpose)):
         return _search_context(query, limit)
+
+
+def _search_links(issue_id=0, purpose: str = "", *, source: str = "provided") -> dict:
+    """🔴 `#855` — 검색 로그에 남길 **관측 가능한** 연결. 빈 값은 키 자체를 넣지 않는다.
+
+    `issue_id` 가 오면 그 값(`issue_id_source` = `source`), 없으면 마운트된 프로젝트의 진행 중 일감 잠금
+    (`issue_lock.current`) — 둘 다 없으면 연결 없음이다. 원문 속 숫자로 추정하지 않는다(그건 화면의 후보 표시 몫).
+    잠금 조회 실패는 검색을 막지 않는다 — 연결을 못 찍은 것이지 검색 실패가 아니다.
+    """
+    out: dict = {}
+    try:
+        n = int(issue_id or 0)
+    except (TypeError, ValueError):
+        n = 0
+    if n > 0:
+        out.update(issue_id=n, issue_id_source=source)
+    else:
+        try:
+            from .. import issue_lock
+            from ..context_search.paths import resolve as resolve_paths
+            cur = issue_lock.current(resolve_paths("").root)
+            if cur and int(cur.get("issue_id") or 0) > 0:
+                out.update(issue_id=int(cur["issue_id"]), issue_id_source="issue_lock")
+        except Exception:                                    # noqa: BLE001 — 연결 없음으로 둔다
+            pass
+    if (purpose or "").strip():
+        out["purpose"] = purpose.strip()[:200]
+    return out
 
 
 def _search_context(query: str, limit: int) -> str:

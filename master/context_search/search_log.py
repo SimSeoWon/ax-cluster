@@ -278,12 +278,18 @@ def _all_entries(paths):
 
 
 def list_entries(paths, *, task_type='', query='', request_id='', status='',
-                 date_from='', date_to='', offset=0, limit=50):
-    """웹UI 조회. status=missing_origin은 실제 원문 미수집 요청만 고른다."""
+                 date_from='', date_to='', offset=0, limit=50, issue_id=0):
+    """웹UI 조회. status=missing_origin은 실제 원문 미수집 요청만 고른다.
+
+    `issue_id` (`#855`) — 그 일감에 **관측값으로 연결된** 검색만. 원문 속 숫자 후보는 고르지 않는다.
+    """
     entries = []
     needle = query.casefold()
+    want_issue = int(issue_id or 0)
     for rec in _all_entries(paths):
         if task_type and rec.get("task_type", "unclassified") != task_type:
+            continue
+        if want_issue and rec.get("issue_id") != want_issue:
             continue
         if request_id and rec.get("request_id") != request_id:
             continue

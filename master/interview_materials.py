@@ -25,11 +25,14 @@ def _query(issue: dict) -> str:
     return re.sub(r"^\s*(버그|개선|신규)\s*[—-]\s*", "", s).strip() or (issue.get("subject") or "")
 
 
-def default_rag(query: str) -> dict:
+def default_rag(query: str, issue_id: int = 0) -> dict:
     from master.context_search import search_log
     from master.projects import mcp_server
+    # `#855` — 재료 검색은 어느 일감의 착수 전 인터뷰인지 안다. 그 번호를 관측값으로 남긴다
+    links = mcp_server._search_links(issue_id, "착수 전 인터뷰 재료", source="interview") if issue_id else {}
     with search_log.search_context(caller="interview", task_type="interview_materials",
-                                   user_request=None, user_request_source="missing", llm_query=query):
+                                   user_request=None, user_request_source="missing", llm_query=query,
+                                   **links):
         return json.loads(mcp_server._search_context(query, RAG_LIMIT))
 
 
@@ -62,7 +65,8 @@ def reports_mentioning(issue_id, root: Path = REPORTS) -> list[dict]:
 def collect(issue: dict, *, project: str = "", rag=None, ontology=None, recent=None,
             reports_root: Path = REPORTS) -> dict:
     """재료 한 묶음. `issue` 는 `redmine.get_issue` 응답(본문·노트 포함)."""
-    rag, ontology, recent = rag or default_rag, ontology or default_ontology, recent or default_recent
+    rag = rag or (lambda q: default_rag(q, int(issue.get("id") or 0)))   # `#855` 일감 번호를 검색 로그에
+    ontology, recent = ontology or default_ontology, recent or default_recent
     q = _query(issue)
     errors: dict[str, str] = {}
     log: list[str] = []
