@@ -3,8 +3,8 @@
 > 2026-11-16 — **#971 진행 중**(Claude 세션, 사용자 「배달하고 971 진행하자」 = §1.9 일감 「진행」). 시작 리비전
 > `0504027`, worktree `/home/sim/ax-cluster/.ax-issues/971`(`issue/971`). T1~T4 완료·커밋, T5(전수·통합·리포트) 진행 중.
 > 같은 턴에 `0504027` 배달 rc0(`.43`·`.2`·`.33` OK, 출처 HEAD 일치).
-> 이 문서는 #971 T5 도중 사용자 승인(「A로 진행해」)으로 150줄 상한(`test_handoff_size`)에 맞춰 덮어썼다 —
-> `0504027` 판이 170줄이라 전수가 rc1 이었다. 지난 마감분 상세는 각 리포트·Redmine 마감 노트가 정본이다.
+> 이 문서는 #971 T5 도중 사용자 승인(「A로 진행해」·「응 표 빼고 진행해」)으로 덮어썼다 — `0504027` 판이 마감
+> 절을 쌓아 170줄(상한 150)이었다. 끝난 일감 목록·표를 두지 않는다(다음 세션도 행을 더하지 않는다).
 
 ## #971 — 동명 클래스 리뷰 고지·합성 검증 폴백·클래스명 변경
 
@@ -37,23 +37,9 @@
   `master/plan_metrics` 를 agy 로 합성 중이었다 — 운영 main 은 아직 폴백 전 코드라 같은 거부가 예상된다.
   결과는 그 회차 로그로 확인한다(타이머·코드를 손으로 바꾸지 않았다).
 
-## 최근 마감 — 상세는 리포트·Redmine
+## 남은 관측 — 끝난 일감은 여기 적지 않는다
 
-| 일감 | 결과 | 정본 |
-|---|---|---|
-| #970 | 리뷰 「낮음」 지적 대조·수정, 마감·배달 완료(인계 `14fb770`) | `reports/198-970-review-defects-low.md` · Redmine #970 |
-| #969 | 리뷰 「중간」 실제 결함 22묶음(53건) | `reports/197-969-review-defects-mid.md` |
-| #965 | 전수 병렬 `python -m master.sweep` · 느린 파일 10개 | `reports/196-965-test-speed-parallel.md` |
-| #967 | 기각 후보 일괄 기각(81건) · 웹 UI 는 #968(자동 시작 안 함) | `reports/195-967-bulk-dismiss-candidates.md` |
-| #966 | 생성 체인 agy → codex → claude | `reports/194-966-generation-chain-agy-first.md` |
-| #964 | 주말 배치 이어 가기 · 운영 `batch.dismissal_candidates:true` | `reports/193-964-weekly-candidates-resume.md` |
-| #963 | 스펙·플랜 확정 분리(제안→동의→등록, 체크리스트, 자율성) | Redmine #963 |
-| #960 | 착수 전 인터뷰 Python 흐름 | Redmine #960 |
-| #961 | 「검사 실행 안 함」 검출 누락 | `reports/192-961-not-run-detection.md` |
-| #939 · #911 | 범위 인터뷰·Capability Map · 스펙 템플릿 경고 | `reports/190-*` · `reports/189-*` |
-| #383 · #942 | 파이프라인 신호·레시피 배치 · `master.relay` | `reports/181-*` · Redmine #942 |
-
-- 문서 최신화(ax-docsync): README·온보딩 런북 적용분은 `0504027` 에 커밋됨.
+- 끝난 일감의 결과는 Redmine 완료 일감(`ax-cluster`, 상태 완료)의 마감 노트와 `reports/` 가 정본이다.
 - #964·#966 배포 후 관측(C6): `ax-batch` 회차 `complete:true` · 완료 주차 재생성 없음 · 새 생성 호출이 `[agy]` 먼저.
   agy 우선 뒤 생성 호출 56→10/15분 감소는 사용자에게 올릴 발견이다(조치 미결정, 자동 배치 끄지 않음).
 - #383 미실측: 상용 체인 합성 실물(토요일 22시 이후 `ax-batch`), finalize 로 쌓이는 pipeline 신호.
