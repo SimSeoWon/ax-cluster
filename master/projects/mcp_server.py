@@ -490,6 +490,7 @@ def search_context_tool(query: str, limit: int = 8, *, task_type: str = "",
     `issue_id`·`purpose` (`#855`) — 이 검색이 어느 일감의 무엇을 찾는지. `issue_id` 를 비우면 진행 중 일감
     잠금(`issue_start`)에서 관측값을 찍고, 잠금이 없으면 비운다(지어내지 않는다). `purpose` 는 이 검색 하나의
     목적(예: 「원인 코드 위치」)을 한 줄로 — 같은 요청 안에서도 검색마다 다르다.
+    연결된 일감이 있으면 그 시점 제목·「문제·맥락」·작업중 태스크를 로그에 함께 남긴다(`#979`).
     """
     # #837: user_request is the original command, never a paraphrase of query.
     # Native MCP callers supply it explicitly; only input hooks can mark it captured.
@@ -525,6 +526,16 @@ def _search_links(issue_id=0, purpose: str = "", *, source: str = "provided") ->
                 out.update(issue_id=int(cur["issue_id"]), issue_id_source="issue_lock")
         except Exception:                                    # noqa: BLE001 — 연결 없음으로 둔다
             pass
+    if out.get("issue_id"):
+        # 🔴 `#979` — 번호만으로는 「N번 진행하자」가 무엇이었는지 모른다. 그 시점 제목·「문제·맥락」·작업중
+        #    태스크를 함께 남긴다. 조회 실패는 `status: fetch_failed` 로 남고 검색은 막지 않는다.
+        #    연결이 없으면(잠금 없음) 이 키도 없다 — `issue_id` 부재가 곧 「연결 없음」이다.
+        try:
+            from .. import issue_snapshot
+            out["issue_snapshot"] = issue_snapshot.snapshot(out["issue_id"])
+        except Exception as e:                               # noqa: BLE001 — 기록 실패로만 남긴다
+            out["issue_snapshot"] = {"issue_id": out["issue_id"], "status": "fetch_failed",
+                                     "why": f"{type(e).__name__}: {str(e)[:120]}"}
     if (purpose or "").strip():
         out["purpose"] = purpose.strip()[:200]
     return out
