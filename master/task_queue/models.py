@@ -392,6 +392,9 @@ class HistoryReq(BaseModel):
     alternatives_considered: list = [] # 검토했으나 채택 안 한 옵션 (negative knowledge)
     tags: list = []
     user_quote: str = ""               # 사용자 직접 발화 1~3줄 — WHY 신호, 본문보다 강함
+    # 🔴 `#979` — 어느 일감을 진행하며 남긴 결정인가. 0 이면 그 프로젝트의 진행 중 일감 잠금에서 관측한다
+    #    (원문 숫자로 추정하지 않는다). 연결되면 그 시점 제목·작업중 태스크·「문제·맥락」을 함께 남긴다.
+    issue_id: int = 0
 
 
 class UsageTokens(BaseModel):
@@ -535,6 +538,7 @@ class HistorySearchReq(BaseModel):
     classes: list = []                 # prefix 관용 매칭 (UManager_X ↔ Manager_X)
     tags: list = []
     supersedes_only: bool = False      # 뒤집힌 결정만 — drift 를 쫓는 축
+    issue_id: int = 0                  # `#979` — 그 일감을 진행하며 남긴 기록만 (0 = 조건 아님)
     limit: int = 10
     excerpt_chars: int = 500
 

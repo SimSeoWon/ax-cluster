@@ -61,6 +61,9 @@ class HistoryRecord:
     supersedes: str = ""           # 뒤집힌 결정을 따라가는 축 — 이것 없이는 drift 를 못 쫓는다
     work_id: str = ""
     session_id: str = ""
+    # 🔴 `#979` — 기록 당시 일감 연결과 그 시점 요구(제목·작업중 태스크·「문제·맥락」). 옛 기록은 빈 값이다.
+    issue_id: Optional[int] = None
+    issue: dict = field(default_factory=dict)
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -335,7 +338,25 @@ def parse_claude_history(path: Path) -> Optional[HistoryRecord]:
         supersedes=supersedes,
         work_id=str(fm.get("work_id") or "").strip(),
         session_id=str(fm.get("session_id") or "").strip(),
+        **_issue_fields(fm),
     )
+
+
+def _issue_fields(fm: dict) -> dict:
+    """`#979` frontmatter 의 일감 연결 → `issue_id`·`issue`. 없거나 숫자가 아니면 연결 없음."""
+    try:
+        n = int(str(fm.get("issue_id") or "").strip() or 0)
+    except ValueError:
+        n = 0
+    if n <= 0:
+        return {}
+    tasks = fm.get("issue_tasks") or []
+    issue = {"source": str(fm.get("issue_id_source") or ""), "status": str(fm.get("issue_status") or ""),
+             "fetched_at": str(fm.get("issue_fetched_at") or ""), "subject": str(fm.get("issue_subject") or ""),
+             "context": str(fm.get("issue_context") or ""),
+             "tasks": [str(x) for x in tasks] if isinstance(tasks, list) else [],
+             "tasks_note": str(fm.get("issue_tasks_note") or ""), "why": str(fm.get("issue_why") or "")}
+    return {"issue_id": n, "issue": {k: v for k, v in issue.items() if v}}
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -596,6 +617,8 @@ def _row(rec, *, excerpt_chars: int) -> dict:
         "alternatives_considered": rec.alternatives_considered,
         "supersedes": rec.supersedes,
         "work_id": rec.work_id,
+        "issue_id": rec.issue_id,
+        "issue": rec.issue,
         "summary": (rec.summary or "")[:excerpt_chars],
         "next_steps": rec.next_steps,
         "source": rec.source,
@@ -608,12 +631,14 @@ def _hay(rec) -> str:
     return " ".join([rec.title, rec.summary, rec.flow_narrative,
                      " ".join(rec.tags), " ".join(rec.affected_classes),
                      " ".join(rec.affected_domains),
-                     " ".join(rec.alternatives_considered)]).lower()
+                     " ".join(rec.alternatives_considered),
+                     str((rec.issue or {}).get("subject") or ""),
+                     " ".join((rec.issue or {}).get("tasks") or [])]).lower()
 
 
 def search(paths, *, query: str = "", decision_type: str = "", classes=(),
            tags=(), supersedes_only: bool = False, limit: int = 10,
-           excerpt_chars: int = 500) -> dict:
+           excerpt_chars: int = 500, issue_id: int = 0) -> dict:
     """트윈의 history 를 조건으로 훑는다. 반환 `{"count", "total", "records", "dir"}`.
 
     필터는 **AND** 다 — 좁히려고 여러 축을 주는 것이므로. 빈 축은 조건이 아니다.
@@ -636,6 +661,9 @@ def search(paths, *, query: str = "", decision_type: str = "", classes=(),
         recs = [r for r in recs if {t.lower() for t in r.tags} & want]
     if supersedes_only:
         recs = [r for r in recs if r.supersedes]
+    if int(issue_id or 0) > 0:
+        # `#979` — 그 일감을 진행하며 남긴 기록만. 연결은 기록 당시 frontmatter 값이다(본문 숫자 추정 없음).
+        recs = [r for r in recs if r.issue_id == int(issue_id)]
     if query:
         # 공백 단위 AND (#852) — 구절 전체를 한 덩어리로 찾으면 단어 순서만 바뀌어도 조용히
         # 0건이었다. 구절이 들어 있으면 조각도 전부 들어 있으므로 종전 결과는 줄지 않는다.

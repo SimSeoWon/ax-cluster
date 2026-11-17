@@ -49,11 +49,46 @@ def _yaml_scalar(key: str, value: str) -> str:
     return f"{key}: \"{v}\"" if v else f"{key}: null"
 
 
+def _flat(value) -> str:
+    """`#979` 새 필드용 한 줄 스칼라 — 미니 파서는 따옴표 이스케이프를 모른다(줄바꿈·큰따옴표를 바꾼다)."""
+    return " ".join(str(value or "").split()).replace('"', "'")
+
+
+def _issue_lines(issue_id, issue_id_source: str, snapshot) -> list:
+    """🔴 `#979` — 일감 연결과 그 시점 스냅샷. 연결이 없으면 `issue_id: null` 한 줄뿐이다."""
+    try:
+        n = int(issue_id or 0)
+    except (TypeError, ValueError):
+        n = 0
+    if n <= 0:
+        return ["issue_id: null"]
+    lines = [f'issue_id: "{n}"', _yaml_scalar("issue_id_source", _flat(issue_id_source))]
+    snap = snapshot if isinstance(snapshot, dict) else {}
+    if snap:
+        lines.append(_yaml_scalar("issue_status", _flat(snap.get("status"))))
+        lines.append(_yaml_scalar("issue_fetched_at", _flat(snap.get("fetched_at"))))
+        if snap.get("status") == "ok":
+            lines.append(_yaml_scalar("issue_subject", _flat(snap.get("subject"))))
+            lines.append(_yaml_scalar("issue_context", _flat(snap.get("context"))))
+            tasks = [_flat(f'{t.get("id")} {t.get("goal") or ""}') for t in snap.get("tasks") or []
+                     if isinstance(t, dict)]
+            lines += _yaml_list("issue_tasks", tasks)
+            lines.append(_yaml_scalar("issue_tasks_note", _flat(snap.get("tasks_note"))))
+        else:
+            lines.append(_yaml_scalar("issue_why", _flat(snap.get("why"))))
+    return lines
+
+
 def render(*, title: str, decision_type: str = "feature", date: datetime | None = None,
            work_id: str = "", session_id: str = "", affected_classes=(),
            affected_domains=(), supersedes: str = "", alternatives_considered=(),
-           tags=(), user_quote: str = "", body: str = "") -> str:
-    """원전 frontmatter 블록 + 본문. 파일명이 아니라 **내용**을 만든다 — 저장은 write()."""
+           tags=(), user_quote: str = "", body: str = "", issue_id=0,
+           issue_id_source: str = "", issue_snapshot=None) -> str:
+    """원전 frontmatter 블록 + 본문. 파일명이 아니라 **내용**을 만든다 — 저장은 write().
+
+    `#979` — `issue_id`·`issue_id_source`·`issue_snapshot`(`master.issue_snapshot.snapshot`)이 오면
+    그 시점 일감 요구를 frontmatter 에 남긴다(미니 파서가 읽는 스칼라·대시 리스트만).
+    """
     if not (title or "").strip():
         raise ValueError("title 은 필수다")
     if decision_type not in DECISION_TYPES:
@@ -64,6 +99,7 @@ def render(*, title: str, decision_type: str = "feature", date: datetime | None 
         f"date: {ts.strftime('%Y-%m-%d %H:%M')}",
         _yaml_scalar("work_id", work_id),
         _yaml_scalar("session_id", session_id),
+        *_issue_lines(issue_id, issue_id_source, issue_snapshot),
         f"decision_type: {decision_type}",
         *_yaml_list("affected_classes", affected_classes),
         *_yaml_list("affected_domains", affected_domains),

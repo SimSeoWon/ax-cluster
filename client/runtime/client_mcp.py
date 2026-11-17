@@ -709,6 +709,9 @@ def tool_find_history(api, args: dict) -> dict:
         payload["supersedes_only"] = True
     if args.get("limit"):
         payload["limit"] = int(args["limit"])
+    n = _issue_number(args.get("issue_id"))
+    if n:
+        payload["issue_id"] = n          # `#979` — 그 일감을 진행하며 남긴 기록만
     return api("POST", "/api/v1/history/search", payload)
 
 
@@ -725,7 +728,19 @@ def tool_log_history(api, args: dict) -> dict:
     for k in ("affected_classes", "affected_domains", "alternatives_considered", "tags"):
         if args.get(k):
             payload[k] = list(args[k])
+    n = _issue_number(args.get("issue_id"))
+    if n:
+        payload["issue_id"] = n          # `#979` — 비우면 서버가 그 프로젝트의 진행 중 일감 잠금에서 관측한다
     return api("POST", "/api/v1/history", payload)
+
+
+def _issue_number(value) -> int:
+    """`#979` — 양의 정수만 일감 번호다. 그 밖(빈 값·문자·음수)은 보내지 않는다(추정하지 않는다)."""
+    try:
+        n = int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+    return n if n > 0 else 0
 
 
 USAGE_STR_KEYS = ("lane", "worker", "work_id", "task_id", "mode", "model", "note", "session_id")
@@ -1638,6 +1653,8 @@ TOOLS = [
                      "description": "클래스명 (UE prefix 관용 — UManager_X 와 Manager_X 가 같이 걸린다)"},
          "tags": {"type": "array", "items": {"type": "string"}},
          "supersedes_only": {"type": "boolean", "description": "뒤집힌 결정만 본다"},
+         "issue_id": {"type": "integer",
+                      "description": "그 Redmine 일감을 진행하며 남긴 기록만 (#979)"},
          "limit": {"type": "integer"}}}},
     {"name": "log_history",
      "description": "비자명한 의사결정·아키텍처 변경·정책 변경을 처리한 **직후** 작업 기록을 "
@@ -1669,7 +1686,11 @@ TOOLS = [
                                                      "description": "검토했으나 채택 안 한 옵션"},
                          "tags": {"type": "array", "items": {"type": "string"}},
                          "user_quote": {"type": "string",
-                                        "description": "사용자 직접 발화 인용 1~3줄"}}}},
+                                        "description": "사용자 직접 발화 인용 1~3줄"},
+                         "issue_id": {"type": "integer",
+                                      "description": "진행 중인 Redmine 일감 번호 (#979). 비우면 서버가 "
+                                                     "진행 중 일감 잠금에서 관측하고, 그 시점 일감 제목·"
+                                                     "작업중 태스크·문제·맥락을 함께 남긴다"}}}},
     # [중요] **컨벤션 루프의 반대 방향** (`#267`). 합성은 이식됐는데(`recipes_synthesizer`)
     #    읽는 도구가 없어 한 방향이었다. 원전 주석이 호출 시점까지 못박아 뒀다:
     #    *"code-writer 에이전트는 **작업 시작 직후에 호출**해 step-by-step 가이드를 컨텍스트로

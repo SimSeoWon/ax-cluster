@@ -334,22 +334,51 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
             if bad:
                 return bad
         try:
+            target = _paths_for(work_id=req.work_id)
+            link = _history_issue_link(target, req.issue_id)
             content = HG.render(
                 title=req.title, decision_type=req.decision_type,
                 work_id=req.work_id, session_id=req.session_id,
                 affected_classes=req.affected_classes,
                 affected_domains=req.affected_domains, supersedes=req.supersedes,
                 alternatives_considered=req.alternatives_considered,
-                tags=req.tags, user_quote=req.user_quote, body=req.body)
-            stored = HG.write(_paths_for(work_id=req.work_id), content, title=req.title)
+                tags=req.tags, user_quote=req.user_quote, body=req.body, **link)
+            stored = HG.write(target, content, title=req.title)
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e))
         except Exception as e:                               # noqa: BLE001
             _tq_log(f"[history] 저장 실패: {e}", root)
             return {"ok": False, "error": f"작업 기록 저장 실패: {e}"}
+        snap = link.get("issue_snapshot") or {}
         _tq_log(f"[history] '{req.title[:60]}' type={req.decision_type} "
-                f"work={req.work_id or '-'}", root)
-        return {"ok": True, "stored_at": stored, "title": req.title}
+                f"work={req.work_id or '-'} issue={link.get('issue_id') or '-'}"
+                f"({link.get('issue_id_source') or '연결 없음'}"
+                f"{' · ' + snap['status'] if snap.get('status') else ''})", root)
+        return {"ok": True, "stored_at": stored, "title": req.title,
+                "issue_id": link.get("issue_id") or None,
+                "issue_id_source": link.get("issue_id_source") or None,
+                "issue_status": snap.get("status")}
+
+    def _history_issue_link(target, issue_id) -> dict:
+        """🔴 `#979` — 기록의 일감 연결: 준 번호(`provided`) → 그 프로젝트의 진행 중 일감 잠금(`issue_lock`)
+        → 없음. 연결되면 그 시점 스냅샷을 붙인다. 잠금·스냅샷 실패는 기록을 막지 않는다."""
+        n, source = int(issue_id or 0), "provided"
+        if n <= 0:
+            try:
+                from .. import issue_lock
+                cur = issue_lock.current(target.root)
+                n, source = int((cur or {}).get("issue_id") or 0), "issue_lock"
+            except Exception as e:                           # noqa: BLE001 — 연결 없음으로 둔다
+                _tq_log(f"[history] 일감 잠금 조회 실패 — 연결 없음 ({type(e).__name__})", root)
+                n = 0
+        if n <= 0:
+            return {}
+        try:
+            from .. import issue_snapshot
+            snap = issue_snapshot.snapshot(n)
+        except Exception as e:                               # noqa: BLE001
+            snap = {"issue_id": n, "status": "fetch_failed", "why": f"{type(e).__name__}: {str(e)[:120]}"}
+        return {"issue_id": n, "issue_id_source": source, "issue_snapshot": snap}
 
     @app.post("/api/v1/usage")
     def usage_ep(req: UsageReq):
@@ -1209,7 +1238,8 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
             out = HH.search(paths, query=req.query, decision_type=req.decision_type,
                             classes=req.classes, tags=req.tags,
                             supersedes_only=req.supersedes_only,
-                            limit=req.limit, excerpt_chars=req.excerpt_chars)
+                            limit=req.limit, excerpt_chars=req.excerpt_chars,
+                            issue_id=req.issue_id)
         except Exception as e:                               # noqa: BLE001
             # [중요] 사유를 실어 보낸다 — 빈 목록으로 위장하지 않는다 (`#285` 축)
             _tq_log(f"[history] 조회 실패 — {type(e).__name__}: {e}", root)
