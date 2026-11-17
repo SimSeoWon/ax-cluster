@@ -121,6 +121,11 @@ def _then(entries, n) -> str:
     return ' — ' + '<br>'.join(out)
 
 
+def _who(label) -> str:
+    """`#980` — 자동 대조 판정(검증자 auto)은 사람 판정과 구분해 보인다."""
+    return ' <span class="meta">(자동 대조 · 사람 확인 전)</span>' if str(label.get("reviewer") or "") == "auto" else ""
+
+
 def _summary(entries, labels, titles) -> str:
     """🔴 `#855` — 요청 묶음 머리 요약: 일감 연결 · 목적 · 판정 상태. 상세(질의·점수·발췌)는 아래 접힌 칸."""
     rows = []
@@ -149,7 +154,7 @@ def _summary(entries, labels, titles) -> str:
     sids = [e.get("search_id") for e in entries if e.get("search_id")]
     judged = [labels[("search", s)] for s in sids if ("search", s) in labels]
     verdict = (f'요청 판정: 근거 {_e(req.get("evidence"))} · 채택 {_e(req.get("adoption"))} · {_e(req.get("status"))}'
-               if req else "요청 판정 없음")
+               + _who(req) if req else "요청 판정 없음")
     rows.append('<tr><th>평가</th><td>' + verdict + f' · 검색 판정 {len(judged)}/{len(sids)}</td></tr>')
     return '<table class="summary">' + "".join(rows) + '</table>'
 
@@ -194,7 +199,7 @@ def render(report) -> bytes:
             lab = (report.get("labels") or {}).get(("search", search_id))
             if lab:
                 out.append('<p class="meta">판정: 근거 ' + _e(lab.get("evidence")) + ' · 채택 ' + _e(lab.get("adoption"))
-                           + ' · ' + _e(lab.get("status")) + '</p>')
+                           + ' · ' + _e(lab.get("status")) + _who(lab) + '</p>')
             out.append('<p class="meta">검색 ID: ' + _e(search_id or "미수집")
                        + ' · 호출: ' + _e(entry.get("caller", "")) + ' · 원문 출처: ' + _e(entry.get("user_request_source", "미수집"))
                        + ' · 소요(ms): ' + _e(entry.get("duration_ms", "미수집")) + '</p>')

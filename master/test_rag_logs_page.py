@@ -154,6 +154,17 @@ class RAGLogsPageTests(unittest.TestCase):
                                   detail_loader=Mock(return_value=None))
         self.assertEqual(status, 404)
 
+    def test_980_auto_labels_marked_apart_from_human(self):
+        auto = {"evidence": "있음", "adoption": "간접", "status": "후보", "reviewer": "auto"}
+        human = {"evidence": "일부", "adoption": "간접", "status": "확정", "reviewer": "sim"}
+        text = rag_logs.render({"items": [dict(self.entry)], "total": 1,
+                                "labels": {("request", "request-one"): auto,
+                                           ("search", "search-one"): human}}).decode()
+        self.assertIn("요청 판정: 근거 있음 · 채택 간접 · 후보 <span class=\"meta\">(자동 대조 · 사람 확인 전)</span>",
+                      text)
+        self.assertIn("판정: 근거 일부 · 채택 간접 · 확정</p>", text, "사람 판정에는 자동 표시가 없다")
+        self.assertEqual(text.count("자동 대조"), 1)
+
     def test_855_request_summary_linked_candidate_purpose_labels(self):
         linked = dict(self.entry, issue_id=855, issue_id_source="issue_lock", purpose="로그 <필드> 위치")
         second = dict(linked, search_id="search-two", purpose="화면 코드")
