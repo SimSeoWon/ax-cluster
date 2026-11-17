@@ -1,0 +1,2547 @@
+{
+ "schema": 1,
+ "issue": 211,
+ "note": "bench_kr dec1ed1 실측(--json) + 채널 진단(diag) + 커밋 변경 파일 대조(참고, 채점 아님). 색인 사본·suppress_logging, 운영 로그 변화 0.",
+ "bench": {
+  "snapshot": {
+   "source_root": "/home/sim/ax-cluster/AXCluster",
+   "copied_at": "2026-11-17T22:15:00.939371+09:00",
+   "generation": "b",
+   "ground_truth": "reports/203-211-ground-truth.tsv"
+  },
+  "rows": [
+   {
+    "query": "#837 RAG 검색 로그 웹UI search_id 페이지네이션 domain_index 채널 순위 context_synthesis",
+    "expected": [
+     "master/webui/rag_logs.md",
+     "master/context_search/domain_index.md",
+     "master/context_search/search_log.md"
+    ],
+    "tier": "natural",
+    "source": "log:fde2135706b045389c0656c25eaa3afc",
+    "id": "Q01",
+    "request_id": "39d8d62d1d554287b009e91734167101"
+   },
+   {
+    "query": "doc_sync 문서 최신화 스킬 연결 plan draft apply",
+    "expected": [
+     "master/doc_sync/__main__.md"
+    ],
+    "tier": "natural",
+    "source": "log:dcffcb4e156b4ee6b531032d7b2055cd",
+    "id": "Q02",
+    "request_id": "ed46ba421bfe427bb22b7445442111ed"
+   },
+   {
+    "query": "신규 워커 작업장 등재 클론 부트스트랩 bootstrap_checkout 상주 과제 schtasks 등록 세션1 conductor",
+    "expected": [
+     "master/client/setup_host.md",
+     "client/init/bootstrap.md"
+    ],
+    "tier": "natural",
+    "source": "log:5501aae2499d4da197b556b825da0b0c",
+    "id": "Q03",
+    "request_id": "3e617cb642c54ad6bcd05ff08697d199"
+   },
+   {
+    "query": "리뷰 큐 review_runner agy 퇴고 workdir 격리 worktree 임시 트리 call_agy_why run_agy",
+    "expected": [
+     "master/context_synth/review_runner.md",
+     "master/context_synth/pinned_tree.md"
+    ],
+    "tier": "natural",
+    "source": "log:4c5a573f64f143b19dc3a40965628760",
+    "id": "Q04",
+    "request_id": "538455c9d99d411c8da86735fa52ddc7"
+   },
+   {
+    "query": "agy 모델 쿨다운 한도 감지 _limited evidence log 429 RESOURCE_EXHAUSTED quota 재시도 리뷰 큐 transient",
+    "expected": [
+     "master/agy_models.md"
+    ],
+    "tier": "natural",
+    "source": "log:c36e7d7178024c6c9f88de7ec371fda0",
+    "id": "Q05",
+    "request_id": "88e8710c8b79452d9d2cd8551d568cfe"
+   },
+   {
+    "query": "review_queue classify transient 시도 상한 finish claim attempts 재시도 포기 갈래",
+    "expected": [
+     "master/context_synth/review_queue.md"
+    ],
+    "tier": "natural",
+    "source": "log:51ee8a252a574f71b2e373dc528b2405",
+    "id": "Q06",
+    "request_id": "762f3aa8cf6147d3a60788f54c1426a3"
+   },
+   {
+    "query": "온톨로지 합성 프롬프트 소스 발췌 프로젝트 kind 언어별 분기 Python 클래스",
+    "expected": [
+     "master/ontology/prompt.md",
+     "master/ontology/contexts.md",
+     "master/ontology/parse.md"
+    ],
+    "tier": "natural",
+    "source": "log:5b7fa27d0b7d42b39add41d470fec1b0",
+    "id": "Q07",
+    "request_id": "ef2436c9022c42c18fa70c24c5271eb5"
+   },
+   {
+    "query": "finalize_work 마감 정리 요청자 로컬 브랜치 삭제 branch -d target_branch",
+    "expected": [
+     "master/work/review.md"
+    ],
+    "tier": "natural",
+    "source": "log:d123eb31f27b4748913e2e64f11003cd",
+    "id": "Q08",
+    "request_id": "12834f589af742588706288799f23038"
+   },
+   {
+    "query": "Redmine 이슈 본문 플랜 태스크 상태 기록 갱신 인수인계 체크포인트",
+    "expected": [
+     "master/plan_block.md",
+     "master/plan_tools.md",
+     "master/plan_state.md"
+    ],
+    "tier": "natural",
+    "source": "log:f379167fb1264095aa4cf4bdc0a12966",
+    "id": "Q09",
+    "request_id": "91a2c0e5b46e47d18db23aa8d44b5a0c"
+   },
+   {
+    "query": "find_history 자유 질의 history_harvest search 부분문자열 매칭 단어 순서",
+    "expected": [
+     "master/context_synth/history_harvest.md"
+    ],
+    "tier": "natural",
+    "source": "log:ae003733fb314aadb0681c48b32a086b",
+    "id": "Q10",
+    "request_id": "9874ca3ab0e643ebb1b7e677c74e8b3c"
+   },
+   {
+    "query": "worker_daemon residency buildjob SSH 상주 폐기",
+    "expected": [
+     "client/init/residency.md",
+     "master/client/bundle.md",
+     "master/client/__main__.md",
+     "master/plan_build.md"
+    ],
+    "tier": "natural",
+    "source": "log:e9c9396d5473444d99502abec16ce360",
+    "id": "Q11",
+    "request_id": "fd5d00a0db684d468559e380c598d50b"
+   },
+   {
+    "query": "워커 홈 CLAUDE.md AGENTS.md 복사 동기화 해시 대조 machines win-worker-2",
+    "expected": [
+     "master/client/home_guides.md"
+    ],
+    "tier": "natural",
+    "source": "log:7ad67885ad00421a8819f5ba83542b27",
+    "id": "Q12",
+    "request_id": "72588da1a110490cb8bcb0048f20a6b9"
+   },
+   {
+    "query": "플랜 전이 거절 기록 plan_transition 집계 레드마인 저널 지표",
+    "expected": [
+     "master/plan_tools.md",
+     "master/plan_metrics.md",
+     "master/plan_events.md"
+    ],
+    "tier": "natural",
+    "source": "log:eec33f6a22ab45928f618b164dcaaf5e",
+    "id": "Q13",
+    "request_id": "3d82f137a448400ab76eca1ae7048889"
+   },
+   {
+    "query": "set_active align 마운트 전환 폐기 페이로드 잔재 정리 build_step 실컴파일",
+    "expected": [
+     "master/projects/logic.md",
+     "master/plan_build.md",
+     "master/client/bundle.md"
+    ],
+    "tier": "natural",
+    "source": "log:c8cbee84112d47119e9454414a6869ea",
+    "id": "Q14",
+    "request_id": "ddb226a3ba9943a18f0885a672569a34"
+   },
+   {
+    "query": "리뷰 큐 커밋 범위 리뷰 요청 레드마인 이슈 노트 등록 자동 리뷰 결과",
+    "expected": [
+     "master/issue_flow.md",
+     "master/context_synth/issue_track.md",
+     "master/context_synth/issue_progress.md",
+     "master/context_synth/review_runner.md"
+    ],
+    "tier": "natural",
+    "source": "log:34a8ae32e10d41a1b3e72f1d9716131b",
+    "id": "Q15",
+    "request_id": "81cdaf5c72994dc482e31086315d8618"
+   },
+   {
+    "query": "issue_start issue_finish 일감 진행 잠금 멈춤 취소 리뷰 지적 높음 완료 거절 fix_index update_fix_status",
+    "expected": [
+     "master/issue_lock.md",
+     "master/issue_flow.md",
+     "master/context_synth/issue_review.md",
+     "master/redmine.md"
+    ],
+    "tier": "natural",
+    "source": "log:4e55edf8571b44cc9921ceccb8a04d4c",
+    "id": "Q16",
+    "request_id": "280878ed7c814fbdbaf145615de07fa9"
+   },
+   {
+    "query": "라운드 완료 공지 재시도 기동 복구 recover_stuck_works noticed_round notification_error 공지 대기 표시",
+    "expected": [
+     "master/task_queue/logic.md",
+     "master/task_queue/logic_cleanup.md"
+    ],
+    "tier": "natural",
+    "source": "log:2f7424e42b84485597d794ef02f5b47b",
+    "id": "Q17",
+    "request_id": "b0a5167133ca49e39c3af7c094bbd447"
+   },
+   {
+    "query": "스킬 배달 SKILL.md 번들 reference scripts 디렉터리 복사 해시 대조 check skills",
+    "expected": [
+     "master/client/bundle.md",
+     "master/client/__main__.md",
+     "master/client/spec.md"
+    ],
+    "tier": "natural",
+    "source": "log:8b9fa171059e45b6a929287ecdebb443",
+    "id": "Q18",
+    "request_id": "28ce698bf4fa42b5bcdef1aebd5b1e78"
+   },
+   {
+    "query": "스킬 훅 의존 SessionStart UserPromptSubmit Codex 실행 경로 ax-followup.timer notice_pending 주기 확인 폴백",
+    "expected": [
+     "master/client/workshop/hooks/pending_works.md",
+     "master/client/workshop/hooks/work_completion.md",
+     "master/work/followup.md"
+    ],
+    "tier": "natural",
+    "source": "log:8d017fa9f1974e228f50cd8011bda147",
+    "id": "Q19",
+    "request_id": "36fa21af74d941c8aa4d8962ee67a0f5"
+   },
+   {
+    "query": "AXCluster issue_start issue_finish 운영 체크아웃 격리 worktree systemd 서비스 실행 경로 service_freshness",
+    "expected": [
+     "master/issue_flow.md",
+     "master/projects/config.md"
+    ],
+    "tier": "natural",
+    "source": "log:59e97f3a561e46aabb4c3a7b3744efe2",
+    "id": "Q20",
+    "request_id": "caac96bb44094fb5b7228ad4b5c3b693"
+   },
+   {
+    "query": "서비스 신선도 service_freshness 기동 코드 내용 해시 mtime ExecMainStartTimestamp",
+    "expected": [
+     "master/service_freshness.md"
+    ],
+    "tier": "natural",
+    "source": "log:3a54a2c9ce754bd0aadf20634564e803",
+    "id": "Q21",
+    "request_id": "6d71db0e779c4d9b92ee1d0159f31c3c"
+   },
+   {
+    "query": "issue_finish 마감 뒤 배달 재기동 service_restart master.client update 인수인계 순서 강제",
+    "expected": [
+     "master/issue_wrapup.md"
+    ],
+    "tier": "natural",
+    "source": "log:7b9bbe8cc0cb4dd1a5d528aaa10cccff",
+    "id": "Q22",
+    "request_id": "1566010784ba41debc3de9ae98990da0"
+   },
+   {
+    "query": "BC-250 안전 종료 스킬 .43 큐 작업 브로커 inflight SSH 단절",
+    "expected": [
+     "master/infra/bc250_shutdown.md"
+    ],
+    "tier": "natural",
+    "source": "log:864a271944134d49b9e9b4510d6b4c9a",
+    "id": "Q23",
+    "request_id": "93189cbe904446c5bdbec1d884f2906d"
+   },
+   {
+    "query": "프로젝트 등록 해제 삭제 unregister MotionForge 트윈 purge",
+    "expected": [
+     "master/projects/logic.md",
+     "master/projects/mcp_server.md"
+    ],
+    "tier": "natural",
+    "source": "log:e9d8ed85081e45f6858bb5fe72dc7a73",
+    "id": "Q24",
+    "request_id": "ecac78430ae84d6e80d9ce2f6696bac0"
+   },
+   {
+    "query": "워커 directive abort 하트비트 응답 파견 루프 원격 실행 중단 cancel_task",
+    "expected": [
+     "master/work/runner.md",
+     "master/task_queue/logic_claim.md",
+     "master/task_queue/logic_lifecycle.md"
+    ],
+    "tier": "natural",
+    "source": "log:432e7d27be59454d8a944c7937571e88",
+    "id": "Q25",
+    "request_id": "2e92f8e786f64dcf928569e82d8fa44e"
+   },
+   {
+    "query": "분산 작업 휴리스틱 신호 레시피 수집 signals append_signal recipes_synthesizer 배치 등록",
+    "expected": [
+     "master/context_synth/signals.md",
+     "master/context_synth/recipes_synthesizer.md",
+     "master/batch/run.md"
+    ],
+    "tier": "natural",
+    "source": "log:ea5e25b7455340c891cbcfbe5d13b0b2",
+    "id": "Q26",
+    "request_id": "ebcd547a71f94cddbab5cb8a2e5bc3a8"
+   },
+   {
+    "query": "master.relay 잔여 한도 rate_limit_event token_count rate_limits 상태 console",
+    "expected": [
+     "master/relay/quota.md",
+     "master/relay/agents.md",
+     "master/relay/console.md"
+    ],
+    "tier": "natural",
+    "source": "log:dd9ba74244364e94952c1a43e34a7b8b",
+    "id": "Q27",
+    "request_id": "2acd743e853e4150bc01d0a17f0759db"
+   },
+   {
+    "query": "usage_dashboard 토큰 합산 cache_read gemini agy source all session_cwd 귀속",
+    "expected": [
+     "master/work/usage_dashboard.md",
+     "master/work/session_usage.md"
+    ],
+    "tier": "natural",
+    "source": "log:e2d96042917b4089977c28401389cb69",
+    "id": "Q28",
+    "request_id": "cbcc66accf6d4f42813976c5576e7426"
+   },
+   {
+    "query": "착수 전 사용자에게 묻기 인터뷰 플랜 분해 distribute 범위 제시 질문",
+    "expected": [
+     "master/plan_tools.md",
+     "master/plan_start.md"
+    ],
+    "tier": "natural",
+    "source": "log:752b9cc4f6144a3c9acb29b99b46bb42",
+    "id": "Q29",
+    "request_id": "64beebe0f15b4ccba2d10ebcdee4fe24"
+   },
+   {
+    "query": "test_client_bundle test_review test_pystatic test_followup tests/integration checks.json 전수 테스트 속도",
+    "expected": [
+     "master/test_client_bundle.md",
+     "master/test_review.md",
+     "master/test_pystatic.md",
+     "master/test_followup.md",
+     "master/integration_checks.md"
+    ],
+    "tier": "natural",
+    "source": "log:eb702c0ba2524bb091d7904afc42f02a",
+    "id": "Q30",
+    "request_id": "8ddb759b65ba44818ab7ca7e2843f8b8"
+   }
+  ],
+  "results": {
+   "baseline": {
+    "hit@1": 0.5,
+    "hit@5": 0.7333333333333333,
+    "MRR": 0.6244191919191919,
+    "n": 30,
+    "by_lang": {
+     "hangul_only": {
+      "hit@1": 0.0,
+      "hit@5": 1.0,
+      "MRR": 0.5,
+      "n": 1
+     },
+     "mixed": {
+      "hit@1": 0.5172413793103449,
+      "hit@5": 0.7241379310344828,
+      "MRR": 0.6287095088819228,
+      "n": 29
+     },
+     "other": {
+      "hit@1": 0.0,
+      "hit@5": 0.0,
+      "MRR": 0.0,
+      "n": 0
+     }
+    },
+    "per_query": [
+     {
+      "id": "Q01",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/context_search/search_log.md",
+       "master/context_search/rag_labels.md",
+       "master/context_synth/__init__.md",
+       "master/context_search/search_log_analyzer.md",
+       "master/webui/commit_flow.md"
+      ]
+     },
+     {
+      "id": "Q02",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/doc_sync/__main__.md",
+       "master/test_doc_sync_cli.md",
+       "master/doc_sync/__init__.md",
+       "master/doc_sync/draft.md",
+       "master/test_doc_sync_draft.md"
+      ]
+     },
+     {
+      "id": "Q03",
+      "lang": "mixed",
+      "rank": 12,
+      "top5": [
+       "master/work/runner.md",
+       "master/skills/ax-handoff/scripts/conductor.md",
+       "master/test_queue_worker_contracts.md",
+       "client/runtime/session1_conductor.md",
+       "master/work/infer.md"
+      ]
+     },
+     {
+      "id": "Q04",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/context_synth/review_runner.md",
+       "master/context_synth/pinned_tree.md",
+       "master/test_pinned_tree.md",
+       "master/test_review_runner.md",
+       "client/runtime/session1_conductor.md"
+      ]
+     },
+     {
+      "id": "Q05",
+      "lang": "mixed",
+      "rank": 10,
+      "top5": [
+       "master/work/llm_policy.md",
+       "master/llm_cooldown.md",
+       "master/ontology/log_candidates.md",
+       "master/test_planner.md",
+       "master/test_gemini_report.md"
+      ]
+     },
+     {
+      "id": "Q06",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/context_synth/review_queue.md",
+       "master/test_review_queue.md",
+       "master/context_synth/pending.md",
+       "master/test_pending.md",
+       "master/test_review_enqueue.md"
+      ]
+     },
+     {
+      "id": "Q07",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/ontology/prompt.md",
+       "master/graph/pyparse.md",
+       "master/test_context_synth.md",
+       "master/test_source_scope.md",
+       "master/test_python_commit_review.md"
+      ]
+     },
+     {
+      "id": "Q08",
+      "lang": "mixed",
+      "rank": 0,
+      "top5": [
+       "master/work/attempt.md",
+       "master/work/branch_names.md",
+       "master/test_candidate_cleanup.md",
+       "master/test_branch_prune.md",
+       "master/work/__init__.md"
+      ]
+     },
+     {
+      "id": "Q09",
+      "lang": "mixed",
+      "rank": 2,
+      "top5": [
+       "master/context_synth/plan_register.md",
+       "master/plan_block.md",
+       "master/test_plan_block.md",
+       "master/plan_start.md",
+       "master/test_planner.md"
+      ]
+     },
+     {
+      "id": "Q10",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/context_synth/history_harvest.md",
+       "master/test_history_harvest.md",
+       "master/webui/rag_logs.md",
+       "master/context_synth/recipes_read.md",
+       "master/context_search/search_log.md"
+      ]
+     },
+     {
+      "id": "Q11",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "client/init/residency.md",
+       "master/test_no_worker_daemon.md",
+       "master/test_residency.md",
+       "master/plan_build.md",
+       "master/test_client_bundle.md"
+      ]
+     },
+     {
+      "id": "Q12",
+      "lang": "mixed",
+      "rank": 6,
+      "top5": [
+       "master/test_no_worker_daemon.md",
+       "master/work/runner.md",
+       "master/work/infer.md",
+       "master/test_winsession.md",
+       "master/test_relay.md"
+      ]
+     },
+     {
+      "id": "Q13",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/plan_metrics.md",
+       "master/test_plan_metrics.md",
+       "master/plan_state.md",
+       "master/plan_tools.md",
+       "master/test_redmine_live_guard.md"
+      ]
+     },
+     {
+      "id": "Q14",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/plan_build.md",
+       "master/test_projects.md",
+       "master/test_context_search.md",
+       "master/test_project_affinity.md",
+       "master/test_plan_build.md"
+      ]
+     },
+     {
+      "id": "Q15",
+      "lang": "hangul_only",
+      "rank": 2,
+      "top5": [
+       "master/context_synth/review_gen.md",
+       "master/context_synth/review_runner.md",
+       "master/test_review_range.md",
+       "master/webui/fixes_page.md",
+       "master/test_planner.md"
+      ]
+     },
+     {
+      "id": "Q16",
+      "lang": "mixed",
+      "rank": 11,
+      "top5": [
+       "master/issue_infra.md",
+       "master/test_issue_review.md",
+       "master/test_fixes_surface.md",
+       "master/test_fix_index.md",
+       "master/webui/fixes_page.md"
+      ]
+     },
+     {
+      "id": "Q17",
+      "lang": "mixed",
+      "rank": 3,
+      "top5": [
+       "master/test_notice_recovery.md",
+       "master/test_rounds.md",
+       "master/task_queue/logic_cleanup.md",
+       "master/test_history_terminal.md",
+       "master/test_failed_work_terminal.md"
+      ]
+     },
+     {
+      "id": "Q18",
+      "lang": "mixed",
+      "rank": 8,
+      "top5": [
+       "master/test_skill_scripts.md",
+       "master/test_rag_labels.md",
+       "master/bench_lane_codex.md",
+       "master/test_board.md",
+       "master/test_issue_track.md"
+      ]
+     },
+     {
+      "id": "Q19",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/client/workshop/hooks/pending_works.md",
+       "master/batch/gates.md",
+       "master/test_followup.md",
+       "master/service_freshness.md",
+       "master/test_conductor_metrics.md"
+      ]
+     },
+     {
+      "id": "Q20",
+      "lang": "mixed",
+      "rank": 6,
+      "top5": [
+       "master/task_queue/__main__.md",
+       "master/service_freshness.md",
+       "master/issue_wrapup.md",
+       "master/service_restart.md",
+       "master/test_sandbox.md"
+      ]
+     },
+     {
+      "id": "Q21",
+      "lang": "mixed",
+      "rank": 2,
+      "top5": [
+       "master/task_queue/__main__.md",
+       "master/service_freshness.md",
+       "master/issue_wrapup.md",
+       "master/task_queue/mcp_server.md",
+       "master/task_queue/logic_cleanup.md"
+      ]
+     },
+     {
+      "id": "Q22",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/issue_wrapup.md",
+       "master/issue_flow.md",
+       "master/service_restart.md",
+       "master/service_freshness.md",
+       "master/test_issue_wrapup.md"
+      ]
+     },
+     {
+      "id": "Q23",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/infra/bc250_shutdown.md",
+       "master/skills/ax-bc250-shutdown/scripts/shutdown.md",
+       "master/test_bc250_shutdown.md",
+       "master/broker/__init__.md",
+       "master/test_invalidate.md"
+      ]
+     },
+     {
+      "id": "Q24",
+      "lang": "mixed",
+      "rank": 6,
+      "top5": [
+       "master/test_projects.md",
+       "master/work/attempt.md",
+       "client/init/residency.md",
+       "master/context_search/context_audit.md",
+       "master/test_candidate_cleanup.md"
+      ]
+     },
+     {
+      "id": "Q25",
+      "lang": "mixed",
+      "rank": 2,
+      "top5": [
+       "master/work/wcommit.md",
+       "master/task_queue/logic_lifecycle.md",
+       "master/infra/bc250_shutdown.md",
+       "master/test_issue_wrapup.md",
+       "master/work/conductor_auth.md"
+      ]
+     },
+     {
+      "id": "Q26",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/context_synth/recipes_synthesizer.md",
+       "master/test_recipes.md",
+       "master/context_synth/signals.md",
+       "master/test_signals.md",
+       "master/test_recipes_read.md"
+      ]
+     },
+     {
+      "id": "Q27",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/relay/quota.md",
+       "master/relay/console.md",
+       "master/relay/__init__.md",
+       "master/llm_cooldown.md",
+       "master/relay/__main__.md"
+      ]
+     },
+     {
+      "id": "Q28",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/work/session_usage.md",
+       "master/webui/usage_page.md",
+       "master/work/gemini_report.md",
+       "master/test_usage_dashboard.md",
+       "master/test_gemini_report.md"
+      ]
+     },
+     {
+      "id": "Q29",
+      "lang": "mixed",
+      "rank": 4,
+      "top5": [
+       "master/interview.md",
+       "master/work/heuristics.md",
+       "master/work/distribute.md",
+       "master/plan_tools.md",
+       "master/plan_start.md"
+      ]
+     },
+     {
+      "id": "Q30",
+      "lang": "mixed",
+      "rank": 4,
+      "top5": [
+       "master/test_integration_coverage.md",
+       "master/test_integration_checks.md",
+       "master/test_issue_link.md",
+       "master/test_followup.md",
+       "master/test_project_affinity.md"
+      ]
+     }
+    ]
+   },
+   "kr_on": {
+    "hit@1": 0.4666666666666667,
+    "hit@5": 0.7333333333333333,
+    "MRR": 0.5946717171717172,
+    "n": 30,
+    "by_lang": {
+     "hangul_only": {
+      "hit@1": 0.0,
+      "hit@5": 1.0,
+      "MRR": 0.5,
+      "n": 1
+     },
+     "mixed": {
+      "hit@1": 0.4827586206896552,
+      "hit@5": 0.7241379310344828,
+      "MRR": 0.5979362591431557,
+      "n": 29
+     },
+     "other": {
+      "hit@1": 0.0,
+      "hit@5": 0.0,
+      "MRR": 0.0,
+      "n": 0
+     }
+    },
+    "per_query": [
+     {
+      "id": "Q01",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/context_search/search_log.md",
+       "master/context_search/rag_labels.md",
+       "master/context_synth/__init__.md",
+       "master/context_search/search_log_analyzer.md",
+       "master/webui/commit_flow.md"
+      ]
+     },
+     {
+      "id": "Q02",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/doc_sync/__main__.md",
+       "master/test_doc_sync_cli.md",
+       "master/doc_sync/__init__.md",
+       "master/doc_sync/draft.md",
+       "master/doc_sync/apply.md"
+      ]
+     },
+     {
+      "id": "Q03",
+      "lang": "mixed",
+      "rank": 12,
+      "top5": [
+       "master/work/runner.md",
+       "master/skills/ax-handoff/scripts/conductor.md",
+       "master/test_queue_worker_contracts.md",
+       "client/runtime/session1_conductor.md",
+       "master/work/infer.md"
+      ]
+     },
+     {
+      "id": "Q04",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/context_synth/review_runner.md",
+       "master/context_synth/pinned_tree.md",
+       "master/test_pinned_tree.md",
+       "master/test_review_runner.md",
+       "client/runtime/session1_conductor.md"
+      ]
+     },
+     {
+      "id": "Q05",
+      "lang": "mixed",
+      "rank": 12,
+      "top5": [
+       "master/work/llm_policy.md",
+       "master/llm_cooldown.md",
+       "master/ontology/log_candidates.md",
+       "master/test_pending.md",
+       "master/context_synth/pending.md"
+      ]
+     },
+     {
+      "id": "Q06",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/context_synth/review_queue.md",
+       "master/test_review_queue.md",
+       "master/context_synth/pending.md",
+       "master/test_pending.md",
+       "master/test_review_enqueue.md"
+      ]
+     },
+     {
+      "id": "Q07",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/ontology/prompt.md",
+       "master/test_python_commit_review.md",
+       "master/ontology/hierarchy.md",
+       "master/test_context_synth.md",
+       "master/work/declarations.md"
+      ]
+     },
+     {
+      "id": "Q08",
+      "lang": "mixed",
+      "rank": 0,
+      "top5": [
+       "master/work/attempt.md",
+       "master/work/branch_names.md",
+       "master/test_candidate_cleanup.md",
+       "master/test_branch_prune.md",
+       "master/work/__init__.md"
+      ]
+     },
+     {
+      "id": "Q09",
+      "lang": "mixed",
+      "rank": 2,
+      "top5": [
+       "master/context_synth/plan_register.md",
+       "master/plan_block.md",
+       "master/test_plan_block.md",
+       "master/plan_start.md",
+       "master/test_planner.md"
+      ]
+     },
+     {
+      "id": "Q10",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/context_synth/history_harvest.md",
+       "master/test_history_harvest.md",
+       "master/webui/rag_logs.md",
+       "master/context_synth/recipes_read.md",
+       "master/context_search/search_log.md"
+      ]
+     },
+     {
+      "id": "Q11",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "client/init/residency.md",
+       "master/test_no_worker_daemon.md",
+       "master/test_residency.md",
+       "master/plan_build.md",
+       "master/test_runner.md"
+      ]
+     },
+     {
+      "id": "Q12",
+      "lang": "mixed",
+      "rank": 6,
+      "top5": [
+       "master/test_no_worker_daemon.md",
+       "master/work/runner.md",
+       "master/work/infer.md",
+       "master/test_winsession.md",
+       "master/test_relay.md"
+      ]
+     },
+     {
+      "id": "Q13",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/plan_metrics.md",
+       "master/test_plan_metrics.md",
+       "master/plan_state.md",
+       "master/plan_tools.md",
+       "master/test_redmine_live_guard.md"
+      ]
+     },
+     {
+      "id": "Q14",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/plan_build.md",
+       "master/test_projects.md",
+       "master/context_synth/plan_dedup.md",
+       "master/test_project_affinity.md",
+       "master/test_context_search.md"
+      ]
+     },
+     {
+      "id": "Q15",
+      "lang": "hangul_only",
+      "rank": 2,
+      "top5": [
+       "master/context_synth/review_gen.md",
+       "master/context_synth/review_runner.md",
+       "master/test_review_range.md",
+       "master/webui/fixes_page.md",
+       "master/test_planner.md"
+      ]
+     },
+     {
+      "id": "Q16",
+      "lang": "mixed",
+      "rank": 11,
+      "top5": [
+       "master/issue_infra.md",
+       "master/test_issue_review.md",
+       "master/test_fixes_surface.md",
+       "master/test_fix_index.md",
+       "master/webui/fixes_page.md"
+      ]
+     },
+     {
+      "id": "Q17",
+      "lang": "mixed",
+      "rank": 3,
+      "top5": [
+       "master/test_notice_recovery.md",
+       "master/test_rounds.md",
+       "master/task_queue/logic_cleanup.md",
+       "master/test_history_terminal.md",
+       "master/test_failed_work_terminal.md"
+      ]
+     },
+     {
+      "id": "Q18",
+      "lang": "mixed",
+      "rank": 8,
+      "top5": [
+       "master/test_skill_scripts.md",
+       "master/test_rag_labels.md",
+       "master/bench_lane_codex.md",
+       "master/test_board.md",
+       "master/test_issue_track.md"
+      ]
+     },
+     {
+      "id": "Q19",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/client/workshop/hooks/pending_works.md",
+       "master/batch/gates.md",
+       "master/test_followup.md",
+       "master/service_freshness.md",
+       "master/test_conductor_metrics.md"
+      ]
+     },
+     {
+      "id": "Q20",
+      "lang": "mixed",
+      "rank": 11,
+      "top5": [
+       "master/task_queue/__main__.md",
+       "master/issue_wrapup.md",
+       "master/service_freshness.md",
+       "master/service_restart.md",
+       "master/test_sandbox.md"
+      ]
+     },
+     {
+      "id": "Q21",
+      "lang": "mixed",
+      "rank": 2,
+      "top5": [
+       "master/task_queue/__main__.md",
+       "master/service_freshness.md",
+       "client/runtime/client_mcp.md",
+       "master/issue_wrapup.md",
+       "master/batch/gates.md"
+      ]
+     },
+     {
+      "id": "Q22",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/issue_wrapup.md",
+       "master/service_restart.md",
+       "master/service_freshness.md",
+       "master/redmine.md",
+       "master/test_issue_wrapup.md"
+      ]
+     },
+     {
+      "id": "Q23",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/infra/bc250_shutdown.md",
+       "master/skills/ax-bc250-shutdown/scripts/shutdown.md",
+       "master/test_bc250_shutdown.md",
+       "master/broker/__init__.md",
+       "master/test_invalidate.md"
+      ]
+     },
+     {
+      "id": "Q24",
+      "lang": "mixed",
+      "rank": 6,
+      "top5": [
+       "master/test_projects.md",
+       "master/work/attempt.md",
+       "client/init/residency.md",
+       "master/context_search/context_audit.md",
+       "master/test_candidate_cleanup.md"
+      ]
+     },
+     {
+      "id": "Q25",
+      "lang": "mixed",
+      "rank": 2,
+      "top5": [
+       "master/work/wcommit.md",
+       "master/task_queue/logic_lifecycle.md",
+       "master/infra/bc250_shutdown.md",
+       "master/test_issue_wrapup.md",
+       "master/work/conductor_auth.md"
+      ]
+     },
+     {
+      "id": "Q26",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/context_synth/recipes_synthesizer.md",
+       "master/test_recipes.md",
+       "master/context_synth/signals.md",
+       "master/test_signals.md",
+       "master/test_recipes_read.md"
+      ]
+     },
+     {
+      "id": "Q27",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/relay/quota.md",
+       "master/relay/console.md",
+       "master/relay/__main__.md",
+       "master/relay/__init__.md",
+       "master/test_relay.md"
+      ]
+     },
+     {
+      "id": "Q28",
+      "lang": "mixed",
+      "rank": 4,
+      "top5": [
+       "master/work/gemini_report.md",
+       "master/test_gemini_report.md",
+       "master/test_usage_dashboard.md",
+       "master/work/usage_dashboard.md",
+       "master/work/session_usage.md"
+      ]
+     },
+     {
+      "id": "Q29",
+      "lang": "mixed",
+      "rank": 4,
+      "top5": [
+       "master/interview.md",
+       "master/work/heuristics.md",
+       "master/work/distribute.md",
+       "master/plan_tools.md",
+       "master/plan_start.md"
+      ]
+     },
+     {
+      "id": "Q30",
+      "lang": "mixed",
+      "rank": 5,
+      "top5": [
+       "master/test_integration_checks.md",
+       "master/test_integration_coverage.md",
+       "master/test_revalidation.md",
+       "master/test_review_enqueue.md",
+       "master/test_followup.md"
+      ]
+     }
+    ]
+   },
+   "gated": {
+    "hit@1": 0.5,
+    "hit@5": 0.7333333333333333,
+    "MRR": 0.6188636363636365,
+    "n": 30,
+    "by_lang": {
+     "hangul_only": {
+      "hit@1": 0.0,
+      "hit@5": 1.0,
+      "MRR": 0.3333333333333333,
+      "n": 1
+     },
+     "mixed": {
+      "hit@1": 0.5172413793103449,
+      "hit@5": 0.7241379310344828,
+      "MRR": 0.6287095088819228,
+      "n": 29
+     },
+     "other": {
+      "hit@1": 0.0,
+      "hit@5": 0.0,
+      "MRR": 0.0,
+      "n": 0
+     }
+    },
+    "per_query": [
+     {
+      "id": "Q01",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/context_search/search_log.md",
+       "master/context_search/rag_labels.md",
+       "master/context_synth/__init__.md",
+       "master/context_search/search_log_analyzer.md",
+       "master/webui/commit_flow.md"
+      ]
+     },
+     {
+      "id": "Q02",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/doc_sync/__main__.md",
+       "master/test_doc_sync_cli.md",
+       "master/doc_sync/__init__.md",
+       "master/doc_sync/draft.md",
+       "master/test_doc_sync_draft.md"
+      ]
+     },
+     {
+      "id": "Q03",
+      "lang": "mixed",
+      "rank": 12,
+      "top5": [
+       "master/work/runner.md",
+       "master/skills/ax-handoff/scripts/conductor.md",
+       "master/test_queue_worker_contracts.md",
+       "client/runtime/session1_conductor.md",
+       "master/work/infer.md"
+      ]
+     },
+     {
+      "id": "Q04",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/context_synth/review_runner.md",
+       "master/context_synth/pinned_tree.md",
+       "master/test_pinned_tree.md",
+       "master/test_review_runner.md",
+       "client/runtime/session1_conductor.md"
+      ]
+     },
+     {
+      "id": "Q05",
+      "lang": "mixed",
+      "rank": 10,
+      "top5": [
+       "master/work/llm_policy.md",
+       "master/llm_cooldown.md",
+       "master/ontology/log_candidates.md",
+       "master/test_planner.md",
+       "master/test_gemini_report.md"
+      ]
+     },
+     {
+      "id": "Q06",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/context_synth/review_queue.md",
+       "master/test_review_queue.md",
+       "master/context_synth/pending.md",
+       "master/test_pending.md",
+       "master/test_review_enqueue.md"
+      ]
+     },
+     {
+      "id": "Q07",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/ontology/prompt.md",
+       "master/graph/pyparse.md",
+       "master/test_context_synth.md",
+       "master/test_source_scope.md",
+       "master/test_python_commit_review.md"
+      ]
+     },
+     {
+      "id": "Q08",
+      "lang": "mixed",
+      "rank": 0,
+      "top5": [
+       "master/work/attempt.md",
+       "master/work/branch_names.md",
+       "master/test_candidate_cleanup.md",
+       "master/test_branch_prune.md",
+       "master/work/__init__.md"
+      ]
+     },
+     {
+      "id": "Q09",
+      "lang": "mixed",
+      "rank": 2,
+      "top5": [
+       "master/context_synth/plan_register.md",
+       "master/plan_block.md",
+       "master/test_plan_block.md",
+       "master/plan_start.md",
+       "master/test_planner.md"
+      ]
+     },
+     {
+      "id": "Q10",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/context_synth/history_harvest.md",
+       "master/test_history_harvest.md",
+       "master/webui/rag_logs.md",
+       "master/context_synth/recipes_read.md",
+       "master/context_search/search_log.md"
+      ]
+     },
+     {
+      "id": "Q11",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "client/init/residency.md",
+       "master/test_no_worker_daemon.md",
+       "master/test_residency.md",
+       "master/plan_build.md",
+       "master/test_client_bundle.md"
+      ]
+     },
+     {
+      "id": "Q12",
+      "lang": "mixed",
+      "rank": 6,
+      "top5": [
+       "master/test_no_worker_daemon.md",
+       "master/work/runner.md",
+       "master/work/infer.md",
+       "master/test_winsession.md",
+       "master/test_relay.md"
+      ]
+     },
+     {
+      "id": "Q13",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/plan_metrics.md",
+       "master/test_plan_metrics.md",
+       "master/plan_state.md",
+       "master/plan_tools.md",
+       "master/test_redmine_live_guard.md"
+      ]
+     },
+     {
+      "id": "Q14",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/plan_build.md",
+       "master/test_projects.md",
+       "master/test_context_search.md",
+       "master/test_project_affinity.md",
+       "master/test_plan_build.md"
+      ]
+     },
+     {
+      "id": "Q15",
+      "lang": "hangul_only",
+      "rank": 3,
+      "top5": [
+       "master/context_synth/review_gen.md",
+       "master/test_review_range.md",
+       "master/context_synth/review_runner.md",
+       "master/test_issue_progress.md",
+       "master/issue_infra.md"
+      ]
+     },
+     {
+      "id": "Q16",
+      "lang": "mixed",
+      "rank": 11,
+      "top5": [
+       "master/issue_infra.md",
+       "master/test_issue_review.md",
+       "master/test_fixes_surface.md",
+       "master/test_fix_index.md",
+       "master/webui/fixes_page.md"
+      ]
+     },
+     {
+      "id": "Q17",
+      "lang": "mixed",
+      "rank": 3,
+      "top5": [
+       "master/test_notice_recovery.md",
+       "master/test_rounds.md",
+       "master/task_queue/logic_cleanup.md",
+       "master/test_history_terminal.md",
+       "master/test_failed_work_terminal.md"
+      ]
+     },
+     {
+      "id": "Q18",
+      "lang": "mixed",
+      "rank": 8,
+      "top5": [
+       "master/test_skill_scripts.md",
+       "master/test_rag_labels.md",
+       "master/bench_lane_codex.md",
+       "master/test_board.md",
+       "master/test_issue_track.md"
+      ]
+     },
+     {
+      "id": "Q19",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/client/workshop/hooks/pending_works.md",
+       "master/batch/gates.md",
+       "master/test_followup.md",
+       "master/service_freshness.md",
+       "master/test_conductor_metrics.md"
+      ]
+     },
+     {
+      "id": "Q20",
+      "lang": "mixed",
+      "rank": 6,
+      "top5": [
+       "master/task_queue/__main__.md",
+       "master/service_freshness.md",
+       "master/issue_wrapup.md",
+       "master/service_restart.md",
+       "master/test_sandbox.md"
+      ]
+     },
+     {
+      "id": "Q21",
+      "lang": "mixed",
+      "rank": 2,
+      "top5": [
+       "master/task_queue/__main__.md",
+       "master/service_freshness.md",
+       "master/issue_wrapup.md",
+       "master/task_queue/mcp_server.md",
+       "master/task_queue/logic_cleanup.md"
+      ]
+     },
+     {
+      "id": "Q22",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/issue_wrapup.md",
+       "master/issue_flow.md",
+       "master/service_restart.md",
+       "master/service_freshness.md",
+       "master/test_issue_wrapup.md"
+      ]
+     },
+     {
+      "id": "Q23",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/infra/bc250_shutdown.md",
+       "master/skills/ax-bc250-shutdown/scripts/shutdown.md",
+       "master/test_bc250_shutdown.md",
+       "master/broker/__init__.md",
+       "master/test_invalidate.md"
+      ]
+     },
+     {
+      "id": "Q24",
+      "lang": "mixed",
+      "rank": 6,
+      "top5": [
+       "master/test_projects.md",
+       "master/work/attempt.md",
+       "client/init/residency.md",
+       "master/context_search/context_audit.md",
+       "master/test_candidate_cleanup.md"
+      ]
+     },
+     {
+      "id": "Q25",
+      "lang": "mixed",
+      "rank": 2,
+      "top5": [
+       "master/work/wcommit.md",
+       "master/task_queue/logic_lifecycle.md",
+       "master/infra/bc250_shutdown.md",
+       "master/test_issue_wrapup.md",
+       "master/work/conductor_auth.md"
+      ]
+     },
+     {
+      "id": "Q26",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/context_synth/recipes_synthesizer.md",
+       "master/test_recipes.md",
+       "master/context_synth/signals.md",
+       "master/test_signals.md",
+       "master/test_recipes_read.md"
+      ]
+     },
+     {
+      "id": "Q27",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/relay/quota.md",
+       "master/relay/console.md",
+       "master/relay/__init__.md",
+       "master/llm_cooldown.md",
+       "master/relay/__main__.md"
+      ]
+     },
+     {
+      "id": "Q28",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/work/session_usage.md",
+       "master/webui/usage_page.md",
+       "master/work/gemini_report.md",
+       "master/test_usage_dashboard.md",
+       "master/test_gemini_report.md"
+      ]
+     },
+     {
+      "id": "Q29",
+      "lang": "mixed",
+      "rank": 4,
+      "top5": [
+       "master/interview.md",
+       "master/work/heuristics.md",
+       "master/work/distribute.md",
+       "master/plan_tools.md",
+       "master/plan_start.md"
+      ]
+     },
+     {
+      "id": "Q30",
+      "lang": "mixed",
+      "rank": 4,
+      "top5": [
+       "master/test_integration_coverage.md",
+       "master/test_integration_checks.md",
+       "master/test_issue_link.md",
+       "master/test_followup.md",
+       "master/test_project_affinity.md"
+      ]
+     }
+    ]
+   },
+   "kr+gated": {
+    "hit@1": 0.4666666666666667,
+    "hit@5": 0.7333333333333333,
+    "MRR": 0.5891161616161616,
+    "n": 30,
+    "by_lang": {
+     "hangul_only": {
+      "hit@1": 0.0,
+      "hit@5": 1.0,
+      "MRR": 0.3333333333333333,
+      "n": 1
+     },
+     "mixed": {
+      "hit@1": 0.4827586206896552,
+      "hit@5": 0.7241379310344828,
+      "MRR": 0.5979362591431557,
+      "n": 29
+     },
+     "other": {
+      "hit@1": 0.0,
+      "hit@5": 0.0,
+      "MRR": 0.0,
+      "n": 0
+     }
+    },
+    "per_query": [
+     {
+      "id": "Q01",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/context_search/search_log.md",
+       "master/context_search/rag_labels.md",
+       "master/context_synth/__init__.md",
+       "master/context_search/search_log_analyzer.md",
+       "master/webui/commit_flow.md"
+      ]
+     },
+     {
+      "id": "Q02",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/doc_sync/__main__.md",
+       "master/test_doc_sync_cli.md",
+       "master/doc_sync/__init__.md",
+       "master/doc_sync/draft.md",
+       "master/doc_sync/apply.md"
+      ]
+     },
+     {
+      "id": "Q03",
+      "lang": "mixed",
+      "rank": 12,
+      "top5": [
+       "master/work/runner.md",
+       "master/skills/ax-handoff/scripts/conductor.md",
+       "master/test_queue_worker_contracts.md",
+       "client/runtime/session1_conductor.md",
+       "master/work/infer.md"
+      ]
+     },
+     {
+      "id": "Q04",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/context_synth/review_runner.md",
+       "master/context_synth/pinned_tree.md",
+       "master/test_pinned_tree.md",
+       "master/test_review_runner.md",
+       "client/runtime/session1_conductor.md"
+      ]
+     },
+     {
+      "id": "Q05",
+      "lang": "mixed",
+      "rank": 12,
+      "top5": [
+       "master/work/llm_policy.md",
+       "master/llm_cooldown.md",
+       "master/ontology/log_candidates.md",
+       "master/test_pending.md",
+       "master/context_synth/pending.md"
+      ]
+     },
+     {
+      "id": "Q06",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/context_synth/review_queue.md",
+       "master/test_review_queue.md",
+       "master/context_synth/pending.md",
+       "master/test_pending.md",
+       "master/test_review_enqueue.md"
+      ]
+     },
+     {
+      "id": "Q07",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/ontology/prompt.md",
+       "master/test_python_commit_review.md",
+       "master/ontology/hierarchy.md",
+       "master/test_context_synth.md",
+       "master/work/declarations.md"
+      ]
+     },
+     {
+      "id": "Q08",
+      "lang": "mixed",
+      "rank": 0,
+      "top5": [
+       "master/work/attempt.md",
+       "master/work/branch_names.md",
+       "master/test_candidate_cleanup.md",
+       "master/test_branch_prune.md",
+       "master/work/__init__.md"
+      ]
+     },
+     {
+      "id": "Q09",
+      "lang": "mixed",
+      "rank": 2,
+      "top5": [
+       "master/context_synth/plan_register.md",
+       "master/plan_block.md",
+       "master/test_plan_block.md",
+       "master/plan_start.md",
+       "master/test_planner.md"
+      ]
+     },
+     {
+      "id": "Q10",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/context_synth/history_harvest.md",
+       "master/test_history_harvest.md",
+       "master/webui/rag_logs.md",
+       "master/context_synth/recipes_read.md",
+       "master/context_search/search_log.md"
+      ]
+     },
+     {
+      "id": "Q11",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "client/init/residency.md",
+       "master/test_no_worker_daemon.md",
+       "master/test_residency.md",
+       "master/plan_build.md",
+       "master/test_runner.md"
+      ]
+     },
+     {
+      "id": "Q12",
+      "lang": "mixed",
+      "rank": 6,
+      "top5": [
+       "master/test_no_worker_daemon.md",
+       "master/work/runner.md",
+       "master/work/infer.md",
+       "master/test_winsession.md",
+       "master/test_relay.md"
+      ]
+     },
+     {
+      "id": "Q13",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/plan_metrics.md",
+       "master/test_plan_metrics.md",
+       "master/plan_state.md",
+       "master/plan_tools.md",
+       "master/test_redmine_live_guard.md"
+      ]
+     },
+     {
+      "id": "Q14",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/plan_build.md",
+       "master/test_projects.md",
+       "master/context_synth/plan_dedup.md",
+       "master/test_project_affinity.md",
+       "master/test_context_search.md"
+      ]
+     },
+     {
+      "id": "Q15",
+      "lang": "hangul_only",
+      "rank": 3,
+      "top5": [
+       "master/context_synth/review_gen.md",
+       "master/test_review_range.md",
+       "master/context_synth/review_runner.md",
+       "master/test_issue_progress.md",
+       "master/issue_infra.md"
+      ]
+     },
+     {
+      "id": "Q16",
+      "lang": "mixed",
+      "rank": 11,
+      "top5": [
+       "master/issue_infra.md",
+       "master/test_issue_review.md",
+       "master/test_fixes_surface.md",
+       "master/test_fix_index.md",
+       "master/webui/fixes_page.md"
+      ]
+     },
+     {
+      "id": "Q17",
+      "lang": "mixed",
+      "rank": 3,
+      "top5": [
+       "master/test_notice_recovery.md",
+       "master/test_rounds.md",
+       "master/task_queue/logic_cleanup.md",
+       "master/test_history_terminal.md",
+       "master/test_failed_work_terminal.md"
+      ]
+     },
+     {
+      "id": "Q18",
+      "lang": "mixed",
+      "rank": 8,
+      "top5": [
+       "master/test_skill_scripts.md",
+       "master/test_rag_labels.md",
+       "master/bench_lane_codex.md",
+       "master/test_board.md",
+       "master/test_issue_track.md"
+      ]
+     },
+     {
+      "id": "Q19",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/client/workshop/hooks/pending_works.md",
+       "master/batch/gates.md",
+       "master/test_followup.md",
+       "master/service_freshness.md",
+       "master/test_conductor_metrics.md"
+      ]
+     },
+     {
+      "id": "Q20",
+      "lang": "mixed",
+      "rank": 11,
+      "top5": [
+       "master/task_queue/__main__.md",
+       "master/issue_wrapup.md",
+       "master/service_freshness.md",
+       "master/service_restart.md",
+       "master/test_sandbox.md"
+      ]
+     },
+     {
+      "id": "Q21",
+      "lang": "mixed",
+      "rank": 2,
+      "top5": [
+       "master/task_queue/__main__.md",
+       "master/service_freshness.md",
+       "client/runtime/client_mcp.md",
+       "master/issue_wrapup.md",
+       "master/batch/gates.md"
+      ]
+     },
+     {
+      "id": "Q22",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/issue_wrapup.md",
+       "master/service_restart.md",
+       "master/service_freshness.md",
+       "master/redmine.md",
+       "master/test_issue_wrapup.md"
+      ]
+     },
+     {
+      "id": "Q23",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/infra/bc250_shutdown.md",
+       "master/skills/ax-bc250-shutdown/scripts/shutdown.md",
+       "master/test_bc250_shutdown.md",
+       "master/broker/__init__.md",
+       "master/test_invalidate.md"
+      ]
+     },
+     {
+      "id": "Q24",
+      "lang": "mixed",
+      "rank": 6,
+      "top5": [
+       "master/test_projects.md",
+       "master/work/attempt.md",
+       "client/init/residency.md",
+       "master/context_search/context_audit.md",
+       "master/test_candidate_cleanup.md"
+      ]
+     },
+     {
+      "id": "Q25",
+      "lang": "mixed",
+      "rank": 2,
+      "top5": [
+       "master/work/wcommit.md",
+       "master/task_queue/logic_lifecycle.md",
+       "master/infra/bc250_shutdown.md",
+       "master/test_issue_wrapup.md",
+       "master/work/conductor_auth.md"
+      ]
+     },
+     {
+      "id": "Q26",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/context_synth/recipes_synthesizer.md",
+       "master/test_recipes.md",
+       "master/context_synth/signals.md",
+       "master/test_signals.md",
+       "master/test_recipes_read.md"
+      ]
+     },
+     {
+      "id": "Q27",
+      "lang": "mixed",
+      "rank": 1,
+      "top5": [
+       "master/relay/quota.md",
+       "master/relay/console.md",
+       "master/relay/__main__.md",
+       "master/relay/__init__.md",
+       "master/test_relay.md"
+      ]
+     },
+     {
+      "id": "Q28",
+      "lang": "mixed",
+      "rank": 4,
+      "top5": [
+       "master/work/gemini_report.md",
+       "master/test_gemini_report.md",
+       "master/test_usage_dashboard.md",
+       "master/work/usage_dashboard.md",
+       "master/work/session_usage.md"
+      ]
+     },
+     {
+      "id": "Q29",
+      "lang": "mixed",
+      "rank": 4,
+      "top5": [
+       "master/interview.md",
+       "master/work/heuristics.md",
+       "master/work/distribute.md",
+       "master/plan_tools.md",
+       "master/plan_start.md"
+      ]
+     },
+     {
+      "id": "Q30",
+      "lang": "mixed",
+      "rank": 5,
+      "top5": [
+       "master/test_integration_checks.md",
+       "master/test_integration_coverage.md",
+       "master/test_revalidation.md",
+       "master/test_review_enqueue.md",
+       "master/test_followup.md"
+      ]
+     }
+    ]
+   }
+  }
+ },
+ "diagnostic": {
+  "generation": "b",
+  "metrics": {
+   "bm25_only": {
+    "hit@1": 0.43333333333333335,
+    "hit@5": 0.9,
+    "MRR": 0.6651322751322752,
+    "n": 30
+   },
+   "vector_only": {
+    "hit@1": 0.3333333333333333,
+    "hit@5": 0.5,
+    "MRR": 0.4222863247863248,
+    "n": 30
+   },
+   "fused_no_test": {
+    "hit@1": 0.5333333333333333,
+    "hit@5": 0.8333333333333334,
+    "MRR": 0.6597222222222221,
+    "n": 30
+   },
+   "bm25_no_test": {
+    "hit@1": 0.8,
+    "hit@5": 0.9666666666666667,
+    "MRR": 0.8722222222222222,
+    "n": 30
+   }
+  },
+  "per": [
+   {
+    "id": "Q01",
+    "bm25_only": 5,
+    "vector_only": 1,
+    "fused_no_test": 1,
+    "bm25_no_test": 2
+   },
+   {
+    "id": "Q02",
+    "bm25_only": 1,
+    "vector_only": 1,
+    "fused_no_test": 1,
+    "bm25_no_test": 1
+   },
+   {
+    "id": "Q03",
+    "bm25_only": 2,
+    "vector_only": 0,
+    "fused_no_test": 0,
+    "bm25_no_test": 1
+   },
+   {
+    "id": "Q04",
+    "bm25_only": 1,
+    "vector_only": 9,
+    "fused_no_test": 1,
+    "bm25_no_test": 1
+   },
+   {
+    "id": "Q05",
+    "bm25_only": 2,
+    "vector_only": 0,
+    "fused_no_test": 10,
+    "bm25_no_test": 1
+   },
+   {
+    "id": "Q06",
+    "bm25_only": 2,
+    "vector_only": 1,
+    "fused_no_test": 1,
+    "bm25_no_test": 1
+   },
+   {
+    "id": "Q07",
+    "bm25_only": 1,
+    "vector_only": 5,
+    "fused_no_test": 1,
+    "bm25_no_test": 1
+   },
+   {
+    "id": "Q08",
+    "bm25_only": 7,
+    "vector_only": 0,
+    "fused_no_test": 8,
+    "bm25_no_test": 4
+   },
+   {
+    "id": "Q09",
+    "bm25_only": 1,
+    "vector_only": 12,
+    "fused_no_test": 2,
+    "bm25_no_test": 1
+   },
+   {
+    "id": "Q10",
+    "bm25_only": 2,
+    "vector_only": 1,
+    "fused_no_test": 1,
+    "bm25_no_test": 1
+   },
+   {
+    "id": "Q11",
+    "bm25_only": 2,
+    "vector_only": 1,
+    "fused_no_test": 1,
+    "bm25_no_test": 1
+   },
+   {
+    "id": "Q12",
+    "bm25_only": 1,
+    "vector_only": 0,
+    "fused_no_test": 0,
+    "bm25_no_test": 1
+   },
+   {
+    "id": "Q13",
+    "bm25_only": 1,
+    "vector_only": 3,
+    "fused_no_test": 1,
+    "bm25_no_test": 1
+   },
+   {
+    "id": "Q14",
+    "bm25_only": 1,
+    "vector_only": 1,
+    "fused_no_test": 1,
+    "bm25_no_test": 1
+   },
+   {
+    "id": "Q15",
+    "bm25_only": 3,
+    "vector_only": 6,
+    "fused_no_test": 2,
+    "bm25_no_test": 2
+   },
+   {
+    "id": "Q16",
+    "bm25_only": 1,
+    "vector_only": 1,
+    "fused_no_test": 5,
+    "bm25_no_test": 1
+   },
+   {
+    "id": "Q17",
+    "bm25_only": 2,
+    "vector_only": 9,
+    "fused_no_test": 1,
+    "bm25_no_test": 1
+   },
+   {
+    "id": "Q18",
+    "bm25_only": 2,
+    "vector_only": 0,
+    "fused_no_test": 6,
+    "bm25_no_test": 1
+   },
+   {
+    "id": "Q19",
+    "bm25_only": 1,
+    "vector_only": 1,
+    "fused_no_test": 1,
+    "bm25_no_test": 1
+   },
+   {
+    "id": "Q20",
+    "bm25_only": 9,
+    "vector_only": 10,
+    "fused_no_test": 5,
+    "bm25_no_test": 6
+   },
+   {
+    "id": "Q21",
+    "bm25_only": 2,
+    "vector_only": 9,
+    "fused_no_test": 2,
+    "bm25_no_test": 1
+   },
+   {
+    "id": "Q22",
+    "bm25_only": 1,
+    "vector_only": 2,
+    "fused_no_test": 1,
+    "bm25_no_test": 1
+   },
+   {
+    "id": "Q23",
+    "bm25_only": 1,
+    "vector_only": 1,
+    "fused_no_test": 1,
+    "bm25_no_test": 1
+   },
+   {
+    "id": "Q24",
+    "bm25_only": 1,
+    "vector_only": 0,
+    "fused_no_test": 4,
+    "bm25_no_test": 1
+   },
+   {
+    "id": "Q25",
+    "bm25_only": 2,
+    "vector_only": 8,
+    "fused_no_test": 2,
+    "bm25_no_test": 1
+   },
+   {
+    "id": "Q26",
+    "bm25_only": 2,
+    "vector_only": 1,
+    "fused_no_test": 1,
+    "bm25_no_test": 1
+   },
+   {
+    "id": "Q27",
+    "bm25_only": 1,
+    "vector_only": 2,
+    "fused_no_test": 1,
+    "bm25_no_test": 1
+   },
+   {
+    "id": "Q28",
+    "bm25_only": 2,
+    "vector_only": 4,
+    "fused_no_test": 1,
+    "bm25_no_test": 1
+   },
+   {
+    "id": "Q29",
+    "bm25_only": 6,
+    "vector_only": 13,
+    "fused_no_test": 4,
+    "bm25_no_test": 4
+   },
+   {
+    "id": "Q30",
+    "bm25_only": 2,
+    "vector_only": 0,
+    "fused_no_test": 2,
+    "bm25_no_test": 2
+   }
+  ],
+  "definition": "bm25_only/vector_only=각 채널 상위15 · fused_no_test=융합 결과에서 test_*.md 제외 상위15 · bm25_no_test=BM25 결과에서 test_*.md 제외 상위15. 질의는 focus(expand_for(query))"
+ },
+ "commit_compare": {
+  "rows": [
+   {
+    "id": "Q01",
+    "issue": 837,
+    "commits": 3,
+    "commit_docs": 17,
+    "exp_in_commit": [
+     "master/context_search/domain_index.md",
+     "master/context_search/search_log.md",
+     "master/webui/rag_logs.md"
+    ],
+    "exp_total": 3,
+    "top5_in_commit": [
+     "master/context_search/search_log.md"
+    ]
+   },
+   {
+    "id": "Q02",
+    "issue": 838,
+    "commits": 7,
+    "commit_docs": 5,
+    "exp_in_commit": [
+     "master/doc_sync/__main__.md"
+    ],
+    "exp_total": 1,
+    "top5_in_commit": [
+     "master/doc_sync/__init__.md",
+     "master/doc_sync/__main__.md",
+     "master/doc_sync/draft.md"
+    ]
+   },
+   {
+    "id": "Q03",
+    "issue": 843,
+    "commits": 0,
+    "commit_docs": 0,
+    "exp_in_commit": [],
+    "exp_total": 2,
+    "top5_in_commit": []
+   },
+   {
+    "id": "Q04",
+    "issue": 844,
+    "commits": 5,
+    "commit_docs": 4,
+    "exp_in_commit": [
+     "master/context_synth/review_runner.md"
+    ],
+    "exp_total": 2,
+    "top5_in_commit": [
+     "master/context_synth/review_runner.md"
+    ]
+   },
+   {
+    "id": "Q05",
+    "issue": 845,
+    "commits": 3,
+    "commit_docs": 1,
+    "exp_in_commit": [
+     "master/agy_models.md"
+    ],
+    "exp_total": 1,
+    "top5_in_commit": []
+   },
+   {
+    "id": "Q06",
+    "issue": 847,
+    "commits": 4,
+    "commit_docs": 2,
+    "exp_in_commit": [
+     "master/context_synth/review_queue.md"
+    ],
+    "exp_total": 1,
+    "top5_in_commit": [
+     "master/context_synth/review_queue.md"
+    ]
+   },
+   {
+    "id": "Q07",
+    "issue": 850,
+    "commits": 4,
+    "commit_docs": 6,
+    "exp_in_commit": [
+     "master/ontology/contexts.md",
+     "master/ontology/parse.md",
+     "master/ontology/prompt.md"
+    ],
+    "exp_total": 3,
+    "top5_in_commit": [
+     "master/ontology/prompt.md"
+    ]
+   },
+   {
+    "id": "Q08",
+    "issue": 373,
+    "commits": 6,
+    "commit_docs": 1,
+    "exp_in_commit": [
+     "master/work/review.md"
+    ],
+    "exp_total": 1,
+    "top5_in_commit": []
+   },
+   {
+    "id": "Q09",
+    "issue": 826,
+    "commits": 9,
+    "commit_docs": 7,
+    "exp_in_commit": [
+     "master/plan_block.md",
+     "master/plan_state.md",
+     "master/plan_tools.md"
+    ],
+    "exp_total": 3,
+    "top5_in_commit": [
+     "master/plan_block.md",
+     "master/plan_start.md"
+    ]
+   },
+   {
+    "id": "Q10",
+    "issue": 852,
+    "commits": 8,
+    "commit_docs": 6,
+    "exp_in_commit": [
+     "master/context_synth/history_harvest.md"
+    ],
+    "exp_total": 1,
+    "top5_in_commit": [
+     "master/context_synth/history_harvest.md"
+    ]
+   },
+   {
+    "id": "Q11",
+    "issue": 860,
+    "commits": 3,
+    "commit_docs": 0,
+    "exp_in_commit": [],
+    "exp_total": 4,
+    "top5_in_commit": []
+   },
+   {
+    "id": "Q12",
+    "issue": 861,
+    "commits": 9,
+    "commit_docs": 8,
+    "exp_in_commit": [
+     "master/client/home_guides.md"
+    ],
+    "exp_total": 1,
+    "top5_in_commit": [
+     "master/work/runner.md"
+    ]
+   },
+   {
+    "id": "Q13",
+    "issue": 864,
+    "commits": 6,
+    "commit_docs": 3,
+    "exp_in_commit": [
+     "master/plan_events.md",
+     "master/plan_metrics.md",
+     "master/plan_tools.md"
+    ],
+    "exp_total": 3,
+    "top5_in_commit": [
+     "master/plan_metrics.md",
+     "master/plan_tools.md"
+    ]
+   },
+   {
+    "id": "Q14",
+    "issue": 863,
+    "commits": 6,
+    "commit_docs": 1,
+    "exp_in_commit": [],
+    "exp_total": 3,
+    "top5_in_commit": []
+   },
+   {
+    "id": "Q15",
+    "issue": 879,
+    "commits": 10,
+    "commit_docs": 6,
+    "exp_in_commit": [
+     "master/context_synth/review_runner.md",
+     "master/issue_flow.md"
+    ],
+    "exp_total": 4,
+    "top5_in_commit": [
+     "master/context_synth/review_gen.md",
+     "master/context_synth/review_runner.md"
+    ]
+   },
+   {
+    "id": "Q16",
+    "issue": 883,
+    "commits": 7,
+    "commit_docs": 9,
+    "exp_in_commit": [
+     "master/context_synth/issue_review.md",
+     "master/issue_flow.md",
+     "master/issue_lock.md",
+     "master/redmine.md"
+    ],
+    "exp_total": 4,
+    "top5_in_commit": []
+   },
+   {
+    "id": "Q17",
+    "issue": 891,
+    "commits": 4,
+    "commit_docs": 3,
+    "exp_in_commit": [
+     "master/task_queue/logic.md",
+     "master/task_queue/logic_cleanup.md"
+    ],
+    "exp_total": 2,
+    "top5_in_commit": [
+     "master/task_queue/logic_cleanup.md"
+    ]
+   },
+   {
+    "id": "Q18",
+    "issue": 890,
+    "commits": 5,
+    "commit_docs": 5,
+    "exp_in_commit": [
+     "master/client/__main__.md",
+     "master/client/bundle.md",
+     "master/client/spec.md"
+    ],
+    "exp_total": 3,
+    "top5_in_commit": []
+   },
+   {
+    "id": "Q19",
+    "issue": 899,
+    "commits": 7,
+    "commit_docs": 6,
+    "exp_in_commit": [
+     "master/client/workshop/hooks/pending_works.md",
+     "master/client/workshop/hooks/work_completion.md",
+     "master/work/followup.md"
+    ],
+    "exp_total": 3,
+    "top5_in_commit": [
+     "master/client/workshop/hooks/pending_works.md"
+    ]
+   },
+   {
+    "id": "Q20",
+    "issue": 907,
+    "commits": 3,
+    "commit_docs": 3,
+    "exp_in_commit": [
+     "master/issue_flow.md",
+     "master/projects/config.md"
+    ],
+    "exp_total": 2,
+    "top5_in_commit": []
+   },
+   {
+    "id": "Q21",
+    "issue": 897,
+    "commits": 4,
+    "commit_docs": 4,
+    "exp_in_commit": [
+     "master/service_freshness.md"
+    ],
+    "exp_total": 1,
+    "top5_in_commit": [
+     "master/service_freshness.md",
+     "master/task_queue/__main__.md"
+    ]
+   },
+   {
+    "id": "Q22",
+    "issue": 921,
+    "commits": 3,
+    "commit_docs": 2,
+    "exp_in_commit": [
+     "master/issue_wrapup.md"
+    ],
+    "exp_total": 1,
+    "top5_in_commit": [
+     "master/issue_flow.md",
+     "master/issue_wrapup.md"
+    ]
+   },
+   {
+    "id": "Q23",
+    "issue": 702,
+    "commits": 3,
+    "commit_docs": 4,
+    "exp_in_commit": [
+     "master/infra/bc250_shutdown.md"
+    ],
+    "exp_total": 1,
+    "top5_in_commit": [
+     "master/infra/bc250_shutdown.md",
+     "master/skills/ax-bc250-shutdown/scripts/shutdown.md"
+    ]
+   },
+   {
+    "id": "Q24",
+    "issue": 936,
+    "commits": 2,
+    "commit_docs": 0,
+    "exp_in_commit": [],
+    "exp_total": 2,
+    "top5_in_commit": []
+   },
+   {
+    "id": "Q25",
+    "issue": 344,
+    "commits": 8,
+    "commit_docs": 4,
+    "exp_in_commit": [
+     "master/task_queue/logic_claim.md",
+     "master/work/runner.md"
+    ],
+    "exp_total": 3,
+    "top5_in_commit": []
+   },
+   {
+    "id": "Q26",
+    "issue": 383,
+    "commits": 4,
+    "commit_docs": 5,
+    "exp_in_commit": [
+     "master/batch/run.md",
+     "master/context_synth/recipes_synthesizer.md",
+     "master/context_synth/signals.md"
+    ],
+    "exp_total": 3,
+    "top5_in_commit": [
+     "master/context_synth/recipes_synthesizer.md",
+     "master/context_synth/signals.md"
+    ]
+   },
+   {
+    "id": "Q27",
+    "issue": 368,
+    "commits": 6,
+    "commit_docs": 5,
+    "exp_in_commit": [
+     "master/relay/agents.md",
+     "master/relay/console.md",
+     "master/relay/quota.md"
+    ],
+    "exp_total": 3,
+    "top5_in_commit": [
+     "master/relay/console.md",
+     "master/relay/quota.md"
+    ]
+   },
+   {
+    "id": "Q28",
+    "issue": 949,
+    "commits": 4,
+    "commit_docs": 1,
+    "exp_in_commit": [
+     "master/work/usage_dashboard.md"
+    ],
+    "exp_total": 2,
+    "top5_in_commit": []
+   },
+   {
+    "id": "Q29",
+    "issue": 939,
+    "commits": 6,
+    "commit_docs": 1,
+    "exp_in_commit": [
+     "master/plan_tools.md"
+    ],
+    "exp_total": 2,
+    "top5_in_commit": [
+     "master/plan_tools.md"
+    ]
+   },
+   {
+    "id": "Q30",
+    "issue": 965,
+    "commits": 8,
+    "commit_docs": 2,
+    "exp_in_commit": [
+     "master/integration_checks.md"
+    ],
+    "exp_total": 5,
+    "top5_in_commit": []
+   }
+  ],
+  "definition": "evidence_issue 번호를 메시지에 담은 커밋(git log --all --grep '#N\\b')이 바꾼 비테스트 .py → 같은 경로 .md 가 현재 context 에 있으면 포함. 다른 일감 커밋이 번호를 언급만 해도 잡힌다(한계)."
+ }
+}
