@@ -180,3 +180,135 @@ def evidence(issue_id: int, *, twin_root, context_root: Path, repo: Path = REPO,
     rdocs, reports = report_docs(issue_id, context_root=context_root, reports_root=reports_root)
     return IssueEvidence(issue_id, commits=pairs, commit_docs=cdocs, report_docs=rdocs,
                          commit_source=source, reports=reports)
+
+
+# ── 판정 (자동 「후보」) ──────────────────────────────────────────────────────────
+#
+#   근거 있음      상위 5 안에 그 일감 커밋이 고친 파일의 문서
+#   근거 일부      고친 파일의 문서가 6~15위뿐이거나, 리포트 언급 문서만 반환
+#   근거 없음      반환 문서가 어느 쪽에도 없다
+#   확인불가       연결 없음 · 그 일감에 커밋도 리포트 언급도 없음
+#   채택           겹치면 「간접」, 아니면 「확인불가」 — [중요] 자동으로 「직접」을 주지 않는다:
+#                  검색에 나온 문서를 고쳤다는 것은 그 결과를 작업자가 **썼다**는 증거가 아니다(#855).
+
+TOP = 5
+LIMIT = 15
+AUTO = "auto"
+
+
+def returned_docs(entries) -> dict:
+    """요청의 검색들이 돌려준 문서 → (최고 순위, search_id). 15위까지."""
+    best: dict = {}
+    for e in entries:
+        for rank, f in enumerate(e.get("results") or [], 1):
+            if rank > LIMIT or not f:
+                break
+            if f not in best or rank < best[f][0]:
+                best[f] = (rank, str(e.get("search_id") or ""))
+    return best
+
+
+def judge(entries, link: Link, ev: IssueEvidence | None) -> dict:
+    docs = returned_docs(entries)
+    marks = []
+    for f, (rank, sid) in sorted(docs.items(), key=lambda kv: kv[1][0]):
+        kinds = [k for k, src in (("커밋", ev.commit_docs if ev else {}), ("리포트", ev.report_docs if ev else {}))
+                 if f in src]
+        marks.append({"doc": f, "rank": rank, "search_id": sid, "marks": kinds,
+                      "why": [*(ev.commit_docs.get(f, []) if ev else []),
+                              *(ev.report_docs.get(f, []) if ev else [])][:3]})
+    if link.issue_id is None:
+        evidence, reason = "확인불가", link.why
+    elif ev is None or ev.empty:
+        evidence, reason = "확인불가", f"#{link.issue_id} 에 커밋·리포트 근거가 없다"
+    elif any("커밋" in m["marks"] and m["rank"] <= TOP for m in marks):
+        evidence, reason = "있음", f"상위 {TOP} 안에 #{link.issue_id} 커밋이 고친 파일의 문서"
+    elif any(m["marks"] for m in marks):
+        evidence, reason = "일부", "고친 파일 문서가 6~15위뿐이거나 리포트 언급 문서만"
+    else:
+        evidence, reason = "없음", "반환 문서가 커밋·리포트 어느 쪽에도 없다"
+    adoption = "간접" if evidence in ("있음", "일부") else "확인불가"
+    basis = [f"{m['search_id'][:8]} {m['rank']}위 {m['doc']} ← {w}" for m in marks if m["marks"] for w in m["why"]][:8]
+    return {"issue_id": link.issue_id, "link": link.kind, "link_source": link.source,
+            "evidence": evidence, "adoption": adoption, "reason": reason,
+            "commit_source": ev.commit_source if ev else "", "docs": marks, "basis": basis,
+            "searches": [str(e.get("search_id") or "") for e in entries]}
+
+
+def note_of(row: dict) -> str:
+    """판정 note — 자동 대조임과 연결의 성격(관측/원문 번호 후보)을 밝힌다."""
+    if row["link"] == CANDIDATE:
+        link = f"원문 번호 후보 #{row['issue_id']} — 확정 연결 아님"
+    elif row["link"] == OBSERVED:
+        link = f"관측 연결 #{row['issue_id']} ({row['link_source'] or '출처 미상'})"
+    else:
+        link = "연결 없음"
+    return f"자동 대조(#980) · {link} · {row['reason']}"
+
+
+def analyze(paths, *, issue_id: int = 0, task_type: str = "user_command", repo: Path = REPO,
+            reports_root: Path = REPORTS, git=_git) -> list:
+    """요청별 판정 목록. `issue_id` 면 그 일감으로 연결된(관측·후보) 요청만."""
+    from master.context_search import search_log
+    groups = group_requests(search_log._all_entries(paths), task_type=task_type)
+    cache: dict = {}
+    rows = []
+    for rid, entries in groups.items():
+        link = link_of(entries)
+        if issue_id and link.issue_id != int(issue_id):
+            continue
+        ev = None
+        if link.issue_id is not None:
+            if link.issue_id not in cache:
+                cache[link.issue_id] = evidence(link.issue_id, twin_root=paths.root, context_root=paths.context,
+                                                repo=repo, reports_root=reports_root, git=git)
+            ev = cache[link.issue_id]
+        row = judge(entries, link, ev)
+        row["request_id"] = rid
+        row["user_request"] = next((e.get("user_request") for e in entries if e.get("user_request")), None)
+        rows.append(row)
+    return rows
+
+
+def distribution(rows) -> dict:
+    out = {k: 0 for k in ("있음", "일부", "없음", "확인불가")}
+    for r in rows:
+        out[r["evidence"]] += 1
+    return {"requests": len(rows), "evidence": out,
+            "link": {k: sum(r["link"] == k for r in rows) for k in (OBSERVED, CANDIDATE, "")}}
+
+
+def report_text(rows) -> str:
+    d = distribution(rows)
+    out = [f"요청 {d['requests']}건 · 근거 {d['evidence']} · 연결 관측 {d['link'][OBSERVED]} · "
+           f"원문 번호 후보 {d['link'][CANDIDATE]} · 연결 없음 {d['link']['']}"]
+    for r in rows:
+        tag = {OBSERVED: "관측", CANDIDATE: "후보"}.get(r["link"], "없음")
+        n = f"#{r['issue_id']}" if r["issue_id"] else "-"
+        out.append(f"\n[{r['evidence']}·채택 {r['adoption']}] {n}({tag}) 요청 {r['request_id'][:8]} "
+                   f"「{(r.get('user_request') or '')[:40]}」 — {r['reason']}")
+        for m in r["docs"][:LIMIT]:
+            mark = "+".join(m["marks"]) or "-"
+            out.append(f"   {m['rank']:>2}위 {m['doc']}  [{mark}]" + (f"  ← {m['why'][0]}" if m["why"] else ""))
+    return "\n".join(out)
+
+
+def main(argv=None) -> int:
+    import argparse
+    import json
+    ap = argparse.ArgumentParser(prog="python -m master.search_usefulness")
+    ap.add_argument("--issue", type=int, default=0, help="그 일감으로 연결된 요청만")
+    ap.add_argument("--task-type", default="user_command")
+    ap.add_argument("--json", action="store_true")
+    args = ap.parse_args(argv)
+    from master.context_search.paths import resolve
+    rows = analyze(resolve(""), issue_id=args.issue, task_type=args.task_type)
+    if args.json:
+        print(json.dumps({"distribution": distribution(rows), "rows": rows}, ensure_ascii=False, indent=1))
+    else:
+        print(report_text(rows))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
