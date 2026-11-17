@@ -265,9 +265,45 @@ def analyze(paths, *, issue_id: int = 0, task_type: str = "user_command", repo: 
             ev = cache[link.issue_id]
         row = judge(entries, link, ev)
         row["request_id"] = rid
+        # 판정 대상 — request_id 가 있으면 요청, 옛 로그처럼 없으면 그 검색 하나(`rag_labels` 대상 규칙)
+        row["target"] = "request" if any(e.get("request_id") for e in entries) else "search"
         row["user_request"] = next((e.get("user_request") for e in entries if e.get("user_request")), None)
         rows.append(row)
     return rows
+
+
+def apply(paths, rows, *, add=None, latest=None) -> dict:
+    """판정을 `rag_labels` 에 검증자 auto·「후보」로 덧붙인다(`#855` 저장소 · 스키마 무변경).
+
+    건너뜀: 연결 없는 요청(근거가 없어 판정할 것이 없다) · **사람이 판정한 대상**(검증자가 auto 가 아니다) ·
+    같은 자동 판정이 이미 최신인 대상(재실행해도 같은 결과). 원본 검색 로그는 건드리지 않는다.
+    """
+    from master.context_search import rag_labels
+    add = add or rag_labels.add
+    current = (latest or rag_labels.latest)(paths)
+    out = {"added": 0, "unchanged": 0, "human": 0, "unlinked": 0, "errors": []}
+    for r in rows:
+        if r["issue_id"] is None:
+            out["unlinked"] += 1
+            continue
+        target, tid = r.get("target", "request"), r["request_id"]
+        note = note_of(r)
+        cur = current.get((target, tid))
+        if cur and str(cur.get("reviewer") or "") != AUTO:
+            out["human"] += 1
+            continue
+        if cur and (cur.get("evidence"), cur.get("adoption"), cur.get("basis") or [], cur.get("note")) == \
+                (r["evidence"], r["adoption"], r["basis"], note):
+            out["unchanged"] += 1
+            continue
+        try:
+            add(paths, target=target, target_id=tid, evidence=r["evidence"], adoption=r["adoption"],
+                status="후보", basis=r["basis"], reviewer=AUTO, note=note)
+        except Exception as e:                              # noqa: BLE001 — 한 건 실패가 나머지를 막지 않는다
+            out["errors"].append(f"{target}:{tid[:8]} {type(e).__name__}: {e}")
+            continue
+        out["added"] += 1
+    return out
 
 
 def distribution(rows) -> dict:
@@ -300,14 +336,24 @@ def main(argv=None) -> int:
     ap.add_argument("--issue", type=int, default=0, help="그 일감으로 연결된 요청만")
     ap.add_argument("--task-type", default="user_command")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--apply", action="store_true",
+                    help="판정을 rag_labels 에 auto·「후보」로 덧붙인다(사람 판정은 건드리지 않는다)")
     args = ap.parse_args(argv)
     from master.context_search.paths import resolve
-    rows = analyze(resolve(""), issue_id=args.issue, task_type=args.task_type)
+    paths = resolve("")
+    rows = analyze(paths, issue_id=args.issue, task_type=args.task_type)
+    applied = apply(paths, rows) if args.apply else None
     if args.json:
-        print(json.dumps({"distribution": distribution(rows), "rows": rows}, ensure_ascii=False, indent=1))
+        print(json.dumps({"distribution": distribution(rows), "applied": applied, "rows": rows},
+                         ensure_ascii=False, indent=1))
     else:
         print(report_text(rows))
-    return 0
+        if applied is not None:
+            print(f"\n[apply] 추가 {applied['added']} · 그대로 {applied['unchanged']} · 사람 판정 보존 "
+                  f"{applied['human']} · 연결 없음 건너뜀 {applied['unlinked']} · 실패 {len(applied['errors'])}")
+            for e in applied["errors"]:
+                print(f"  [실패] {e}")
+    return 1 if applied and applied["errors"] else 0
 
 
 if __name__ == "__main__":

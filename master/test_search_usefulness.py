@@ -191,5 +191,59 @@ class AnalyzeTests(Fixture):
         self.assertIn("[커밋]", text)
 
 
+
+class ApplyTests(AnalyzeTests):
+    def test_apply_auto_candidates_keeps_human_and_is_idempotent(self):
+        import hashlib
+        from master.context_search import rag_labels as RL
+        self.track = {211: [{"hashes": [{"sha": "aaaa111"}]}]}
+        self.write_log([
+            entry(["master/a.md"], sid="s1", issue_id=211, issue_id_source="issue_lock", user_request="응!"),
+            {**entry(["x.md"], sid="s2", user_request="211번 진행해"), "request_id": "r2"},
+            {**entry(["x.md"], sid="s3", user_request="그냥 검색"), "request_id": "r3"},
+            {**entry(["master/a.md"], sid="s5", user_request="211 다시"), "request_id": "r5"}])
+        logf = self.twin / "search_logs" / "2026-11-17.jsonl"
+        before = hashlib.sha256(logf.read_bytes()).hexdigest()
+        paths = self.paths()
+        RL.add(paths, target="request", target_id="r5", evidence="없음", adoption="확인불가", status="확정",
+               basis=["사람이 봤다"], reviewer="sim")
+        git = fake_git({"aaaa111": ["master/a.py"]})
+
+        rows = SU.analyze(paths, reports_root=self.reports, git=git)
+        out = SU.apply(paths, rows)
+        self.assertEqual((out["added"], out["human"], out["unlinked"], out["errors"]), (2, 1, 1, []))
+        lab = RL.latest(paths)
+        r1 = lab[("request", "r1")]
+        self.assertEqual((r1["reviewer"], r1["status"], r1["evidence"], r1["adoption"]), ("auto", "후보", "있음", "간접"))
+        self.assertIn("관측 연결 #211", r1["note"])
+        self.assertIn("원문 번호 후보 #211", lab[("request", "r2")]["note"])
+        self.assertEqual(lab[("request", "r5")]["reviewer"], "sim", "사람 판정은 그대로")
+        self.assertNotIn(("request", "r3"), lab, "연결 없는 요청은 판정하지 않는다")
+
+        again = SU.apply(paths, SU.analyze(paths, reports_root=self.reports, git=git))
+        self.assertEqual((again["added"], again["unchanged"]), (0, 2), "재실행해도 같다")
+        self.assertEqual(len(RL.read_all(paths)), 3)
+        self.assertEqual(RL.check(RL.summary(paths)), [], "rag_labels 집계 검사 문제 0")
+        self.assertEqual(hashlib.sha256(logf.read_bytes()).hexdigest(), before, "원본 검색 로그 바이트 불변")
+
+        self.track = {211: [{"hashes": [{"sha": "aaaa111"}]}]}
+        changed = SU.apply(paths, SU.analyze(paths, reports_root=self.reports, git=fake_git({"aaaa111": []})))
+        self.assertEqual(changed["added"], 2, "근거가 바뀌면 새 자동 판정을 덧붙인다(이력 보존)")
+
+    def test_apply_error_does_not_stop_others(self):
+        self.write_log([entry(["master/a.md"], sid="s1", issue_id=211, issue_id_source="provided"),
+                        {**entry(["master/a.md"], sid="s2", issue_id=212, issue_id_source="provided"),
+                         "request_id": "r2"}])
+        rows = SU.analyze(self.paths(), reports_root=self.reports, git=fake_git({}))
+        seen = []
+        def add(paths, **kw):
+            seen.append(kw["target_id"])
+            if kw["target_id"] == "r1":
+                raise ValueError("깨짐")
+        out = SU.apply(self.paths(), rows, add=add, latest=lambda p: {})
+        self.assertEqual((out["added"], len(out["errors"])), (1, 1))
+        self.assertEqual(sorted(seen), ["r1", "r2"])
+
+
 if __name__ == "__main__":
     unittest.main()
