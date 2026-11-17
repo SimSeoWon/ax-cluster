@@ -49,7 +49,12 @@ def search_context(**metadata):
 
 @contextmanager
 def suppress_logging():
-    """융합 검색 안의 벡터 호출을 중복 기록하지 않는다."""
+    """이 구간의 검색은 기록하지 않는다.
+
+    쓰임은 둘이다 — ① 융합 검색 안의 벡터 호출을 중복 기록하지 않는다(`ContextSearch.search`
+    는 벡터 호출만 감싸고 자기 기록은 구간 밖 `finally` 에서 한다). ② 평가 벤치(`bench_kr`,
+    `#211`)의 검색이 실사용 로그의 분모에 섞이지 않게 한다 — 그래서 `log_search` 도 이 값을 본다.
+    """
     token = _suppressed.set(True)
     try:
         yield
@@ -147,6 +152,10 @@ def log_search(paths, *, query: str | None = None, hits=None,
                generation: str | None = None, error: str | None = None,
                **metadata) -> dict:
     """날짜별 원본과 기존 최근 로그에 기록한다. 실패는 반환값으로 관측한다."""
+    if logging_suppressed():
+        # `#211` — 평가 검색은 실사용 로그에 남기지 않는다. 쓰지 않은 것을 반환값으로 드러낸다.
+        return {"ok": True, "reason": "suppress_logging 구간 — 기록하지 않음",
+                "written": False, "suppressed": True}
     hits = list(hits or [])
     if query is None and not hits and error is None:
         return {"ok": False, "reason": "질의도 결과도 없다 — 기록할 것이 없다", "written": False}
