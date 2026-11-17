@@ -94,6 +94,33 @@ def _results(entry):
     return "".join(out)
 
 
+def _then(entries, n) -> str:
+    """🔴 `#979` — 검색 **당시** 일감 스냅샷(제목 · 작업중 태스크 · 「문제·맥락」). 같은 요청 안에서 태스크가
+    바뀌었으면 서로 다른 스냅샷을 모두 보인다. 스냅샷이 없는 옛 로그는 그렇다고 밝힌다(지어내지 않는다)."""
+    seen, out = set(), []
+    for e in entries:
+        snap = e.get("issue_snapshot") if e.get("issue_id") == n else None
+        if not isinstance(snap, dict):
+            continue
+        if snap.get("status") != "ok":
+            key = ("fail",)
+            text = '당시 일감 조회 실패' + (f' <span class="meta">({_e(snap.get("why"))})</span>' if snap.get("why") else '')
+        else:
+            tasks = snap.get("tasks") or []
+            line = (" · ".join(f'{t.get("id")} {t.get("goal") or ""}'.strip() for t in tasks if isinstance(t, dict))
+                    or snap.get("tasks_note") or "작업중 태스크 없음")
+            key = (snap.get("subject"), line, snap.get("context"))
+            text = (f'당시: {_e(snap.get("subject"))} · 작업중: {_e(line)}'
+                    + (f'<br><span class="meta">문제·맥락: {_e(snap.get("context"))}</span>' if snap.get("context") else '')
+                    + (f' <span class="meta">(조회 {_e(snap.get("fetched_at"))})</span>' if snap.get("fetched_at") else ''))
+        if key not in seen:
+            seen.add(key)
+            out.append(text)
+    if not out:
+        return ' — <span class="meta">당시 일감 스냅샷 없음(#979 이전 기록)</span>'
+    return ' — ' + '<br>'.join(out)
+
+
 def _summary(entries, labels, titles) -> str:
     """🔴 `#855` — 요청 묶음 머리 요약: 일감 연결 · 목적 · 판정 상태. 상세(질의·점수·발췌)는 아래 접힌 칸."""
     rows = []
@@ -105,8 +132,9 @@ def _summary(entries, labels, titles) -> str:
         parts = []
         for n, src in sorted(linked.items()):
             title = (titles or {}).get(n)
-            parts.append(f'#{_e(n)} ({_e(src)})' + (f' — 현재 제목: {_e(title)} <span class="meta">(현재 조회값 · 검색 당시 요구가 아니다)</span>'
-                                                  if title else ''))
+            part = f'#{_e(n)} ({_e(src)})' + _then(entries, n)
+            parts.append(part + (f'<br><span class="meta">참고 · 현재 제목: {_e(title)} (현재 조회값 · 검색 당시 요구가 아니다)</span>'
+                                 if title else ''))
         rows.append('<tr><th>일감</th><td>' + "<br>".join(parts) + '</td></tr>')
     else:
         cands = sorted({m for e in entries for m in _NUM.findall(str(e.get("user_request") or ""))}, key=int)

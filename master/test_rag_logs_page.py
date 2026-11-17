@@ -177,6 +177,31 @@ class RAGLogsPageTests(unittest.TestCase):
         self.assertIn("검색 목적</th><td>미기록", text)
         self.assertIn("요청 판정 없음 · 검색 판정 0/1", text)
 
+    def test_979_summary_shows_snapshot_at_search_time_first(self):
+        snap = {"issue_id": 211, "status": "ok", "subject": "[AX] <정답> 집합", "context": "원문이 「N번 진행」뿐",
+                "tasks": [{"id": "T2", "goal": "정답 확정", "state": "작업중"}], "fetched_at": "2026-11-17T21:00:00+09:00"}
+        first = dict(self.entry, issue_id=211, issue_id_source="issue_lock", issue_snapshot=snap)
+        later = dict(first, search_id="search-two",
+                     issue_snapshot=dict(snap, tasks=[{"id": "T3", "goal": "벤치", "state": "작업중"}]))
+        same = dict(first, search_id="search-three")
+        text = rag_logs.render({"items": [first, later, same], "total": 3,
+                                "titles": {211: "바뀐 현재 제목"}}).decode()
+        self.assertIn("당시: [AX] &lt;정답&gt; 집합 · 작업중: T2 정답 확정", text, "당시 요구를 이스케이프해 보인다")
+        self.assertIn("작업중: T3 벤치", text, "같은 요청 안에서 태스크가 바뀌면 둘 다")
+        self.assertEqual(text.count("작업중: T2 정답 확정"), 1, "같은 스냅샷은 한 번")
+        self.assertIn("문제·맥락: 원문이 「N번 진행」뿐", text)
+        self.assertLess(text.index("당시: "), text.index("참고 · 현재 제목: 바뀐 현재 제목"), "당시 값이 먼저")
+
+        failed = dict(self.entry, issue_id=979, issue_id_source="provided",
+                      issue_snapshot={"issue_id": 979, "status": "fetch_failed", "why": "TimeoutError: <x>"})
+        text = rag_logs.render({"items": [failed], "total": 1}).decode()
+        self.assertIn("당시 일감 조회 실패", text)
+        self.assertIn("TimeoutError: &lt;x&gt;", text)
+
+        old = dict(self.entry, issue_id=855, issue_id_source="issue_lock")
+        text = rag_logs.render({"items": [old], "total": 1}).decode()
+        self.assertIn("당시 일감 스냅샷 없음(#979 이전 기록)", text, "옛 로그는 지어내지 않고 없다고 밝힌다")
+
     def test_855_page_loaders_and_issue_filter(self):
         entry = dict(self.entry, issue_id=855, issue_id_source="provided")
         loader = Mock(return_value={"items": [entry], "total": 1, "offset": 0, "limit": 50})
