@@ -112,9 +112,31 @@ def test_no_newline_after_frontmatter_969():
         check("14 개행 없음 → CategoryError(본문)", got.startswith("CategoryError") and "본문" in got, got)
 
 
+def test_wayfinder_ask_982():
+    """`#982` 트리거 A — 머리말 `wayfinder_ask`(선택, 기본 false). 신규 기능 문서만 참이다."""
+    cats = IC.load()
+    check("#982 신규 기능만 wayfinder_ask", {n for n, c in cats.items() if c.wayfinder_ask} == {"feature"},
+          str({n: c.wayfinder_ask for n, c in cats.items()}))
+    check("#982 as_dict 에 실린다", cats["feature"].as_dict()["wayfinder_ask"] is True
+          and cats["bug"].as_dict()["wayfinder_ask"] is False)
+    with tempfile.TemporaryDirectory() as t:
+        r = Path(t)
+        _doc(r, "x", "name: x\nlabel: 엑스\nsteps: [specify]\nwayfinder_ask: true")
+        _doc(r, "y", "name: y\nlabel: 와이\nsteps: [specify]")
+        got = IC.load(r)
+        check("#982 키 허용 · 생략이면 false", got["x"].wayfinder_ask is True and got["y"].wayfinder_ask is False)
+    for bad in ('"yes"', "1", "[true]"):
+        with tempfile.TemporaryDirectory() as t:
+            r = Path(t)
+            _doc(r, "good", "name: good\nlabel: 정상\nsteps: [specify]")
+            _doc(r, "bad", f"name: bad\nlabel: 엑스\nsteps: [specify]\nwayfinder_ask: {bad}")
+            check(f"#982 wayfinder_ask={bad} → 전체 거절", _rejects(r, "wayfinder_ask"))
+
+
 def main() -> int:
     for fn in (test_real_docs, test_order_is_fixed_not_doc_order, test_adding_a_doc_adds_a_category,
-               test_broken_rejects_all, test_get_unknown, test_no_newline_after_frontmatter_969):
+               test_broken_rejects_all, test_get_unknown, test_no_newline_after_frontmatter_969,
+               test_wayfinder_ask_982):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_interview_categories: {PASS}/{total} 통과")

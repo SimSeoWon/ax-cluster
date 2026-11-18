@@ -9,6 +9,7 @@
     name: bug                       # 파일 이름의 <name> 과 같아야 한다
     label: 버그 — 원래 되던 동작이 깨졌다   # 분류 질문에 보일 한 줄
     steps: [investigate, specify, reproduce, impact]   # 이 분류에서 진행할 단계
+    wayfinder_ask: true             # 선택(기본 false) — 분류 확정 직후 웨이파인더 진행 여부를 묻는다(`#982`)
     ---
     (본문 — LLM 이 읽는 단계별 안내)
 
@@ -49,6 +50,7 @@ class Category:
     steps: tuple[str, ...]           # STEPS 순서로 정렬된, 이 분류에서 하는 단계
     body: str
     path: Path
+    wayfinder_ask: bool = False      # `#982` — 분류 확정 직후 「웨이파인더로 진행할까」를 묻는 분류인가
 
     def applies(self, step: str) -> bool:
         return step in self.steps
@@ -56,6 +58,7 @@ class Category:
     def as_dict(self) -> dict:
         return {"name": self.name, "label": self.label, "steps": list(self.steps),
                 "skipped": [s for s in STEPS if s not in self.steps],
+                "wayfinder_ask": self.wayfinder_ask,
                 "doc": str(self.path.relative_to(REPO)) if self.path.is_relative_to(REPO) else str(self.path)}
 
 
@@ -91,7 +94,10 @@ def _parse(path: Path) -> tuple[Category | None, list[str]]:
     missing = [s for s in REQUIRED if s not in steps]
     if missing:
         bad.append(f"{rel}: 필수 단계 빠짐 {missing}")
-    extra = sorted(set(fm) - {"name", "label", "steps"})
+    ask = fm.get("wayfinder_ask", False)
+    if not isinstance(ask, bool):                  # `#982` — "yes"·1 같은 값을 참으로 읽지 않는다
+        bad.append(f"{rel}: wayfinder_ask 는 true/false 여야 한다 — {ask!r}")
+    extra = sorted(set(fm) - {"name", "label", "steps", "wayfinder_ask"})
     if extra:
         bad.append(f"{rel}: 모르는 머리말 키 {extra}")
     nl = text.find("\n", end + 1)                  # `#969` 14 — 닫는 `---` 뒤 개행이 없으면 본문이 비었다
@@ -101,7 +107,7 @@ def _parse(path: Path) -> tuple[Category | None, list[str]]:
     if bad:
         return None, bad
     ordered = tuple(s for s in STEPS if s in steps)
-    return Category(name, label.strip(), ordered, body, path), []
+    return Category(name, label.strip(), ordered, body, path, wayfinder_ask=ask), []
 
 
 def load(root: Path | None = None) -> dict[str, Category]:

@@ -1285,6 +1285,140 @@ def interview_spec_tool(issue_id: int, content: str, user_answer: str) -> str:
         return _fail(e)
 
 
+# ── 웨이파인더 맵 (#982) — 본체는 master/wayfinder.py ──
+# [중요] 사람 게이트 셋 — 맵 등록(`wayfinder_create_tool` confirm=True)·새 노드 등록(`wayfinder_register_tool`)·
+#   Root 마감(`wayfinder_close_tool` confirm=True)은 사용자 답(`user_answer`)이 있어야 돈다. 미리보기·제안은 쓰기 0건.
+#   규칙 거절은 `{"ok": false, "refused": true, "why"}` 로, 입력 형식 오류·읽기 실패는 `_fail` 로 돌아온다.
+
+def _wf_node_ref(value):
+    """`parent` — "Root" 는 그대로, 숫자 글자는 노드 번호(int)로."""
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return value
+
+
+@mcp.tool()
+def wayfinder_create_tool(root_id: int, destination: str, nodes: list[dict], fog: list[str] | None = None,
+                          out_of_scope: list[str] | None = None, confirm: bool = False,
+                          user_answer: str = "") -> str:
+    """Root 일감에 웨이파인더 맵(목적지·노드·안개·비범위)을 만든다 (`#982`).
+
+    `nodes` 항목은 `{"key", "title", "type"(프리필·작업·검증), "parent": "Root"|<key>, "deps": [keys], "summary"}`.
+    `confirm=False`(기본)는 **미리보기뿐** — Redmine 쓰기 0건이고 노드 번호는 임시 번호다. 미리보기를 사용자에게
+    보이고 동의를 받은 뒤 같은 입력으로 `confirm=True` + `user_answer`(사용자 동의 원문)를 주면 노드 일감·선행 관계·
+    Root 본문의 지도를 등록한다. `user_answer` 가 비면 거절한다. 도중 실패는 되돌리지 않고 이미 만든 번호를 돌려준다.
+    """
+    from .. import wayfinder
+    try:
+        return json.dumps(wayfinder.create_map(root_id, destination, nodes, fog=fog or (),
+                                               out_of_scope=out_of_scope or (), confirm=confirm,
+                                               user_answer=user_answer), ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
+def wayfinder_status_tool(root_id: int) -> str:
+    """맵의 지금 상태 — 집을 수 있는 노드(Frontier)·상태별 개수와, 지도와 Redmine 의 대조 결과 (`#982`, 읽기 전용).
+
+    `frontier` 는 메모리에서 다시 계산한 값이고 아무것도 쓰지 않는다. `check.ok` 가 false 면 `differences` 가
+    지도와 Redmine 부모·관계·노드 표지의 차이다 — 손으로 맞추지 않고 사용자에게 보고하는 자리다.
+    """
+    from .. import wayfinder
+    try:
+        out = {"ok": True, "root_id": root_id, **wayfinder.frontier(root_id), "check": wayfinder.check(root_id)}
+        return json.dumps(out, ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
+def wayfinder_sync_tool(root_id: int) -> str:
+    """맵을 다시 계산해 바뀌었을 때만 Root 본문에 쓴다 (`#982`) — 새로 고침·정합 확인용.
+
+    노드 마감 반영은 `issue_finish` 가 자동으로 한다(이 도구는 마감 노드를 받지 않는다). 대조에 차이가 있으면
+    아무것도 쓰지 않고 차이 목록으로 거절한다.
+    """
+    from .. import wayfinder
+    try:
+        return json.dumps(wayfinder.sync(root_id), ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
+def wayfinder_propose_tool(root_id: int, title: str, type: str, parent: str,  # noqa: A002
+                           deps: list[int] | None = None, summary: str = "") -> str:
+    """새 노드 제안 (`#982`) — **Redmine 쓰기 0건.**
+
+    `type` 은 프리필·작업·검증, `parent` 는 "Root" 또는 노드 번호. 응답의 `duplicates` 는 붙는 자리에서 Root 까지
+    모든 단계의 형제와 비교한 중복 후보 점수(판정 아님), `reverify` 는 추가로 재검증 대상이 될 완료 노드다.
+    제안을 사용자에게 보이고, 동의를 받으면 응답의 `proposal` 로 `wayfinder_register_tool` 을 부른다.
+    """
+    from .. import wayfinder
+    try:
+        return json.dumps(wayfinder.propose_node(root_id, title, type, _wf_node_ref(parent),
+                                                 deps=deps or (), summary=summary), ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
+def wayfinder_register_tool(root_id: int, proposal: dict, user_answer: str) -> str:
+    """제안한 노드를 등록한다 (`#982`) — 사람 게이트.
+
+    `proposal` 은 `wayfinder_propose_tool` 응답의 `proposal`, `user_answer` 는 제안을 보인 뒤 받은 사용자 동의
+    원문(필수, 비면 거절). 중복 후보·재검증 대상은 지금 지도로 다시 계산하고, 대조에 차이가 있으면 거절한다.
+    """
+    from .. import wayfinder
+    try:
+        return json.dumps(wayfinder.register_node(root_id, proposal, user_answer=user_answer), ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
+def wayfinder_claim_tool(root_id: int, node_id: int, owner: str) -> str:
+    """Frontier 노드를 선점한다 (`#982`) — 지도에 담당을 적고 작업중으로 옮긴다.
+
+    지도만 바꾸고 Redmine 담당자는 바꾸지 않는다. Frontier 가 아닌 노드는 거절한다. 노드 일감 자체는 보통의
+    일감 흐름(플랜·`issue_start`)으로 처리한다.
+    """
+    from .. import wayfinder
+    try:
+        return json.dumps(wayfinder.claim(root_id, node_id, owner), ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
+def wayfinder_verified_tool(root_id: int, node_id: int, evidence: str) -> str:
+    """재검증 노드를 근거와 함께 완료로 되돌린다 (`#982`).
+
+    `evidence` 는 다시 돌린 검사·확인 결과(필수, 비면 거절). 재검증 상태가 아닌 노드는 거절한다.
+    """
+    from .. import wayfinder
+    try:
+        return json.dumps(wayfinder.mark_verified(root_id, node_id, evidence), ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
+def wayfinder_close_tool(root_id: int, confirm: bool = False, user_answer: str = "") -> str:
+    """Root(맵) 마감 — 사람 게이트 (`#982`).
+
+    `confirm=False`(기본)는 미리보기 — 막는 것(완료 아닌 노드·안개)을 보이고 쓰지 않는다. 미리보기를 보이고 명시적
+    동의를 받은 뒤 `confirm=True` + `user_answer`(동의 원문)일 때, 막는 것이 0건이면 Root 를 「완료」로 닫는다.
+    """
+    from .. import wayfinder
+    try:
+        return json.dumps(wayfinder.close_root(root_id, confirm=confirm, user_answer=user_answer),
+                          ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
 # ── 일감 작업 흐름 (`#879` T5) — 본체는 `master/issue_flow.py` ─────────────────────────────
 
 @mcp.tool()

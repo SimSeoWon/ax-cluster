@@ -32,6 +32,11 @@ from master import spec_block as SB
 
 CLASSIFY = "classify"
 ORDER: tuple[str, ...] = (CLASSIFY,) + IC.STEPS
+# `#982` 트리거 A — 분류 응답에 싣는 질문(사실·선택지 서술). 답은 사용자에게서 받는다.
+WAYFINDER_ASK = {
+    "question": "이 신규 기능을 웨이파인더(맵 Root + 노드 일감)로 진행할까요? 아니면 단일 플로우로 진행할까요?",
+    "how": "수락이면 ax-wayfinder 스킬 · 거절이면 이어서 조사 단계",
+}
 LABELS = {"classify": "분류", "investigate": "조사", "specify": "명세", "reproduce": "재현", "impact": "파급 측정"}
 SPEC = "spec"                         # 모든 단계 뒤에 오는 자리 — 스펙 영역 기록(T3)
 VERSION = 1
@@ -263,9 +268,15 @@ def record(issue_id, step: str, result: str, user_answer: str, *, category: str 
         written.append(f"{s}(건너뜀)")
         log.append(f"[interview] #{issue_id} {s} 건너뜀 — 분류 {cat}")
     nxt = _next(cat, records, cats)
-    return {"ok": True, "issue_id": issue_id, "step": step, "category": cat, "written": written,
-            "next": nxt, "next_label": LABELS.get(nxt, "스펙 영역"),
-            "category_doc": cats[cat].as_dict()["doc"], "guide": cats[cat].body, "log": log}
+    out = {"ok": True, "issue_id": issue_id, "step": step, "category": cat, "written": written,
+           "next": nxt, "next_label": LABELS.get(nxt, "스펙 영역"),
+           "category_doc": cats[cat].as_dict()["doc"], "guide": cats[cat].body, "log": log}
+    # `#982` 트리거 A — 분류 문서 머리말 `wayfinder_ask` 가 참인 분류(신규 기능)만 확정 직후 묻는다.
+    # [중요] 자동 경로로 모델에게 가는 글이라 명령형이 아니라 사실·선택지로 쓴다(명령형은 주입으로 거부된다).
+    if step == CLASSIFY and cats[cat].wayfinder_ask:
+        out["wayfinder_ask"] = dict(WAYFINDER_ASK)
+        log.append(f"[interview] #{issue_id} 분류 {cat} — 웨이파인더 진행 여부 질문 첨부(wayfinder_ask)")
+    return out
 
 
 def write_spec(issue_id, content: str, user_answer: str, *, getter=None, updater=None, cats=None) -> dict:

@@ -158,8 +158,29 @@ def test_missing_skip_note_does_not_deadlock():
     check("① 미적용 단계는 여전히 거절", _raises(lambda: _rec(fi, "reproduce"), "적용하지 않는다"))
 
 
+def test_wayfinder_ask_on_feature_classify_982():
+    """`#982` 트리거 A — 신규 기능으로 분류하는 응답에만 웨이파인더 질문이 실린다(버그·수정·뒤 단계는 없다)."""
+    fi = FakeIssue()
+    out = _rec(fi, "classify", "feature")
+    ask = out.get("wayfinder_ask")
+    check("#982 신규 기능 분류 → wayfinder_ask", isinstance(ask, dict) and "웨이파인더" in ask.get("question", "")
+          and "ax-wayfinder" in ask.get("how", ""), str(out))
+    check("#982 질문 첨부 로그 한 줄", any("wayfinder_ask" in ln for ln in out["log"]), str(out["log"]))
+    check("#982 다음 단계는 그대로 조사", out["next"] == "investigate", out["next"])
+    check("#982 노트에는 싣지 않는다(질문은 응답 몫)", "웨이파인더" not in fi.journals[-1]["notes"])
+    out = _rec(fi, "investigate")
+    check("#982 뒤 단계 응답엔 없다", "wayfinder_ask" not in out, str(out))
+    for cat in ("bug", "modify"):
+        out = _rec(FakeIssue(), "classify", cat)
+        check(f"#982 {cat} 분류 → 묻지 않는다", "wayfinder_ask" not in out
+              and not any("wayfinder_ask" in ln for ln in out["log"]), str(out))
+    imperative = ("하세요", "하라", "해라", "하십시오")
+    check("#982 질문 글은 명령형이 아니다",
+          not any(w in IV.WAYFINDER_ASK["question"] + IV.WAYFINDER_ASK["how"] for w in imperative))
+
+
 def main() -> int:
-    for fn in (test_feature_full_flow_with_skip, test_bug_has_reproduce, test_rejections,
+    for fn in (test_feature_full_flow_with_skip, test_wayfinder_ask_on_feature_classify_982, test_bug_has_reproduce, test_rejections,
                test_redo_latest_wins_and_invalidates_later, test_resume_after_interrupt,
                test_write_failure_is_transport_error, test_foreign_marks_ignored,
                test_missing_skip_note_does_not_deadlock):

@@ -2,6 +2,7 @@
 name: feature
 label: 신규 기능 — 없던 동작을 새로 추가한다
 steps: [investigate, specify, impact]
+wayfinder_ask: true
 ---
 
 # 분류: 신규 기능

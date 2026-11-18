@@ -89,6 +89,9 @@ RAG·온톨로지·보고서·최근 완료 일감)가 재료다 — 같은 조�
   `user_answer` 는 사용자의 확인·답이다(둘 다 필수). `category` 는 분류 단계에서만 준다.
 - 사용자가 「다르다」고 하면 그 단계를 다시 기록한다 — 최신 노트가 기준이고 뒤 단계는 다시 한다.
 - 응답의 `next` 가 다음 단계다. 단계를 고르는 것은 그 값이지 내 짐작이 아니다.
+- 분류 응답에 `wayfinder_ask` 가 실려 오면(머리말 `wayfinder_ask: true` 인 분류 — 지금은 신규 기능) 조사 단계 전에
+  그 `question` 을 사용자에게 그대로 묻는다(`#982`). 수락이면 `ax-wayfinder` 스킬로 넘어가고 지금 일감이 맵의
+  Root 가 된다. 거절이면 이 인터뷰를 이어 간다. 버그·수정 분류에는 실리지 않는다 — 묻지 않는다.
 - 분류 문서: [`reference/category-bug.md`](reference/category-bug.md) ·
   [`reference/category-modify.md`](reference/category-modify.md) ·
   [`reference/category-feature.md`](reference/category-feature.md) — 분류를 더할 때는 문서 하나를 더한다(머리말 `name`·`label`·`steps`).

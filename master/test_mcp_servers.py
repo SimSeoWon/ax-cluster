@@ -92,13 +92,16 @@ check("#829 마스터 담당 MCP 타입은 claude/codex만",
 # [DOC] #734: `get_code` 가 골조에서 걷혀 도구는 38종이었다. #826 T5 가 플랜 도구 3종을, #879 T5 가 일감 흐름 2종을, #883 T5 가 보류·취소 2종을 더했다.
 check("도구 46종 등록 (get_manifest 철거 2026-09-02 · 지휘자 모드 2종 09-08 · "
       "지휘 상태 2종 09-08 · **프로필 2종 09-20 `#650`** · "
-      "get_code 철거 2026-10-11 #734 · 플랜 3종 2026-10-31 #826 · 일감 흐름 2종 2026-11-03 #879 · 보류·취소 2종 2026-11-04 #883 · 범위 플랜 1종 2026-11-12 #639 · 인터뷰 2종 2026-11-15 #960 · 플랜 제안·자율성 2종 2026-11-15 #963 · RAG 평가 라벨 2종 2026-11-16 #855)",
-      len(_pj) == 52, f"실제 {len(_pj)}종: {_pj}")
+      "get_code 철거 2026-10-11 #734 · 플랜 3종 2026-10-31 #826 · 일감 흐름 2종 2026-11-03 #879 · 보류·취소 2종 2026-11-04 #883 · 범위 플랜 1종 2026-11-12 #639 · 인터뷰 2종 2026-11-15 #960 · 플랜 제안·자율성 2종 2026-11-15 #963 · RAG 평가 라벨 2종 2026-11-16 #855 · 웨이파인더 8종 2026-11-18 #982)",
+      len(_pj) == 60, f"실제 {len(_pj)}종: {_pj}")
 for _t in ("plan_start_tool", "plan_set_tool", "plan_transition_tool",
            "issue_start_tool", "issue_finish_tool", "issue_pause_tool", "issue_cancel_tool",
            "interview_step_tool", "interview_spec_tool", "plan_propose_tool", "plan_autonomy_tool"):
     check(f"  플랜 도구: {_t}", _t in _pj, str(_pj))
 check("  범위 플랜 요청: request_scope_plan_tool (#639)", "request_scope_plan_tool" in _pj, str(_pj))
+for _t in ("wayfinder_create_tool", "wayfinder_status_tool", "wayfinder_sync_tool", "wayfinder_propose_tool",
+           "wayfinder_register_tool", "wayfinder_claim_tool", "wayfinder_verified_tool", "wayfinder_close_tool"):
+    check(f"  웨이파인더 (#982): {_t}", _t in _pj, str(_pj))
 for _t in ("rag_label_tool", "rag_labels_tool"):
     check(f"  RAG 평가 라벨 (#855): {_t}", _t in _pj, str(_pj))
 # [중요] **워커 지휘자 모드 창구 둘** (`#385`, 2026-09-08) — 모드를 고르는 표면은 **서버의
@@ -134,6 +137,37 @@ for name in ("register_project_tool", "set_active_tool",
              "register_work_tool"):
     check(f"  {name}", name in _pj)
 check("  [중요] get_code 철거 유지", "get_code" not in _pj, str(_pj))
+
+# `#982` — 웨이파인더 도구 배선(네트워크 0): 본체 함수를 대역으로 바꿔 인자 전달·결합·실패 포장을 본다.
+import json as _json  # noqa: E402
+from master import wayfinder as _wf  # noqa: E402
+_wf_seen: dict = {}
+_wf_orig = {n: getattr(_wf, n) for n in ("frontier", "check", "propose_node", "create_map", "close_root")}
+try:
+    _wf.frontier = lambda rid: {"frontier": [{"id": 11}], "states": {"Frontier": 1}}
+    _wf.check = lambda rid: {"ok": False, "differences": ["#11 부모 다름"], "log": []}
+    _wf.propose_node = lambda rid, title, type, parent, deps=(), summary="": (  # noqa: A002
+        _wf_seen.update(parent=parent, deps=deps) or {"ok": True})
+    _wf.create_map = lambda *a, **k: _wf_seen.update(create=k) or {"ok": True}
+    def _boom(*a, **k):
+        raise _wf.WayfinderError("형식 오류")
+    _wf.close_root = _boom
+    _st = _json.loads(pj.wayfinder_status_tool(7))
+    check("  #982 status = frontier + check 결합(읽기)", _st["frontier"] == [{"id": 11}]
+          and _st["check"]["differences"] == ["#11 부모 다름"], str(_st))
+    pj.wayfinder_propose_tool(7, "새 노드", "작업", "12")
+    check("  #982 propose parent 숫자 글자 → int", _wf_seen.get("parent") == 12, str(_wf_seen))
+    pj.wayfinder_propose_tool(7, "새 노드", "작업", "Root")
+    check("  #982 propose parent Root 유지 · deps 기본 ()", _wf_seen.get("parent") == "Root"
+          and _wf_seen.get("deps") == (), str(_wf_seen))
+    pj.wayfinder_create_tool(7, "목적지", [])
+    check("  #982 create 기본은 미리보기(confirm=False)", _wf_seen["create"].get("confirm") is False
+          and _wf_seen["create"].get("fog") == (), str(_wf_seen))
+    _cl = _json.loads(pj.wayfinder_close_tool(7, confirm=True, user_answer="닫자"))
+    check("  #982 WayfinderError → ok:false 포장", _cl.get("ok") is False and "형식 오류" in _cl.get("error", ""), str(_cl))
+finally:
+    for _n, _f in _wf_orig.items():
+        setattr(_wf, _n, _f)
 
 
 print("\n[4] 두 서버가 같은 SDK 경로를 쓴다")
