@@ -582,8 +582,12 @@ def _span(repo: Path, branch: str) -> tuple[str, str, list]:
 
 def finish(issue_id, *, confirm: bool = False, repo=None, noter=None, getter=None, register=None, link=None,
            review_root=None, events_path=None, logf=None, fetch: bool = True,
-           lock_root=None, project: str = REVIEW_PROJECT, worktree_root=None) -> dict:
+           lock_root=None, project: str = REVIEW_PROJECT, worktree_root=None, map_hook=None) -> dict:
     """일감 작업을 마친다. `confirm=False` 면 보고만 한다(쓰기 0).
+
+    `#982` T5 — 닫기가 성공하면 `map_hook`(기본 `wayfinder.on_node_closed`)이 노드 표지 있는 일감의 Root 맵을
+    갱신한다. 표지가 없으면 아무것도 쓰지 않는다. 대역 주입 실행은 `map_hook` 을 직접 줄 때만 부른다
+    (운영 Redmine 을 건드리지 않게). 결과는 반환의 `map`.
 
     `#883`: N 이 보류 중이면(먼저 재개) · 다른 일감이 활성이면 거절한다. 잠금에 없는 N(`#883` 이전
     시작)은 `[주의]` 로그만 남기고 진행한다.
@@ -779,16 +783,24 @@ def finish(issue_id, *, confirm: bool = False, repo=None, noter=None, getter=Non
     got = INF.finish_record(issue_id, project=project, track_root_fn=_track_root, lroot=lroot,
                             lock_held=lock_held, base=base, end=end, commits=commits, branch=branch,
                             deleted="" if deleted else " 실패", register=register, link=link,
-                            noter=noter, log=log, done=done, problems=problems, by="issue_flow.finish")
+                            noter=noter, log=log, done=done, problems=problems, by="issue_flow.finish",
+                            map_hook=map_hook if (map_hook is not None or injected) else _default_map_hook)
     # `#921` — 마감 뒤 단계(신선도 판정·재기동·인수인계 확인·배달·기록)는 이 명령이 집행한다(§1.9)
     wrap_repo = Path(repo).resolve() if repo is not None else REPO
     next_cmd = f"AX_PROJECTS_ROOT={wrap_repo} {wrap_repo}/.venv/bin/python -m master.issue_wrapup {issue_id} --project {project}"
     return {"ok": not problems, "confirmed": True, **summary, "done": done,
             "registered": got["registered"], "round": got["round"],
             "lock_released": got["lock_released"], "closed": got.get("closed", False),
+            "map": got.get("map"),
             "next": next_cmd,
             "why": " · ".join(problems), "log": log.lines}
 
+
+
+def _default_map_hook(issue_id, *, logf=None):
+    """`#982` T5 — 운영 기본: 닫힌 일감이 웨이파인더 노드면 그 Root 맵을 갱신한다(아니면 건너뜀)."""
+    from master import wayfinder
+    return wayfinder.on_node_closed(issue_id, logf=logf)
 
 # ── `#883` 보류·취소 ──────────────────────────────────────────────────────────
 

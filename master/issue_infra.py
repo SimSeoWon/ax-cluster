@@ -403,8 +403,14 @@ def default_link(root, issue_id, **kw) -> dict:
 
 def finish_record(issue_id, *, project: str, track_root_fn, lroot, lock_held: bool, base: str, end: str,
                   commits: list, branch: str, deleted: str, register, link, noter, log: Log,
-                  done: list, problems: list, by: str) -> dict:
+                  done: list, problems: list, by: str, map_hook=None) -> dict:
     """종료의 기록 쪽 — 마감 추적 등록 → 리뷰 연결 → 잠금 해제(등록 성공 시만) → 「리뷰 요청」 노트 + 닫기.
+
+    `#982` T5 — `map_hook(issue_id, logf=)` 를 주면 **닫기가 성공한 뒤에만** 부른다(웨이파인더 노드면 그
+    Root 맵을 갱신한다 — `wayfinder.on_node_closed`). 결과는 반환의 `map` 에 싣는다. [중요] 맵 갱신 실패는
+    마감을 되돌리지도 `problems` 에 넣지도 않는다 — 일감은 이미 main 에 적용돼 닫혔고, 맵은 그 사실을 뒤따르는
+    기록이다. 대신 `[주의]` 로그와 `map.ok=False` 로 드러내 사람이 `wayfinder_sync_tool` 로 다시 맞춘다.
+    지금은 마스터 로컬 흐름(`issue_flow.finish`)만 넘긴다 — `.33` 표면(`infra_finish`)은 후속 일감이다.
 
     🔴 `#889` — 등록이 성공하면 같은 Redmine 갱신에서 「완료」·100 으로 닫는다(main 적용 = 마감). 등록이 실패하면
     열어 둔다. 닫기가 거절·실패하면(예: 잠금 해제 실패로 관문이 막음) 노트만 다시 보내 기록을 남기고
@@ -515,8 +521,24 @@ def finish_record(issue_id, *, project: str, track_root_fn, lroot, lock_held: bo
     else:
         done.append("redmine")
         log("redmine", "리뷰 요청 노트")
+    map_result = None
+    if closed and map_hook is not None:                  # `#982` T5 — 닫힌 뒤에만, 실패해도 마감은 그대로
+        try:
+            map_result = map_hook(n, logf=lambda line: log("map", line))
+        except Exception as e:                           # noqa: BLE001
+            map_result = {"ok": False, "why": f"{type(e).__name__}: {e}"}
+        if not isinstance(map_result, dict):
+            map_result = {"ok": False, "why": f"맵 갱신 반환 형식 오류 {map_result!r}"[:200]}
+        if map_result.get("skipped"):
+            log("map", f"건너뜀 — {map_result['skipped']}")
+        elif map_result.get("ok"):
+            done.append("map")
+            log("map", "웨이파인더 맵 갱신" + (" (변화 없음)" if map_result.get("changed") is False else ""))
+        else:
+            log("map", f"[주의] 맵 갱신 실패 — {str(map_result.get('why'))[:300]} · 마감은 그대로 · "
+                       "wayfinder_sync_tool 로 다시 맞춘다")
     return {"registered": registered, "round": track_round, "lock_released": "release" in done,
-            "closed": closed, "redmine": res}
+            "closed": closed, "redmine": res, "map": map_result}
 
 
 # ── 마감 범위 검증 (`#933`) ────────────────────────────────────────────────────

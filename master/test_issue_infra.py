@@ -467,6 +467,53 @@ def t_shared_with_local():
         check(f"issue_flow 에 기록 로직 사본이 없다: {dup}", dup not in src)
 
 
+def t_finish_map_hook(tmp):
+    """`#982` T5 — 맵 갱신 훅은 닫기가 성공한 뒤에만 불리고, 실패해도 마감을 되돌리거나 problems 에 넣지 않는다."""
+    def ok_reg(root, n, **kw):
+        return {"ok": True, "round": 1}
+
+    def ok_link(root, n, logf=None):
+        return {"ok": True, "linked": [], "untouched": []}
+
+    def record(iss, hook, reg=ok_reg):
+        log = INF.Log("finish", 7, tag="test")
+        done, problems = [], []
+        got = INF.finish_record(7, project=P, track_root_fn=lambda: tmp, lroot=INF.NO_LOCK, lock_held=False,
+                                base=R1, end=R3, commits=[f"{R2} 첫", f"{R3} 둘"], branch="issue/7",
+                                deleted="", register=reg, link=ok_link, noter=iss.note, log=log,
+                                done=done, problems=problems, by="test", map_hook=hook)
+        return got, done, problems, log.lines
+
+    calls = []
+
+    def hook(n, logf=None):
+        calls.append(n)
+        logf("대역 sync")
+        return {"ok": True, "changed": True}
+    got, done, problems, lines = record(Issue(SPEC + PLAN), hook)
+    check("#982 닫힘 → 훅 1회 · done 에 map · 결과 실림", calls == [7] and "map" in done
+          and got["map"] == {"ok": True, "changed": True} and not problems, str((calls, done, got.get("map"))))
+    check("#982 훅 로그가 단계 로그에 남는다", any("map: 대역 sync" in x for x in lines), str(lines[-3:]))
+
+    calls.clear()
+    got, done, problems, _ = record(Issue(SPEC + PLAN), hook,
+                                    reg=lambda root, n, **kw: {"ok": False, "reason": "x", "why": "대역"})
+    check("#982 등록 실패(열어 둠) → 훅 안 부름", calls == [] and got["map"] is None and got["closed"] is False)
+
+    def boom(n, logf=None):
+        raise RuntimeError("레드마인 끊김")
+    got, done, problems, lines = record(Issue(SPEC + PLAN), boom)
+    check("#982 훅 예외 → 마감 그대로(closed) · problems 0 · map.ok False · [주의] 로그",
+          got["closed"] is True and not problems and got["map"]["ok"] is False
+          and "레드마인 끊김" in got["map"]["why"] and any("[주의] 맵 갱신 실패" in x for x in lines),
+          str((got.get("map"), problems)))
+    got, done, problems, lines = record(Issue(SPEC + PLAN), lambda n, logf=None: {"ok": True, "skipped": "노드 표지 없음"})
+    check("#982 표지 없음 → 건너뜀 로그 · done 에 map 없음", "map" not in done
+          and any("건너뜀 — 노드 표지 없음" in x for x in lines), str(lines[-2:]))
+    got, *_ = record(Issue(SPEC + PLAN), None)
+    check("#982 훅 없음 → map None(종전과 동일)", got["map"] is None and got["closed"] is True)
+
+
 def t_imperative_free():
     """자동 경로 노트에 세션을 향한 명령형을 싣지 않는다(CLAUDE.md) — 「…하라·하세요·해라」."""
     texts = [INF.START_NOTE, INF.RESUME_NOTE, INF.PAUSE_NOTE, INF.CANCEL_NOTE, INF.FINISH_NOTE, INF.TRACK_OK,
@@ -476,7 +523,8 @@ def t_imperative_free():
 
 
 def main() -> int:
-    for fn in (t_project_and_input, t_start, t_pause_resume, t_finish, t_finish_checklist, t_verify, t_requester, t_cancel):
+    for fn in (t_project_and_input, t_start, t_pause_resume, t_finish, t_finish_checklist, t_verify, t_requester, t_cancel,
+               t_finish_map_hook):
         run(fn)
     t_span_source()
     t_shared_with_local()

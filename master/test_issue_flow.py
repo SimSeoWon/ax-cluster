@@ -442,6 +442,22 @@ def t_finish_switch_failure_preserves_branch(tmp):
           and "ff" not in r["done"] and "delete_branch" not in r["done"])
 
 
+def t_finish_map_hook(tmp):
+    """`#982` T5 — 닫힌 뒤 map_hook 이 일감 번호로 불리고 결과가 반환 map 에 실린다. 대역 실행은 기본 훅을 안 쓴다."""
+    import inspect
+    repo, iss, base, end = started(tmp)
+    seen = []
+
+    def hook(n, logf=None):
+        seen.append(n)
+        return {"ok": True, "changed": False}
+    r = IF.finish(7, confirm=True, repo=repo, noter=iss.note, review_root=twin(tmp), map_hook=hook)
+    check("#982 승인 → map_hook(7) · 반환 map", r["ok"] and seen == [7] and r.get("map") == {"ok": True, "changed": False},
+          str((seen, r.get("map"))))
+    src = inspect.getsource(IF.finish)
+    check("#982 대역 주입 실행이면 기본 훅을 넘기지 않는다", "map_hook if (map_hook is not None or injected) else _default_map_hook" in src)
+
+
 def t_finish_refusals(tmp):
     repo, iss, base, end = started(tmp)
     (repo / "dirty.txt").write_text("x")
@@ -1186,7 +1202,7 @@ def main() -> int:
                t_status_kept_when_not_new, t_dirty_refuses, t_not_on_main_refuses,
                t_ahead_of_origin_refuses, t_existing_branch_elsewhere_refuses,
                t_redmine_failure_rolls_back, t_read_failure,
-               t_finish_preview_writes_nothing, t_finish_checklist, t_finish_confirm, t_finish_refusals,
+               t_finish_preview_writes_nothing, t_finish_checklist, t_finish_confirm, t_finish_map_hook, t_finish_refusals,
                t_finish_tree_never_reverts, t_old_finish_sequence_rewrites_tree,
                t_finish_main_in_other_worktree, t_finish_worktree_query_failure,
                t_finish_switch_failure_preserves_branch,
