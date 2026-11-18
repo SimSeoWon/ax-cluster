@@ -16,6 +16,7 @@ description: AX 마스터에서 탐색이 필요한 큰 일감을 웨이파인�
 - 5. 재검증
 - 6. Root 마감
 - 7. 어긋남·거절
+- 8. 안개·범위 밖·목적지 편집
 
 ## 개요
 
@@ -51,11 +52,13 @@ description: AX 마스터에서 탐색이 필요한 큰 일감을 웨이파인�
     ax-projects:wayfinder_create_tool(root_id, destination, nodes, fog, out_of_scope, confirm, user_answer)   맵 미리보기·등록
     ax-projects:wayfinder_status_tool(root_id)                         Frontier·상태 개수 + 지도/Redmine 대조 (읽기)
     ax-projects:wayfinder_sync_tool(root_id)                           다시 계산 — 바뀌었을 때만 Root 본문 쓰기
-    ax-projects:wayfinder_propose_tool(root_id, title, type, parent, deps, summary)   새 노드 제안 (쓰기 0)
+    ax-projects:wayfinder_propose_tool(root_id, title, type, parent, deps, summary, graduates)   새 노드 제안 (쓰기 0)
     ax-projects:wayfinder_register_tool(root_id, proposal, user_answer)   제안 등록 (사람 게이트)
     ax-projects:wayfinder_claim_tool(root_id, node_id, owner)          Frontier 노드 선점 (지도만)
     ax-projects:wayfinder_verified_tool(root_id, node_id, evidence)    재검증 노드 완료 (근거 필수)
     ax-projects:wayfinder_close_tool(root_id, confirm, user_answer)    Root 마감 미리보기·마감 (사람 게이트)
+    ax-projects:wayfinder_edit_propose_tool(root_id, op, target, text, reason)   맵 편집 제안 (쓰기 0)
+    ax-projects:wayfinder_edit_apply_tool(root_id, proposal, user_answer)      맵 편집 적용 (사람 게이트)
 
 ## 2. 맵 만들기
 
@@ -84,7 +87,8 @@ description: AX 마스터에서 탐색이 필요한 큰 일감을 웨이파인�
 작업 중 지도에 없던 일이 드러나면 바로 일감을 만들지 않는다.
 
 1. `ax-projects:wayfinder_propose_tool(root_id, title, type, parent, deps, summary)` — 쓰기 0건.
-   `parent` 는 "Root" 또는 노드 번호다.
+   `parent` 는 "Root" 또는 노드 번호다. 이 노드가 안개 한 줄을 구체화한 것이면 `graduates` 에 그 줄(글 또는
+   1부터 센 번호)을 준다 — 등록 때 노드와 함께 안개에서 걷힌다(졸업).
 2. 응답을 보인다 — `duplicates`(붙는 자리에서 Root 까지 **모든 단계의 형제**와 비교한 중복 후보 점수, 판정 아님)와
    `reverify`(이 노드가 추가되면 다시 확인해야 할 완료 노드) 둘 다.
 3. 사용자에게 묻는다 — 새 노드로 등록 · 기존 형제 노드에 합치기 · 하지 않기.
@@ -112,3 +116,24 @@ description: AX 마스터에서 탐색이 필요한 큰 일감을 웨이파인�
 - **거절**(`refused: true`) — 사유를 그대로 보고하고 사용자에게 묻는다. 우회 호출·임시 스크립트로 대신하지 않는다.
 - **도중 실패**(`step`·`created`) — 이미 만들어진 번호와 멈춘 단계를 보고한다. 되돌리기·재시도는 사용자가 정한다.
 - `error`(입력 형식·읽기 실패) — 입력을 고칠 수 있으면 고쳐 다시 미리보기부터, 읽기 실패면 보고하고 멈춘다.
+
+## 8. 안개·범위 밖·목적지 편집
+
+노드 없이 지도만 바꾸는 일이다. 순서는 늘 **제안(쓰기 0) → 보이고 묻기 → 동의 원문으로 적용**이다.
+지도 영역을 손으로 고치지 않는다 — Root 마감은 안개가 남아 있으면 거절되므로, 안개는 이 경로로만 줄인다.
+
+    「기획서 나왔으니 ○○ 안개 걷어줘」   새 노드면 4절 + graduates · 노드 없이 결정만이면 fog_resolve
+    「○○는 기존 것으로 충분하다고 정했어」 fog_resolve(target, reason=결정 근거 — Root 노트에만 남는다)
+    「○○는 이번엔 안 해」               fog_to_out(target, reason)
+    「□□ 노드는 이번 범위 아니야」        node_out(target=노드 번호, reason)
+    「△△도 아직 모르겠어」              fog_add(text)
+    목적지 문구 바꾸기                  destination(text)
+    범위 밖 줄 고치기 · 다시 안개로       out_edit(target, text) · out_to_fog(target)
+
+1. `ax-projects:wayfinder_edit_propose_tool(root_id, op, target, text, reason)` — `target` 은 줄 글 그대로 또는
+   1부터 센 번호다. 응답의 `before`·`after` 를 사용자에게 보인다.
+2. **node_out** 은 응답의 `relations`(지울 관계)·`dependents`(선행에서 빠질 노드)도 보인다. 파생 자식이 있거나
+   이미 완료된 노드면 거절(`refused`)된다 — 자식 목록을 보이고 무엇부터 할지 묻는다.
+3. 동의를 받으면 `ax-projects:wayfinder_edit_apply_tool(root_id, proposal, user_answer)` — `proposal` 은 1의 응답
+   그대로. node_out 이 `step: 노드 닫기` · `map_written: true` 로 끝나면 지도는 이미 범위 밖이다 — 그 노드 일감만
+   닫히지 않은 것이므로 보고하고 사용자에게 묻는다.

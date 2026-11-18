@@ -1348,8 +1348,10 @@ def wayfinder_sync_tool(root_id: int) -> str:
 
 @mcp.tool()
 def wayfinder_propose_tool(root_id: int, title: str, type: str, parent: str,  # noqa: A002
-                           deps: list[int] | None = None, summary: str = "") -> str:
+                           deps: list[int] | None = None, summary: str = "", graduates: str = "") -> str:
     """새 노드 제안 (`#982`) — **Redmine 쓰기 0건.**
+
+    `graduates`(`#1000`) — 이 노드가 졸업시킬 안개 줄(글 그대로 또는 1부터 센 번호). 등록 때 노드와 함께 안개에서 걷힌다.
 
     `type` 은 프리필·작업·검증, `parent` 는 "Root" 또는 노드 번호. 응답의 `duplicates` 는 붙는 자리에서 Root 까지
     모든 단계의 형제와 비교한 중복 후보 점수(판정 아님), `reverify` 는 추가로 재검증 대상이 될 완료 노드다.
@@ -1358,7 +1360,41 @@ def wayfinder_propose_tool(root_id: int, title: str, type: str, parent: str,  # 
     from .. import wayfinder
     try:
         return json.dumps(wayfinder.propose_node(root_id, title, type, _wf_node_ref(parent),
-                                                 deps=deps or (), summary=summary), ensure_ascii=False)
+                                                 deps=deps or (), summary=summary,
+                                                 graduates=graduates or None), ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
+def wayfinder_edit_propose_tool(root_id: int, op: str, target: str = "", text: str = "", reason: str = "") -> str:
+    """맵 편집 제안 (`#1000`) — **Redmine 쓰기 0건.** 노드 없이 안개·범위 밖·목적지를 바꾸거나 노드를 범위 밖으로 돌린다.
+
+    `op`: fog_add(text) · fog_resolve(target, reason=결정 근거 — Root 노트에만 남는다) · fog_to_out(target, reason) ·
+    destination(text) · out_edit(target, text) · out_to_fog(target, text 선택) · node_out(target=노드 번호, reason).
+    `target` 은 줄 글 그대로 또는 1부터 센 번호(node_out 은 노드 번호). 응답의 `before`·`after` 를 사용자에게 보이고,
+    동의를 받으면 `proposal` 로 `wayfinder_edit_apply_tool` 을 부른다. node_out 은 파생 자식이 있으면 자식 목록과 함께
+    거절된다(`refused`).
+    """
+    from .. import wayfinder
+    try:
+        return json.dumps(wayfinder.propose_edit(root_id, op, target=target or None, text=text, reason=reason),
+                          ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
+def wayfinder_edit_apply_tool(root_id: int, proposal: dict, user_answer: str) -> str:
+    """맵 편집 적용 (`#1000`) — 사람 게이트.
+
+    `proposal` 은 `wayfinder_edit_propose_tool` 응답의 `proposal`, `user_answer` 는 사용자 동의 원문(필수, 비면 거절).
+    지금 지도로 다시 계산하고 대조에 차이가 있으면 거절한다. 전·후·근거는 Root 노트에 남는다. node_out 은 관계 삭제 →
+    Root → 노드 닫기 순서이고, 닫기만 실패하면 `step: 노드 닫기`·`map_written: true` 로 보고된다(되돌리지 않음).
+    """
+    from .. import wayfinder
+    try:
+        return json.dumps(wayfinder.apply_edit(root_id, proposal, user_answer=user_answer), ensure_ascii=False)
     except Exception as e:                               # noqa: BLE001
         return _fail(e)
 
