@@ -380,7 +380,8 @@ python -m master.client uproject <프로젝트> --confirm  요청자의 .uprojec
 ```
 
 선언은 `<트윈>/config.yaml` 의 `init.uproject_plugins` 이고 **기본값은 비어 있다** — 선언하지
-않은 프로젝트를 건드리지 않는다. `TargetAllowList` 가 빈 항목은 **거부**한다.
+않은 프로젝트를 건드리지 않는다. 문자열 항목이나 `targets`가 누락·빈 값인 매핑 항목은
+기본 대상 `Editor`로 정규화한다. 운영 지침대로 `TargetAllowList`는 `Editor`로 묶는다.
 [중요] **사람 단계는 순서가 있다 — 재시작이 먼저다.** 재시작 전에는 플러그인이 로드되지 않아
 아래 항목이 화면에 **없다**(실측 2026-08-30: 그래서 *"에디터에 설정에 해당 옵션 없는데?"* 가 났다):
 
