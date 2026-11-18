@@ -1,16 +1,18 @@
 # 현재 AX 작업 인수인계
 
-> 2026-11-17 — Codex의 #975 처리 뒤 현재 체크포인트. main은 `cdaea8a`까지 반영됐고 잠금은 해제됐다.
-> 이 인계 커밋 직후 `master.issue_wrapup 975`를 다시 실행해 배달·check하고 결과를 Redmine에 기록한다.
+> 2026-11-18 — Claude 의 #982 처리 뒤 현재 체크포인트. main 은 `6140388` 까지 반영됐고 잠금은 해제됐다.
+> 이 인계 커밋 직후 `master.issue_wrapup 982` 를 다시 실행해 배달·check 하고 결과를 Redmine 에 기록한다(배달 예정).
 > 결과·근거의 정본은 Redmine과 reports/다. 이 문서는 현재 작업·남은 관측·다음 행동 한 벌만 유지한다.
 
 ## 현재 상태
 
-- #975: 완료·100, T1·C1~C5 충족. 코드 `7647294`·기록 `cdaea8a`. 가드28/28·정적·통합216/216·전수242파일 실패0.
-- 과거 누적 판 2건 검출, 정상 판 `3d87401` 통과. 상세 근거·중단과 재개는 리포트205와 Redmine 노트에 있다.
-- `issue_finish`는 push·운영main 반영·작업트리/브랜치 정리·추적 등록·잠금 해제·닫기를 모두 수행했다(done 전체, why 빈 문자열).
-- `issue_wrapup` 1회차: ax-task-queue·ax-broker·ax-projects 모두 최신, 재기동 대상 없음. 인계 커밋 대기 rc2.
-- 진행 중 일감 없음. 다른 일감은 사용자 선택을 기다린다.
+- #982 웨이파인더 맵: 완료·100, T1~T7·C1~C9 충족. 커밋 10건 `eabb4af..6140388` · 리포트 206.
+  Root 일감 본문 `ax:map`(노드 표·다이어그램·안개) + 노드 일감 `ax:node` 표지 · 도구 `ax-projects:wayfinder_*_tool` 8종 · 스킬 `ax-wayfinder`.
+- 🔴 Redmine 에서 노드는 **모두 Root 직속**이다 — 파생 트리는 지도 「부모」 칸에만(실측: 조상-후손 blocks 422 · 열린 자식 있는 부모는 안 닫힘).
+- 발동 A: 인터뷰 분류가 신규 기능이면 응답에 `wayfinder_ask` 가 실린다(ax-plan 스킬이 조사 전에 묻는다).
+- `issue_wrapup` 1회차: ax-task-queue(의존 변경)·ax-projects(옛 코드) 재기동 → active · 재기동 뒤 운영 MCP 에 wayfinder 도구 8종 노출 확인. 인계 커밋 대기 rc2.
+- `~/.claude/skills/ax-wayfinder` 링크는 배달 뒤 `master-local --check` 로 확인한다(#929).
+- 시험 일감 #983~#999 는 모두 「완료」. 진행 중 일감 없음. 다른 일감은 사용자 선택을 기다린다.
 
 ## #979·#980 으로 바뀐 것 (운영 계약)
 
@@ -47,7 +49,9 @@
 
 ## 바로 다음 작업
 
-- 이 인계 커밋·push 뒤 `AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -m master.issue_wrapup 975` 재실행.
+- 이 인계 커밋·push 뒤 `AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -m master.issue_wrapup 982` 재실행.
+- #982 후속 후보(착수는 사용자 결정): 안개·범위 밖 편집 도구(지금은 안개가 남으면 Root 를 닫을 수 없다) ·
+  `.33` 표면(`infra_finish` map_hook·`ax-client`) · Root 원격 브랜치·노드 서브 브랜치.
 - 다른 일감은 착수하지 않는다. 아래 항목은 사용자 선택 대기다.
 
 - #978: `.33`·워커 검색(`client_mcp.tool_search_context`)도 `issue_id`·`purpose` 를 보내게(#979 스냅샷이 거기서도 남도록).
