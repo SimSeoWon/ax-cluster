@@ -1030,6 +1030,11 @@
     "timeout": 180
   },
   {
+    "path": "master/test_wayfinder.py",
+    "count_pattern": "(?m)^OK test_wayfinder: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
     "path": "master/test_interview_materials.py",
     "count_pattern": "(?m)^OK test_interview_materials: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
     "timeout": 180
