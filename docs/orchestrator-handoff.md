@@ -13,7 +13,7 @@
 - #1000 맵 안개 편집: 완료·100, T1~T5·C1~C6 충족. 커밋 4건 `cb69f60..65241fd` · 리포트 207.
   `wayfinder_edit_propose_tool`/`wayfinder_edit_apply_tool`(fog_add·fog_resolve·fog_to_out·destination·out_edit·out_to_fog·node_out)
   + `wayfinder_propose_tool(graduates)`. 해소 근거는 Root 노트에만(사용자 A). 파생 자식 있는 노드 범위 밖은 거절(A).
-- 🔴 지휘자 판단·사용자 확인 대기: **완료 노드는 범위 밖으로 돌리지 않는다**(결과 이미 적용) — 리포트 207 §3.
+- **완료 노드는 범위 밖으로 돌리지 않는다** — 사용자 확인 2026-11-19: node_out 은 마감 정리·중요하지 않아 유보할 때 쓴다(#1000 노트).
 - `issue_wrapup 1000` 1회차: ax-task-queue·ax-projects 재기동 → active · 운영 MCP 에 편집 도구 2종 노출 확인. 인계 커밋 대기 rc2.
 - 시험 일감 #983~#999·#1001~#1006 모두 「완료」. 진행 중 일감 없음. 다른 일감은 사용자 선택을 기다린다.
 
