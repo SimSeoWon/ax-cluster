@@ -53,7 +53,7 @@
 ## 바로 다음 작업
 
 - 이 인계 커밋·push 뒤 `AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -m master.issue_wrapup 1000` 재실행.
-- 웨이파인더 후속 후보(착수는 사용자 결정): `.33` 표면(`infra_finish` map_hook·`ax-client`) · Root 원격 브랜치·노드 서브 브랜치.
+- 웨이파인더 후속 일감(착수는 사용자 결정): #1007 `.33` 언리얼 표면(`ax-client` 도구·`infra_finish` map_hook) · #1008 Root 원격 브랜치·노드 서브 브랜치(의존 없는 노드 분산).
 - 다른 일감은 착수하지 않는다. 아래 항목은 사용자 선택 대기다.
 
 - #978: `.33`·워커 검색(`client_mcp.tool_search_context`)도 `issue_id`·`purpose` 를 보내게(#979 스냅샷이 거기서도 남도록).
