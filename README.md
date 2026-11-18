@@ -223,7 +223,14 @@ ax-cluster/
 │   │                              의도가 안 적힌 것을 찾는다. [주의] **판정은 사람이 한다**
 │   ├── auth.py                 3서비스 공용 베어러 인증 (fail-closed)
 │   ├── verdict.py              층2 판정 계약 (fail-closed)
-│   └── layer3_verify.py        층3 게이트 — UE5 빌드·RunTests 로그
+│   ├── layer3_verify.py        층3 게이트 — UE5 빌드·RunTests 로그
+│   ├── wayfinder.py            웨이파인더 맵 코어 (#982·#1000) — Root 지도·Frontier·노드 제안/등록·안개 편집·Root 마감
+│   ├── map_block.py            Root 본문 지도 영역(ax:map)·노드 표지(ax:node) 파서/렌더러 (#982)
+│   ├── map_diagram.py          노드 표 → blocks 깊이별 ASCII 박스 다이어그램(<pre>) 생성 (#982)
+│   ├── interview.py            착수 전 인터뷰 단계 판정·분류별 가이드·wayfinder 발동 질문 (#960·#982)
+│   ├── spec_block.py           이슈 본문 스펙 영역(ax:spec, #911 6항목) 읽기/쓰기 (#960)
+│   ├── plan_proposal.py        플랜 제안 → 동의 → 등록 및 자율성(autonomy)·완료 체크리스트 (#963)
+│   └── issue_flow.py           일감 단위 브랜치(issue/<N>) 시작·잠금(issue_lock)·마감(issue_infra·on_node_closed) (#879·#982)
 ├── <프로젝트명>/               ← 디지털 트윈 데이터 (gitignore)
 │   ├── context/  ontology/     원본 — 합성 산출물 (도메인 색인 대상)
 │   ├── repo/                   소스 클론. [중요] 색인 대상은 `Source/` 뿐
@@ -377,6 +384,10 @@ LLM 사용량을 기록하며, `--out`에는 아직 없는 새 파일만 지정�
 | `set_workshop` · `check_workshops_clean` 외 | 작업장 등록·더티 체크 |
 | `get_worker_mode` · `set_worker_mode` | `ax-mode`의 워커 지휘자 조회·선택. 준비 검사 후 저장하며 **새 work 등재부터 기본값**으로 사용. 기존 work 스탬프·진행 조각에 소급하지 않음 |
 | `get_orchestration` · `record_master_conductor` | 마스터 담당 + 워커 모드 조회 / 담당 기록 — [중요] 기록일 뿐 **세션 실행·종료·잠금이 아니다** |
+| `plan_start` · `interview_step` · `interview_spec` · `plan_propose` · `plan_set` · `plan_transition` · `plan_autonomy` | 착수 전 인터뷰(`ax:spec`) → 플랜 제안·동의 등록(`ax:plan`) → 태스크 상태 전이(`#826`·`#960`·`#963`) |
+| `issue_start` · `issue_finish` · `issue_pause` · `issue_cancel` | 일감 브랜치(`issue/<N>`) 시작·잠금(`#883`)·마감 추적·노드 마감 시 Root 맵 자동 갱신(`#879`·`#982`) |
+| `wayfinder_create` · `wayfinder_status` · `wayfinder_sync` · `wayfinder_propose` · `wayfinder_register` · `wayfinder_edit_propose` · `wayfinder_edit_apply` · `wayfinder_claim` · `wayfinder_verified` · `wayfinder_close` | 탐색형 큰 일감의 웨이파인더 맵(`ax-wayfinder`, `#982`·`#1000`) — Root 지도·Frontier·새 노드 제안/등록(안개 졸업·형제 중복·재검증 B)·안개/범위 밖/목적지 편집·Root 마감 사람 게이트 |
+| `rag_label` · `rag_labels` | RAG 검색 유용성 평가 라벨 기록·조회(`#855`·`#980`) |
 
 **규약**: `[대괄호]`는 **클래스에만** 쓴다. 미등록이면 마스터가 후보를 돌려주고, 작업장
 Claude 가 사용자에게 물어 등록한다 — 다음 검색부터 자동 확장된다.
