@@ -103,11 +103,25 @@ class FakeRedmine:
         self.calls.append(("create_relation", issue_id, issue_to_id))
         if self._tick("create_relation"):
             return {"ok": False, "error": "HTTP 422"}
+        # `#982` T7 실측 — 실 Redmine 은 조상-후손 사이 관계를 422 로 거절한다. 대역도 같게 한다.
+        if self._lineage(issue_id, issue_to_id):
+            return {"ok": False, "error": f"관계 생성 실패 #{issue_id}→#{issue_to_id} — HTTP 422 — "
+                                          "일감은 하위 일감과 연결할 수 없습니다."}
         rel = {"id": self.next_rel, "issue_id": issue_id, "issue_to_id": issue_to_id,
                "relation_type": relation_type}
         self.next_rel += 1
         self.relations.append(rel)
         return {"ok": True, "relation": dict(rel)}
+
+    def _ancestors(self, iid):
+        seen, cur = set(), (self.issues.get(iid) or {}).get("parent")
+        while cur and cur not in seen:
+            seen.add(cur)
+            cur = (self.issues.get(cur) or {}).get("parent")
+        return seen
+
+    def _lineage(self, a, b):
+        return a in self._ancestors(b) or b in self._ancestors(a)
 
     def list_relations(self, issue_id, **_):
         self.calls.append(("list_relations", issue_id))
@@ -163,8 +177,9 @@ def test_create_map_preview():
           and "<pre>" in out["preview"])
     check("임시 번호 1..n", sorted(out["temp_ids"].values()) == [1, 2, 3, 4])
     check("예정 쓰기 목록", sum(w.startswith("create_issue") for w in out["writes"]) == 4
-          and sum(w.startswith("create_relation") for w in out["writes"]) == 4
-          and out["writes"][-1].startswith("update_issue"))
+          and sum(w.startswith("create_relation") for w in out["writes"]) == 2
+          and sum(w.startswith("(관계 없음)") for w in out["writes"]) == 2
+          and out["writes"][-1].startswith("update_issue"), str(out["writes"]))
     check("미리보기 로그", any("쓰기 0건" in x for x in lines))
     parsed = MB.parse(out["preview"])
     check("미리보기 왕복", parsed is not None and len(parsed.nodes) == 4)
@@ -188,8 +203,12 @@ def test_create_map_confirm():
     check("노드 표지", mk is not None and mk.root == ROOT and mk.type == "작업")
     check("요약 + 표지", rm.issues[c["pre"]]["description"].startswith("HUD 기능 범위"))
     rels = {(r["issue_id"], r["issue_to_id"]) for r in rm.relations}
-    check("관계 방향 (선행 blocks 노드)", rels == {(c["pre"], c["hud"]), (c["pre"], c["inv"]),
-                                             (c["hud"], c["ver"]), (c["inv"], c["ver"])}, str(rels))
+    # `#982` T7 — 조상·후손 선행(pre→hud·pre→inv)은 Redmine 이 거절하는 쌍이라 지도에만 둔다
+    check("관계 방향 (선행 blocks 노드) · 조상 선행은 관계 없음",
+          rels == {(c["hud"], c["ver"]), (c["inv"], c["ver"])}, str(rels))
+    check("조상 선행 생략 로그", sum("관계 생략" in x for x in lines) == 2, str(lines))
+    hb = MB.parse(rm.issues[ROOT]["description"]).node(c["hud"])
+    check("조상 선행은 지도 표에 남는다", hb is not None and hb.deps == [c["pre"]])
     first_rel = next(i for i, x in enumerate(rm.calls) if x[0] == "create_relation")
     last_create = max(i for i, x in enumerate(rm.calls) if x[0] == "create_issue")
     check("관계는 노드 뒤", first_rel > last_create)
@@ -201,7 +220,7 @@ def test_create_map_confirm():
     st = {n.id: n.state for n in block.nodes}
     check("초기 상태", st[c["pre"]] == "Frontier" and st[c["hud"]] == "차단" and st[c["ver"]] == "차단")
     check("Frontier 결과", [f["id"] for f in out["frontier"]] == [c["pre"]])
-    check("쓰기 로그", sum(x.startswith("쓰기 —") for x in lines) == 4 + 4 + 1)
+    check("쓰기 로그", sum(x.startswith("쓰기 —") for x in lines) == 4 + 2 + 1)
     check("등록 직후 대조 통과", WF.check(ROOT, rm=rm, logf=_quiet()[1])["ok"])
 
 
@@ -283,11 +302,12 @@ def test_check():
     out = WF.check(ROOT, rm=rm, logf=_quiet()[1])
     check("부모 불일치", not out["ok"] and any(f"#{c['hud']}: Redmine 부모" in d for d in out["differences"]))
     rm, c = _made()
-    rm.relations = [r for r in rm.relations if not (r["issue_id"] == c["pre"] and r["issue_to_id"] == c["inv"])]
+    rm.relations = [r for r in rm.relations if not (r["issue_id"] == c["hud"] and r["issue_to_id"] == c["ver"])]
     rm.create_relation(c["hud"], c["inv"])
     out = WF.check(ROOT, rm=rm, logf=_quiet()[1])
     d = " / ".join(out["differences"])
-    check("없는 관계", f"Redmine 에 없는 선행 관계 #{c['pre']}→#{c['inv']}" in d, d)
+    check("없는 관계", f"Redmine 에 없는 선행 관계 #{c['hud']}→#{c['ver']}" in d, d)
+    check("조상 선행은 대조에서 뺀다(관계 없어도 차이 아님)", f"#{c['pre']}→#{c['hud']}" not in d, d)
     check("남는 관계", f"지도에 없는 선행 관계 #{c['hud']}→#{c['inv']}" in d, d)
     rm, c = _made()
     rm.issues[c["ver"]]["description"] = "표지 지움"
@@ -426,7 +446,10 @@ def test_register_node():
     new = out["id"]
     check("부모·표지", rm.issues[new]["parent"] == c["A1a"]
           and MB.parse_node(rm.issues[new]["description"]).root == ROOT)
-    check("선행 관계", any(r["issue_id"] == c["A1a"] and r["issue_to_id"] == new for r in rm.relations))
+    check("부모 선행은 관계 없음(지도에만)", not any(r["issue_to_id"] == new for r in rm.relations)
+          and any("관계 생략" in x for x in lines), str(rm.relations))
+    check("부모 선행은 지도 표에 남는다",
+          MB.parse(rm.issues[ROOT]["description"]).node(new).deps == [c["A1a"]])
     st = {x.id: x.state for x in MB.parse(rm.issues[ROOT]["description"]).nodes}
     check("재검증 표시", all(st[i] == "재검증" for i in p["reverify"]))
     check("하위 나무 유지", st[c["A2x"]] == "완료" and st[c["Bx"]] == "완료")
