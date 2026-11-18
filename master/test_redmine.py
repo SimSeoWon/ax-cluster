@@ -725,6 +725,202 @@ def test_delete_version_empty_422_still_says_something():
     check("[중요] 빈 본문에도 사유를 만든다", "이슈가 붙었다" in out.get("error", ""), str(out))
 
 
+# ── 이슈 관계(blocks) — `#982` Wayfinder 지도 ───────────────────────────────
+# 🔴 방향을 못박는다: `create_relation(A, B)` = A 가 B 를 막는다.
+
+class RelSender:
+    """관계 엔드포인트만 답하는 가짜 전송. `boom` 을 주면 그 메서드에서 예외를 던진다."""
+
+    def __init__(self, relations=None, boom=None, boom_method=None):
+        self.calls: list = []
+        self.relations = relations if relations is not None else []
+        self.boom = boom
+        self.boom_method = boom_method
+
+    def __call__(self, method, url, payload=None):
+        self.calls.append((method, url, payload))
+        if self.boom is not None and (self.boom_method in (None, method)):
+            raise self.boom
+        m = re.search(r"/issues/(\d+)/relations\.json$", url)
+        if m and method == "POST":
+            rel = payload["relation"]
+            return {"relation": {"id": 501, "issue_id": int(m[1]),
+                                 "issue_to_id": rel["issue_to_id"],
+                                 "relation_type": rel["relation_type"], "delay": None}}
+        if m and method == "GET":
+            return {"relations": self.relations}
+        if re.search(r"/relations/\d+\.json$", url) and method == "DELETE":
+            return {}
+        return {}
+
+
+def _http_error(url, code, body: bytes):
+    import io
+    import urllib.error
+    return urllib.error.HTTPError(url, code, "err", {}, io.BytesIO(body))
+
+
+def test_create_relation_payload_and_url():
+    s = RelSender()
+    out = RM.create_relation(10, 20, key="SECRETKEY", url="http://rm.test", sender=s)
+    check("관계 생성 성공", out.get("ok") is True, str(out))
+    check("POST 한 번", len(s.calls) == 1 and s.calls[0][0] == "POST", str(s.calls))
+    _m, url, payload = s.calls[0]
+    check("🔴 막는 쪽(첫 인자)의 relations.json 으로 간다",
+          url == "http://rm.test/issues/10/relations.json", url)
+    check("페이로드 모양", payload == {"relation": {"issue_to_id": 20, "relation_type": "blocks"}},
+          str(payload))
+    rel = out.get("relation") or {}
+    check("네 필드만 돌려준다", set(rel) == {"id", "issue_id", "issue_to_id", "relation_type"},
+          str(rel))
+    check("🔴 방향: issue_id=10 이 issue_to_id=20 을 막는다",
+          rel.get("issue_id") == 10 and rel.get("issue_to_id") == 20
+          and rel.get("relation_type") == "blocks" and rel.get("id") == 501, str(rel))
+    check("[중요] 키 값이 결과에 없다", "SECRETKEY" not in repr(out), repr(out))
+    s2 = RelSender()
+    out2 = RM.create_relation(10, 20, relation_type="precedes", url="http://rm.test", sender=s2)
+    check("precedes 도 허용", out2.get("ok") is True
+          and s2.calls[0][2]["relation"]["relation_type"] == "precedes", str(s2.calls))
+    s3 = RelSender()
+    out3 = RM.create_relation("10", "20", relation_type="relates", sender=s3)
+    check("숫자 문자열 번호는 정수로 싣는다", out3.get("ok") is True
+          and s3.calls[0][2]["relation"]["issue_to_id"] == 20, str(s3.calls))
+
+
+def test_create_relation_rejects_bad_input_without_request():
+    cases = (
+        ((10, 20), {"relation_type": "duplicates"}, "relation_type"),
+        ((10, 20), {"relation_type": "blocked"}, "relation_type"),
+        ((10, 10), {}, "자기 자신"),
+        ((0, 20), {}, "이슈 번호가 아니다"),
+        ((-3, 20), {}, "이슈 번호가 아니다"),
+        ((10, None), {}, "이슈 번호가 아니다"),
+        (("열", 20), {}, "이슈 번호가 아니다"),
+        ((10, 2.5), {}, "이슈 번호가 아니다"),
+        ((True, 20), {}, "이슈 번호가 아니다"),
+    )
+    for args, kw, needle in cases:
+        s = RelSender()
+        out = RM.create_relation(*args, sender=s, **kw)
+        check(f"거절 {args} {kw}", out.get("ok") is False and needle in out.get("error", ""),
+              str(out))
+        check(f"🔴 거절되면 요청 0회 {args} {kw}", not s.calls, str(s.calls))
+
+
+def test_create_relation_422_carries_errors():
+    body = '{"errors":["관련 일감 은(는) 이미 존재합니다","순환 관계"]}'.encode("utf-8")
+    s = RelSender(boom=_http_error("http://rm.test/x", 422, body))
+    out = RM.create_relation(10, 20, key="SECRETKEY", sender=s)
+    err = out.get("error", "")
+    check("422 는 ok False", out.get("ok") is False, str(out))
+    check("HTTP 422 를 말한다", "HTTP 422" in err, err)
+    check("[중요] 레드마인 errors 가 실린다", "이미 존재" in err and "순환" in err, err)
+    check("[중요] 키 값이 오류에 없다", "SECRETKEY" not in repr(out), repr(out))
+    s2 = RelSender(boom=_http_error("http://rm.test/x", 422, b""))
+    out2 = RM.create_relation(10, 20, sender=s2)
+    check("빈 422 본문에도 사유를 만든다", "HTTP 422" in out2.get("error", "")
+          and "거절" in out2.get("error", ""), str(out2))
+    s3 = RelSender(boom=OSError("연결 끊김"))
+    out3 = RM.create_relation(10, 20, sender=s3)
+    check("네트워크 예외도 던지지 않고 사유로", out3.get("ok") is False
+          and "OSError" in out3.get("error", ""), str(out3))
+
+
+def test_create_relation_missing_key_is_loud():
+    import os
+    old = os.environ.pop("AX_REDMINE_API_KEY", None)
+    saved = RM.api_key
+    RM.api_key = lambda **_k: ""
+    try:
+        out = RM.create_relation(10, 20, url="http://127.0.0.1:9")
+        check("키가 없으면 ok False + 사유", out.get("ok") is False
+              and "API 키" in out.get("error", ""), str(out))
+        lst = RM.list_relations(10, url="http://127.0.0.1:9")
+        check("조회도 키가 없으면 사유", "API 키" in lst.get("error", ""), str(lst))
+        dl = RM.delete_relation(5, url="http://127.0.0.1:9")
+        check("삭제도 키가 없으면 사유", dl.get("ok") is False and "API 키" in dl.get("error", ""),
+              str(dl))
+    finally:
+        RM.api_key = saved
+        if old is not None:
+            os.environ["AX_REDMINE_API_KEY"] = old
+
+
+MIXED_RELATIONS = [
+    {"id": 1, "issue_id": 5, "issue_to_id": 10, "relation_type": "blocks", "delay": None},
+    {"id": 2, "issue_id": 3, "issue_to_id": 10, "relation_type": "blocks", "delay": None},
+    {"id": 3, "issue_id": 10, "issue_to_id": 30, "relation_type": "blocks", "delay": None},
+    {"id": 4, "issue_id": 10, "issue_to_id": 7, "relation_type": "relates", "delay": None},
+    {"id": 5, "issue_id": 8, "issue_to_id": 10, "relation_type": "precedes", "delay": 0},
+    {"id": 6, "issue_id": 5, "issue_to_id": 10, "relation_type": "blocks", "delay": None},
+    {"id": 7, "issue_id": 10, "issue_to_id": 12, "relation_type": "blocks", "delay": None},
+]
+
+
+def test_list_relations_parses():
+    s = RelSender(relations=MIXED_RELATIONS)
+    out = RM.list_relations(10, url="http://rm.test", sender=s)
+    check("GET 한 번 · 그 이슈 경로", s.calls == [("GET", "http://rm.test/issues/10/relations.json",
+                                                    None)], str(s.calls))
+    rels = out.get("relations") or []
+    check("전부 돌려준다", len(rels) == len(MIXED_RELATIONS), str(out))
+    check("네 필드로 줄인다 (delay 를 흘리지 않는다)",
+          all(set(r) == {"id", "issue_id", "issue_to_id", "relation_type"} for r in rels),
+          str(rels[:1]))
+    check("값을 보존한다", rels[0] == {"id": 1, "issue_id": 5, "issue_to_id": 10,
+                                       "relation_type": "blocks"}, str(rels[0]))
+    empty = RM.list_relations(10, sender=RelSender(relations=[]))
+    check("관계가 없으면 빈 목록", empty == {"relations": []}, str(empty))
+    bad = RM.list_relations("x", sender=RelSender())
+    check("번호가 아니면 사유", "이슈 번호" in bad.get("error", ""), str(bad))
+
+
+def test_list_relations_404_and_failures():
+    s = RelSender(boom=_http_error("http://rm.test/x", 404, b""))
+    out = RM.list_relations(77, sender=s)
+    check("404 는 「#N 없음 (404)」", out == {"error": "#77 없음 (404)"}, str(out))
+    s2 = RelSender(boom=_http_error("http://rm.test/x", 500, b"boom"))
+    out2 = RM.list_relations(77, sender=s2)
+    check("그 밖의 HTTP 실패는 코드를 말한다", "HTTP 500" in out2.get("error", ""), str(out2))
+
+    class Odd(RelSender):
+        def __call__(self, method, url, payload=None):
+            self.calls.append((method, url, payload))
+            return {"nope": 1}
+    out3 = RM.list_relations(77, sender=Odd())
+    check("[중요] 목록이 없는 응답을 빈 목록으로 접지 않는다", "error" in out3, str(out3))
+
+
+def test_delete_relation():
+    s = RelSender()
+    out = RM.delete_relation(501, url="http://rm.test", sender=s)
+    check("삭제 성공", out == {"ok": True}, str(out))
+    check("관계 경로로 DELETE", s.calls == [("DELETE", "http://rm.test/relations/501.json", None)],
+          str(s.calls))
+    s2 = RelSender(boom=_http_error("http://rm.test/x", 404, b""))
+    out2 = RM.delete_relation(501, sender=s2)
+    check("없는 관계는 ok False + 404", out2.get("ok") is False
+          and "HTTP 404" in out2.get("error", ""), str(out2))
+    s3 = RelSender()
+    out3 = RM.delete_relation(0, sender=s3)
+    check("번호가 아니면 요청 없이 거절", out3.get("ok") is False and not s3.calls, str(out3))
+
+
+def test_blocked_by_and_blocks_of():
+    check("🔴 10 을 막는 것: 3·5 (blocks 만 · 중복 제거 · 정렬)",
+          RM.blocked_by(MIXED_RELATIONS, 10) == [3, 5], str(RM.blocked_by(MIXED_RELATIONS, 10)))
+    check("🔴 10 이 막는 것: 12·30",
+          RM.blocks_of(MIXED_RELATIONS, 10) == [12, 30], str(RM.blocks_of(MIXED_RELATIONS, 10)))
+    check("관계 생성 결과와 같은 방향으로 읽힌다 — create(10,20) 이면 20 은 10 에 막힌다",
+          RM.blocked_by([RM.create_relation(10, 20, sender=RelSender())["relation"]], 20) == [10])
+    check("반대편에서 보면 30 을 막는 것은 10",
+          RM.blocked_by(MIXED_RELATIONS, 30) == [10], str(RM.blocked_by(MIXED_RELATIONS, 30)))
+    check("relates·precedes 는 막음이 아니다", RM.blocked_by(MIXED_RELATIONS, 7) == []
+          and RM.blocks_of(MIXED_RELATIONS, 8) == [])
+    check("빈 입력·None 안전", RM.blocked_by([], 10) == [] and RM.blocks_of(None, 10) == [])
+    check("문자열 번호도 같은 판정", RM.blocked_by(MIXED_RELATIONS, "10") == [3, 5])
+
+
 _REAL_API_KEY = RM.api_key
 
 
@@ -782,7 +978,15 @@ def main() -> int:
                test_delete_version_refuses_when_issues_attached,
                test_delete_version_unknown_count_is_not_zero,
                test_delete_version_exact_match_only,
-               test_delete_version_empty_422_still_says_something):
+               test_delete_version_empty_422_still_says_something,
+               test_create_relation_payload_and_url,
+               test_create_relation_rejects_bad_input_without_request,
+               test_create_relation_422_carries_errors,
+               test_create_relation_missing_key_is_loud,
+               test_list_relations_parses,
+               test_list_relations_404_and_failures,
+               test_delete_relation,
+               test_blocked_by_and_blocks_of):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_redmine: {PASS}/{total} 통과")

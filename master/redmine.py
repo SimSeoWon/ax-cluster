@@ -1117,3 +1117,163 @@ def link_commit(issue_id, commit_hash: str, message: str = "", *,
     if message:
         lines.append(message)
     return update_issue(issue_id, notes="\n".join(lines), key=key, url=url, sender=sender)
+
+
+# ─────────────────────────────────────────
+# 이슈 관계(blocks) — `#982` Wayfinder 지도
+#
+# 지도는 두 종류의 간선을 쓴다. **부모-자식은 이미 있다** — `parent_issue_id`(`#303`·`#754`)가
+# 그 자리다. 없던 것은 **「무엇이 무엇을 막는가」(blocks)** 간선이라, Redmine REST 의 관계
+# 엔드포인트(`/issues/<N>/relations.json` · `/relations/<id>.json`)를 여기 연다.
+#
+# 🔴 [중요] **방향을 거꾸로 읽기 쉽다.** Redmine 의 `blocks` 관계 한 줄은
+#
+#     {"issue_id": A, "issue_to_id": B, "relation_type": "blocks"}  =  A 가 B 를 막는다
+#
+# 이다 — B 는 A 가 끝나야 진행된다(B 쪽 화면에는 「blocked by A」로 보인다).
+# `create_relation(A, B)` 도 같은 뜻이다: **첫 인자가 막는 쪽**, 둘째 인자가 막히는 쪽.
+# [주의] 이슈 X 의 `relations.json` 은 X 가 **어느 쪽이든** 걸린 관계를 다 돌려준다 —
+#    그래서 방향 판정은 `blocked_by`·`blocks_of` 가 `issue_id`/`issue_to_id` 로 한다.
+#
+# 오류 관례는 이 모듈 그대로다: **예외를 던지지 않고 사유를 돌려준다.** 키 값은 싣지 않는다.
+# ─────────────────────────────────────────
+
+# 이 지도가 쓰는 관계만 연다 — 나머지(duplicates·copied_to 등)는 쓸 자리가 없고,
+# 잘못 고른 종류가 조용히 등록되면 지도가 거짓말을 한다.
+RELATION_TYPES = ("blocks", "relates", "precedes")
+
+
+def _relation_id(value):
+    """양의 정수 이슈·관계 번호면 int, 아니면 None. [주의] bool 은 int 의 하위형이라 따로 막는다."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    if isinstance(value, str) and value.strip().isdigit():
+        n = int(value.strip())
+        return n if n > 0 else None
+    return None
+
+
+def _relation_row(rel) -> dict:
+    """관계 응답 한 건 → 지도가 쓰는 네 필드. 원본(`delay` 등)을 그대로 흘리지 않는다."""
+    rel = rel if isinstance(rel, dict) else {}
+    return {"id": rel.get("id"), "issue_id": rel.get("issue_id"),
+            "issue_to_id": rel.get("issue_to_id"), "relation_type": rel.get("relation_type")}
+
+
+def create_relation(issue_id, issue_to_id, *, relation_type: str = "blocks",
+                    key: str = "", url: str = "", sender=None) -> dict:
+    """관계 하나를 만든다. 🔴 **`issue_id` 가 `issue_to_id` 를 막는다**(blocks 일 때).
+
+    반환: `{"ok": True, "relation": {id, issue_id, issue_to_id, relation_type}}`
+    또는 `{"ok": False, "error": 사유}`.
+
+    [중요] 입력이 틀리면 **요청을 보내지 않는다** — 모르는 종류 · 번호가 아닌 값 · 0 이하 ·
+    자기 자신과의 관계. 레드마인도 422 로 막지만 그 전에 여기서 말하는 것이 이 모듈의 관례다.
+    [중요] 422(이미 있음 · 순환 등)는 레드마인이 본문 `errors` 에 사유를 준다 — 버리지 않는다.
+    """
+    src, dst = _relation_id(issue_id), _relation_id(issue_to_id)
+    if src is None or dst is None:
+        return {"ok": False, "error": f"이슈 번호가 아니다 — issue_id={issue_id!r}, "
+                                      f"issue_to_id={issue_to_id!r} (양의 정수여야 한다)"}
+    if src == dst:
+        return {"ok": False, "error": f"#{src} 를 자기 자신과 관계 지을 수 없다"}
+    if relation_type not in RELATION_TYPES:
+        return {"ok": False, "error": f"relation_type 은 {'·'.join(RELATION_TYPES)} 중 하나다 "
+                                      f"— `{relation_type}` 가 왔다"}
+    base = (url or base_url()).rstrip("/")
+    k = key or api_key()
+    if sender is None and not k:
+        return {"ok": False, "error": "API 키가 없다 (`AX_REDMINE_API_KEY` 또는 컨테이너 DB, §10.1)"}
+    payload = {"relation": {"issue_to_id": dst, "relation_type": relation_type}}
+    try:
+        got = _request("POST", f"{base}/issues/{src}/relations.json", k, payload, sender=sender)
+    except urllib.error.HTTPError as e:
+        hint = {404: f"#{src} 또는 #{dst} 가 없다",
+                403: "이 API 키에 관계 관리 권한이 없다"}.get(e.code, "") or _http_error_reasons(e)
+        if e.code == 422 and not hint:
+            hint = "레드마인이 거절했다 (이미 있는 관계·순환 등, 사유 본문 없음)"
+        return {"ok": False, "error": f"관계 생성 실패 #{src}→#{dst} — HTTP {e.code}"
+                                      + (f" — {hint}" if hint else "")}
+    except Exception as e:                                   # noqa: BLE001
+        return {"ok": False, "error": f"관계 생성 실패 #{src}→#{dst} — {type(e).__name__}: {e}"}
+    rel = (got or {}).get("relation") if isinstance(got, dict) else None
+    if not isinstance(rel, dict) or rel.get("id") is None:
+        return {"ok": False, "error": "관계 생성 응답에 relation/id 가 없다 — 반영됐을 수 있으므로 "
+                                      f"`list_relations({src})` 로 확인"}
+    row = _relation_row(rel)
+    # 응답이 방향 필드를 생략해도 요청한 값으로 채운다 — 호출자는 늘 네 필드를 받는다
+    row["issue_id"] = row["issue_id"] if row["issue_id"] is not None else src
+    row["issue_to_id"] = row["issue_to_id"] if row["issue_to_id"] is not None else dst
+    row["relation_type"] = row["relation_type"] or relation_type
+    return {"ok": True, "relation": row}
+
+
+def list_relations(issue_id, *, key: str = "", url: str = "", sender=None) -> dict:
+    """이슈 하나에 걸린 관계 전부. 반환 `{"relations": [...]}` 또는 `{"error": 사유}`.
+
+    [주의] 그 이슈가 **막는 쪽이든 막히는 쪽이든** 다 온다 — 방향은 `blocked_by`·`blocks_of` 로 가른다.
+    """
+    iid = _relation_id(issue_id)
+    if iid is None:
+        return {"error": f"이슈 번호가 아니다: {issue_id!r}"}
+    base = (url or base_url()).rstrip("/")
+    k = key or api_key()
+    if sender is None and not k:
+        return {"error": "레드마인 API 키를 찾지 못했다 — 마스터 컨테이너 DB 확인"}
+    try:
+        got = _request("GET", f"{base}/issues/{iid}/relations.json", k, sender=sender)
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return {"error": f"#{iid} 없음 (404)"}
+        return {"error": f"레드마인 #{iid} 관계 조회 실패 — HTTP {e.code}"}
+    except Exception as e:                                   # noqa: BLE001
+        return {"error": f"레드마인 #{iid} 관계 조회 실패 — {type(e).__name__}: {e}"}
+    rels = (got or {}).get("relations") if isinstance(got, dict) else None
+    if not isinstance(rels, list):
+        return {"error": f"레드마인 #{iid} 관계 응답에 relations 목록이 없다"}
+    return {"relations": [_relation_row(r) for r in rels if isinstance(r, dict)]}
+
+
+def delete_relation(relation_id, *, key: str = "", url: str = "", sender=None) -> dict:
+    """관계 하나를 지운다(관계 번호 — 이슈 번호가 아니다). `{"ok": True}` 또는 `{"ok": False, "error"}`."""
+    rid = _relation_id(relation_id)
+    if rid is None:
+        return {"ok": False, "error": f"관계 번호가 아니다: {relation_id!r}"}
+    base = (url or base_url()).rstrip("/")
+    k = key or api_key()
+    if sender is None and not k:
+        return {"ok": False, "error": "API 키가 없다 (`AX_REDMINE_API_KEY` 또는 컨테이너 DB, §10.1)"}
+    try:
+        _request("DELETE", f"{base}/relations/{rid}.json", k, sender=sender)
+    except urllib.error.HTTPError as e:
+        hint = {404: f"관계 {rid} 가 없다"}.get(e.code, "") or _http_error_reasons(e)
+        return {"ok": False, "error": f"관계 {rid} 삭제 실패 — HTTP {e.code}"
+                                      + (f" — {hint}" if hint else "")}
+    except Exception as e:                                   # noqa: BLE001
+        return {"ok": False, "error": f"관계 {rid} 삭제 실패 — {type(e).__name__}: {e}"}
+    return {"ok": True}
+
+
+def _blocks_edges(relations):
+    for r in relations or []:
+        if isinstance(r, dict) and r.get("relation_type") == "blocks":
+            a, b = _relation_id(r.get("issue_id")), _relation_id(r.get("issue_to_id"))
+            if a is not None and b is not None:
+                yield a, b
+
+
+def blocked_by(relations, issue_id) -> list:
+    """`issue_id` 를 **막는** 이슈 번호들 (정렬·중복 제거). 순수 함수 — 요청하지 않는다.
+
+    `blocks` 관계에서 `issue_to_id == issue_id` 인 줄의 `issue_id` 가 막는 쪽이다.
+    """
+    me = _relation_id(issue_id)
+    return sorted({a for a, b in _blocks_edges(relations) if b == me}) if me else []
+
+
+def blocks_of(relations, issue_id) -> list:
+    """`issue_id` 가 **막는** 이슈 번호들 (정렬·중복 제거) — `blocked_by` 의 반대 방향."""
+    me = _relation_id(issue_id)
+    return sorted({b for a, b in _blocks_edges(relations) if a == me}) if me else []
