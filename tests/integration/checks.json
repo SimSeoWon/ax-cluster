@@ -1025,6 +1025,11 @@
     "timeout": 180
   },
   {
+    "path": "master/test_map_diagram.py",
+    "count_pattern": "(?m)^OK test_map_diagram: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
     "path": "master/test_interview_materials.py",
     "count_pattern": "(?m)^OK test_interview_materials: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
     "timeout": 180
