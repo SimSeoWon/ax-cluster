@@ -563,11 +563,209 @@ def test_end_to_end_direct():
     check("직접 호출 한 바퀴", ok, "\n".join(log[-10:]))
 
 
+# ── 안개 졸업 · 지도 편집 (`#1000` T1·T2) ──────────────────────────────────
+
+def _fogged(fog=("저장 형식", "네트워크 동기화", "로컬라이즈"), oos=("멀티플레이 — 이번 범위 아님",)):
+    """노드 4개 지도 + 안개 셋 · 범위 밖 하나."""
+    rm = _fresh()
+    out = WF.create_map(ROOT, "HUD 를 붙인다", SPECS, fog=list(fog), out_of_scope=list(oos), confirm=True,
+                        user_answer="응", rm=rm, logf=_quiet()[1])
+    assert out["ok"], out
+    return rm, out["created"]
+
+
+def _map(rm):
+    return MB.parse(rm.issues[ROOT]["description"])
+
+
+def _last_note(rm):
+    return rm.issues[ROOT]["journals"][-1]["notes"]
+
+
+def test_graduate_propose():
+    rm, c = _fogged()
+    n = len(rm.writes())
+    lines, logf = _quiet()
+    out = WF.propose_node(ROOT, "저장 포맷 정하기", "프리필", "Root", graduates="저장 형식", rm=rm, logf=logf)
+    check("졸업 제안(글) 쓰기 0건", out["ok"] and out["proposal"]["graduates"] == "저장 형식"
+          and len(rm.writes()) == n, str(out.get("proposal")))
+    out = WF.propose_node(ROOT, "동기화", "프리필", "Root", graduates=2, rm=rm, logf=logf)
+    check("졸업 제안(번호 int)", out["proposal"]["graduates"] == "네트워크 동기화")
+    out = WF.propose_node(ROOT, "번역", "프리필", "Root", graduates="3", rm=rm, logf=logf)
+    check("졸업 제안(번호 글)", out["proposal"]["graduates"] == "로컬라이즈" and len(rm.writes()) == n)
+    out = WF.propose_node(ROOT, "x", "프리필", "Root", rm=rm, logf=logf)
+    check("졸업 없음 = None", out["proposal"]["graduates"] is None)
+    check("모르는 안개 줄 → 지금 목록과 함께", _raises(lambda: WF.propose_node(
+        ROOT, "x", "작업", "Root", graduates="없는 줄", rm=rm, logf=logf), "저장 형식"))
+    check("범위 밖 번호", _raises(lambda: WF.propose_node(
+        ROOT, "x", "작업", "Root", graduates=9, rm=rm, logf=logf), "9번"))
+    check("졸업 제안 로그", any("안개 졸업 저장 형식" in x for x in lines))
+
+
+def test_graduate_register():
+    rm, c = _fogged()
+    p = WF.propose_node(ROOT, "저장 포맷 정하기", "프리필", "Root", graduates=1, rm=rm, logf=_quiet()[1])
+    n_root = sum(1 for x in rm.writes() if x[0] == "update_issue" and x[1] == ROOT)
+    out = WF.register_node(ROOT, p["proposal"], user_answer="졸업시켜", rm=rm, logf=_quiet()[1])
+    check("졸업 등록 ok", out["ok"] and out["graduated"] == "저장 형식", str(out))
+    root_writes = [x for x in rm.writes() if x[0] == "update_issue" and x[1] == ROOT]
+    check("Root 쓰기 한 번", len(root_writes) == n_root + 1)
+    blk = _map(rm)
+    check("안개에서 걷힘 + 노드 추가", blk.fog == ["네트워크 동기화", "로컬라이즈"]
+          and blk.node(out["id"]) is not None, str(blk.fog))
+    check("졸업 노트", f"안개 졸업: 저장 형식 → #{out['id']}" in _last_note(rm), _last_note(rm))
+    # 제안 뒤 그 줄이 사라졌다 → 쓰기 0건 거절
+    rm, c = _fogged()
+    p = WF.propose_node(ROOT, "동기화", "프리필", "Root", graduates="네트워크 동기화", rm=rm, logf=_quiet()[1])
+    e = WF.propose_edit(ROOT, "fog_resolve", target="네트워크 동기화", reason="필요 없다", rm=rm, logf=_quiet()[1])
+    WF.apply_edit(ROOT, e["proposal"], user_answer="응", rm=rm, logf=_quiet()[1])
+    n = len(rm.writes())
+    lines, logf = _quiet()
+    out = WF.register_node(ROOT, p["proposal"], user_answer="응", rm=rm, logf=logf)
+    check("졸업 줄 사라짐 → 거절 · 쓰기 0건", not out["ok"] and out.get("refused")
+          and len(rm.writes()) == n and "네트워크 동기화" in out["why"], str(out))
+    check("졸업 거절 로그", any(x.startswith("거절") for x in lines))
+
+
+def _edit(rm, op, user_answer="응", **kw):
+    lines, logf = _quiet()
+    n = len(rm.writes())
+    p = WF.propose_edit(ROOT, op, rm=rm, logf=logf, **kw)
+    zero = len(rm.writes()) == n
+    out = WF.apply_edit(ROOT, p["proposal"], user_answer=user_answer, rm=rm, logf=logf)
+    return p, out, zero, lines
+
+
+def test_edit_ops():
+    rm, _ = _fogged()
+    p, out, zero, lines = _edit(rm, "fog_add", text="세이브 마이그레이션", reason="조사 중 발견")
+    check("fog_add 제안 쓰기 0건", zero)
+    check("fog_add", out["ok"] and _map(rm).fog[-1] == "세이브 마이그레이션", str(out))
+    note = _last_note(rm)
+    check("fog_add 노트 전·후·근거·답", "안개 추가" in note and "전: 안개 [저장 형식 · 네트워크 동기화 · 로컬라이즈]" in note
+          and "세이브 마이그레이션]" in note and "근거: 조사 중 발견" in note and "사용자 답: 응" in note, note)
+    check("편집 로그(제안·쓰기)", any(x.startswith("편집 제안") for x in lines)
+          and any(x.startswith("쓰기 —") for x in lines))
+
+    p, out, zero, _ = _edit(rm, "fog_resolve", target=1, reason="JSON 으로 이미 정해짐")
+    check("fog_resolve(번호) 쓰기 0건 · 제안 대상은 글", zero and p["proposal"]["target"] == "저장 형식")
+    check("fog_resolve", out["ok"] and "저장 형식" not in _map(rm).fog)
+    note = _last_note(rm)
+    check("fog_resolve 노트 근거", "안개 해소" in note and "근거: JSON 으로 이미 정해짐" in note
+          and "전: 안개 [저장 형식 ·" in note, note)
+
+    p, out, zero, _ = _edit(rm, "fog_to_out", target="로컬라이즈", reason="다음 마일스톤")
+    blk = _map(rm)
+    check("fog_to_out", zero and out["ok"] and "로컬라이즈" not in blk.fog
+          and blk.out_of_scope[-1] == "로컬라이즈 — 다음 마일스톤", str(blk.out_of_scope))
+    note = _last_note(rm)
+    check("fog_to_out 노트 두 절", "안개 → 범위 밖" in note and "범위 밖 [" in note and "근거: 다음 마일스톤" in note, note)
+
+    p, out, zero, _ = _edit(rm, "destination", text="HUD 와 인벤토리를 붙인다", reason="범위 확대")
+    check("destination", zero and out["ok"] and _map(rm).destination == "HUD 와 인벤토리를 붙인다")
+    note = _last_note(rm)
+    check("destination 노트 전→후", "목적지 [HUD 를 붙인다]" in note and "목적지 [HUD 와 인벤토리를 붙인다]" in note, note)
+
+    p, out, zero, _ = _edit(rm, "out_edit", target="1", text="멀티플레이 — 서버 없음")
+    check("out_edit(번호 글)", zero and out["ok"] and _map(rm).out_of_scope[0] == "멀티플레이 — 서버 없음")
+
+    p, out, zero, _ = _edit(rm, "out_to_fog", target="로컬라이즈 — 다음 마일스톤")
+    blk = _map(rm)
+    check("out_to_fog 기본 글 = 꼬리 뗀 것", zero and out["ok"] and blk.fog[-1] == "로컬라이즈"
+          and "로컬라이즈 — 다음 마일스톤" not in blk.out_of_scope, str(blk.fog))
+    p, out, zero, _ = _edit(rm, "out_to_fog", target=1, text="멀티플레이 재검토")
+    check("out_to_fog 글 지정", out["ok"] and _map(rm).fog[-1] == "멀티플레이 재검토" and _map(rm).out_of_scope == [])
+    check("편집 뒤 대조 통과", WF.check(ROOT, rm=rm, logf=_quiet()[1])["ok"])
+
+
+def test_edit_refusals():
+    rm, _ = _fogged()
+    lg = _quiet()[1]
+    n0 = len(rm.writes())
+    check("중복 fog_add", _raises(lambda: WF.propose_edit(ROOT, "fog_add", text="저장 형식", rm=rm, logf=lg),
+                                "이미 있는"))
+    check("fog_resolve 근거 없음", _raises(lambda: WF.propose_edit(
+        ROOT, "fog_resolve", target=1, rm=rm, logf=lg), "근거"))
+    check("fog_to_out 근거 없음", _raises(lambda: WF.propose_edit(
+        ROOT, "fog_to_out", target=1, reason="", rm=rm, logf=lg), "근거"))
+    check("모르는 op", _raises(lambda: WF.propose_edit(ROOT, "fog_zap", rm=rm, logf=lg), "fog_add"))
+    check("node_out 은 T3", _raises(lambda: WF.propose_edit(ROOT, "node_out", target=1, rm=rm, logf=lg),
+                                   "node_out 은 T3 에서 구현"))
+    check("없는 대상", _raises(lambda: WF.propose_edit(
+        ROOT, "fog_resolve", target="없음줄", reason="x", rm=rm, logf=lg), "로컬라이즈"))
+    for bad in ("a|b", "x</pre>", "<!-- y", "두\n줄", " 공백", "## 제목", ""):
+        check(f"글 거절 {bad!r}", _raises(lambda b=bad: WF.propose_edit(
+            ROOT, "fog_add", text=b, rm=rm, logf=lg)))
+    check("목적지 '## ' 거절", _raises(lambda: WF.propose_edit(
+        ROOT, "destination", text="## 목적지", rm=rm, logf=lg), "절 제목"))
+    check("목적지 같음 거절", _raises(lambda: WF.propose_edit(
+        ROOT, "destination", text="HUD 를 붙인다", rm=rm, logf=lg), "같다"))
+    check("근거 '|' 거절", _raises(lambda: WF.propose_edit(
+        ROOT, "fog_to_out", target=1, reason="a|b", rm=rm, logf=lg), "근거"))
+    check("propose_edit 거절은 아무것도 안 씀", len(rm.writes()) == n0)
+
+    p = WF.propose_edit(ROOT, "fog_resolve", target=2, reason="정해짐", rm=rm, logf=lg)
+    n = len(rm.writes())
+    lines, logf = _quiet()
+    out = WF.apply_edit(ROOT, p["proposal"], user_answer="  ", rm=rm, logf=logf)
+    check("답 없으면 거절 · 쓰기 0건", not out["ok"] and out["refused"] and len(rm.writes()) == n)
+    check("거절 로그", any(x.startswith("거절") for x in lines))
+    # 대상이 사라짐(같은 제안 두 번)
+    out = WF.apply_edit(ROOT, p["proposal"], user_answer="응", rm=rm, logf=logf)
+    check("첫 적용 ok", out["ok"])
+    n = len(rm.writes())
+    out = WF.apply_edit(ROOT, p["proposal"], user_answer="응", rm=rm, logf=logf)
+    check("낡은 대상 거절 · 쓰기 0건", not out["ok"] and out["refused"] and len(rm.writes()) == n, str(out))
+    # 그 사이 안개에 같은 줄이 생김 → 중복 거절
+    p = WF.propose_edit(ROOT, "fog_add", text="새 의문", rm=rm, logf=lg)
+    WF.apply_edit(ROOT, WF.propose_edit(ROOT, "fog_add", text="새 의문", rm=rm, logf=lg)["proposal"],
+                  user_answer="응", rm=rm, logf=lg)
+    n = len(rm.writes())
+    out = WF.apply_edit(ROOT, p["proposal"], user_answer="응", rm=rm, logf=lg)
+    check("적용 때 중복 거절 · 쓰기 0건", not out["ok"] and out["refused"] and len(rm.writes()) == n)
+    # 차이 있음 → 거절
+    rm2, c = _fogged()
+    p = WF.propose_edit(ROOT, "fog_add", text="새 의문", rm=rm2, logf=lg)
+    rm2.issues[c["inv"]]["parent"] = None
+    n = len(rm2.writes())
+    out = WF.apply_edit(ROOT, p["proposal"], user_answer="응", rm=rm2, logf=lg)
+    check("대조 차이 → 적용 거절", not out["ok"] and out["differences"] and len(rm2.writes()) == n)
+    out = WF.apply_edit(ROOT, dict(p["proposal"], root=ROOT + 1), user_answer="응", rm=rm2, logf=lg)
+    check("다른 Root 제안 거절", not out["ok"] and out["refused"])
+
+
+def test_fog_cleared_close_root():
+    """안개를 졸업·해소·범위 밖으로 비운 뒤 노드가 다 끝나면 Root 가 닫힌다 — 대역 위 한 바퀴."""
+    rm, c = _fogged()
+    lg = _quiet()[1]
+    p = WF.propose_node(ROOT, "저장 포맷 정하기", "프리필", "Root", graduates="저장 형식", rm=rm, logf=lg)
+    reg = WF.register_node(ROOT, p["proposal"], user_answer="응", rm=rm, logf=lg)
+    ok = reg["ok"]
+    for op, tgt, why in (("fog_resolve", "네트워크 동기화", "단일 플레이"), ("fog_to_out", 1, "다음 마일스톤")):
+        e = WF.propose_edit(ROOT, op, target=tgt, reason=why, rm=rm, logf=lg)
+        ok &= WF.apply_edit(ROOT, e["proposal"], user_answer="응", rm=rm, logf=lg)["ok"]
+    ok &= _map(rm).fog == []
+    for k in ("pre", "hud", "inv", "ver"):
+        rm.issues[c[k]]["status"] = "완료"
+        ok &= WF.sync(ROOT, closed_node=c[k], rm=rm, logf=lg)["ok"]
+    rm.issues[reg["id"]]["status"] = "완료"
+    ok &= WF.on_node_closed(reg["id"], rm=rm, logf=lg)["ok"]
+    for n in _map(rm).nodes:                      # 졸업 노드가 Root 직속이라 재검증된 완료 노드를 되돌린다
+        if n.state == "재검증":
+            ok &= WF.mark_verified(ROOT, n.id, "재확인", rm=rm, logf=lg)["ok"]
+    pv = WF.close_root(ROOT, rm=rm, logf=lg)
+    out = WF.close_root(ROOT, confirm=True, user_answer="닫아", rm=rm, logf=lg)
+    check("안개 비운 뒤 Root 마감", ok and pv["ready"] and out["ok"] and rm.issues[ROOT]["status"] == "완료",
+          f"{pv.get('blockers')} {out}")
+
+
 def main() -> int:
     for fn in (test_create_map_preview, test_create_map_confirm, test_create_map_refusals,
                test_title_validation, test_compute_states, test_check, test_sync,
                test_sync_keeps_reverify, test_on_node_closed, test_propose_node, test_register_node,
-               test_claim, test_mark_verified, test_close_root, test_logs, test_end_to_end_direct):
+               test_claim, test_mark_verified, test_close_root, test_logs, test_end_to_end_direct,
+               test_graduate_propose, test_graduate_register, test_edit_ops, test_edit_refusals,
+               test_fog_cleared_close_root):
         try:
             fn()
         except Exception as e:                       # noqa: BLE001

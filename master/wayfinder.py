@@ -4,7 +4,10 @@
     load(root_id) / check(root_id) / frontier(root_id)       읽기만 한다
     sync(root_id, closed_node=None)                           노드 마감 반영 → 상태 재계산 → 바뀌었을 때만 쓰기
     on_node_closed(issue_id)                                  노드 표지가 있으면 그 Root 로 sync
-    propose_node(...) → register_node(..., user_answer)       새 노드 제안(쓰기 0) → 동의 뒤 등록
+    propose_node(..., graduates=) → register_node(..., user_answer)
+                                                              새 노드 제안(쓰기 0) → 동의 뒤 등록 (안개 졸업 포함, `#1000` T1)
+    propose_edit(root_id, op, …) → apply_edit(..., user_answer)
+                                                              안개·범위 밖·목적지 편집 제안(쓰기 0) → 동의 뒤 적용 (`#1000` T2)
     claim / mark_verified / close_root                        선점 · 재검증 완료 · Root 마감(사람 게이트)
 
 [중요] **지도 영역이 기록이고 Redmine 부모·관계는 그 보이는 사본이다.** 둘이 어긋나면 고쳐 쓰지
@@ -19,6 +22,9 @@
 막는다)다. `check` 는 `blocked_by(list_relations(B), B) == sorted(B.deps)` 로 대조한다.
 [중요] **제안은 아무것도 쓰지 않는다** — `create_map(confirm=False)`·`propose_node` 는 Redmine 읽기만
 한다. 등록·마감은 사용자 답(`user_answer`)이 있어야 돈다.
+[중요] **안개는 지도 생성 뒤에도 바뀐다** (`#1000`) — 졸업(새 노드로 옮김)·해소·범위 밖 이동·추가와
+목적지·범위 밖 편집은 모두 제안(쓰기 0) → 사용자 답 → 적용이다. 결정 근거와 전·후는 **Root 노트에만** 남는다
+(지도 형식은 그대로, 사용자 결정 A). 적용은 **지금 지도로 다시 계산한다** — 대상이 사라졌으면 쓰지 않고 거절.
 [중요] **LLM 0** — 중복 후보는 제목+요약의 정규화 토큰 겹침(Jaccard)으로 점수만 낸다. 판정은 사람 몫.
 [중요] **모든 쓰기와 거절은 로그 한 줄을 남긴다** — `logf`(기본 stderr `[wayfinder] …`)로 흘리고
 결과 dict 의 `"log"` 에도 담는다.
@@ -52,6 +58,25 @@ RECOMPUTED = (WAITING, FRONTIER, BLOCKED)          # 이 셋만 다시 계산한
 FORBIDDEN_IN_TEXT = ("|", "</pre>", "<!--")
 NOTE_DEFAULT = "맵 갱신"
 
+# 지도 편집 연산 (`#1000` T2) — 이름 → 노트용 한국어 이름. 계획 함수는 `_EDIT_PLANNERS`.
+FOG_ADD = "fog_add"
+FOG_RESOLVE = "fog_resolve"
+FOG_TO_OUT = "fog_to_out"
+DESTINATION = "destination"
+OUT_EDIT = "out_edit"
+OUT_TO_FOG = "out_to_fog"
+NODE_OUT = "node_out"                               # T3 몫 — 이름만 예약
+EDIT_LABELS = {
+    FOG_ADD: "안개 추가",
+    FOG_RESOLVE: "안개 해소",
+    FOG_TO_OUT: "안개 → 범위 밖",
+    DESTINATION: "목적지 변경",
+    OUT_EDIT: "범위 밖 수정",
+    OUT_TO_FOG: "범위 밖 → 안개",
+    NODE_OUT: "노드 → 범위 밖",
+}
+OUT_SEP = " — "                                     # 범위 밖 줄 「요지 — 이유」
+
 
 class WayfinderError(ValueError):
     """입력·지도 형식이 계약에 어긋났다 — 사유 문장을 담는다."""
@@ -59,6 +84,11 @@ class WayfinderError(ValueError):
 
 class WayfinderTransportError(WayfinderError):
     """Redmine 읽기·쓰기 실패 — 규칙 거절이 아니다."""
+
+
+class _Conflict(WayfinderError):
+    """지금 지도와 맞지 않는다(대상 없음·중복·변화 없음). 제안에서는 그대로 오르고,
+    적용·등록에서는 지도가 그 사이 바뀐 것이므로 규칙 거절(`_refuse`)로 바꾼다."""
 
 
 # ── 포트 · 로그 ───────────────────────────────────────────────────────────
@@ -133,6 +163,44 @@ def _check_text(text, what: str, *, required: bool) -> str:
     for bad in FORBIDDEN_IN_TEXT:
         if bad in text:
             raise WayfinderError(f"{what}: {bad!r} 를 넣을 수 없다: {text[:80]!r}")
+    return text
+
+
+def _listing(items: list[str]) -> str:
+    return " · ".join(f"{i}) {x}" for i, x in enumerate(items, start=1)) or "없음"
+
+
+def _pick(items: list[str], target, what: str, *, exact: bool = False) -> str:
+    """목록 줄 하나를 고른다 — 글 그대로 또는 1부터 센 번호(int·숫자 글). 고른 **글**을 돌려준다.
+
+    `exact=True` 는 글만 받는다(적용·등록의 재확인 — 번호는 지도가 바뀌면 다른 줄을 가리킨다).
+    없으면 `_Conflict`(지금 목록을 사유에 싣는다), 형식이 틀리면 `WayfinderError`.
+    """
+    if target is None or isinstance(target, bool):
+        raise WayfinderError(f"{what} 대상이 없다 — 글 또는 1부터 센 번호 (지금 {what}: {_listing(items)})")
+    if isinstance(target, str):
+        if target in items:
+            return target
+        s = target.strip()
+        if exact or not s.isdigit():
+            raise _Conflict(f"{what} 에 없는 줄 {target!r} (지금 {what}: {_listing(items)})")
+        idx = int(s)
+    elif isinstance(target, int):
+        if exact:
+            raise WayfinderError(f"{what} 대상은 글이어야 한다: {target!r}")
+        idx = target
+    else:
+        raise WayfinderError(f"{what} 대상은 글 또는 번호다: {target!r}")
+    if 1 <= idx <= len(items):
+        return items[idx - 1]
+    raise _Conflict(f"{what} 에 {idx}번 줄이 없다 (지금 {what}: {_listing(items)})")
+
+
+def _check_line(text, what: str) -> str:
+    """안개·범위 밖·목적지 한 줄 — `_check_text` + 지도 영역이 절 제목으로 읽을 줄 거절."""
+    text = _check_text(text, what, required=True)
+    if text.startswith("## "):
+        raise WayfinderError(f"{what}: '## ' 로 시작하는 줄은 절 제목으로 읽힌다: {text[:80]!r}")
     return text
 
 
@@ -560,8 +628,10 @@ def on_node_closed(issue_id, *, rm=None, logf=None) -> dict:
 
 # ── 새 노드 ──────────────────────────────────────────────────────────────
 
-def _proposal(block: MB.MapBlock, rid: int, title, type_, parent, deps, summary) -> dict:
+def _proposal(block: MB.MapBlock, rid: int, title, type_, parent, deps, summary,
+              graduates=None, *, exact: bool = False) -> dict:
     title = _check_text(title, "제목", required=True)
+    grad = None if graduates is None else _pick(block.fog, graduates, "안개", exact=exact)
     summary = _check_text(summary or "", "요약", required=False)
     if type_ not in MB.NODE_TYPES:
         raise WayfinderError(f"모르는 타입 {type_!r} (허용 {', '.join(MB.NODE_TYPES)})")
@@ -600,12 +670,17 @@ def _proposal(block: MB.MapBlock, rid: int, title, type_, parent, deps, summary)
                 reverify.add(n.id)
     duplicates.sort(key=lambda x: (-x["score"], x["level"], x["id"]))
     return {"proposal": {"root": rid, "title": title, "type": type_, "parent": parent_id,
-                         "deps": dep_ids, "summary": summary},
+                         "deps": dep_ids, "summary": summary, "graduates": grad},
             "duplicates": duplicates, "reverify": sorted(reverify), "path": [*path, rid]}
 
 
-def propose_node(root_id, title, type, parent, *, deps=(), summary="", rm=None, logf=None) -> dict:  # noqa: A002
+def propose_node(root_id, title, type, parent, *, deps=(), summary="", graduates=None,  # noqa: A002
+                 rm=None, logf=None) -> dict:
     """새 노드 제안. **Redmine 쓰기 0건.**
+
+    `graduates` = 이 노드로 **졸업**시킬 안개 한 줄 — 글 그대로 또는 1부터 센 번호(`#1000` T1).
+    제안의 `"graduates"` 에는 고른 글이 담긴다(없으면 None). 모르는 줄은 지금 안개 목록과 함께
+    `WayfinderError`.
 
     `parent` = "Root" 또는 노드 번호. 중복 후보는 붙는 자리에서 Root 까지 **모든 단계의 형제**
     (각 조상의 직속 자식, Root 직속 포함)와 비교한 점수(>0)를 높은 순으로 낸다 — 판정하지 않는다.
@@ -616,11 +691,12 @@ def propose_node(root_id, title, type, parent, *, deps=(), summary="", rm=None, 
     rid = _issue_id(root_id, "Root")
     block = compute_states(_load(rm, rid)[1])
     try:
-        p = _proposal(block, rid, title, type, parent, deps, summary)
+        p = _proposal(block, rid, title, type, parent, deps, summary, graduates)
     except WayfinderError as e:
         _fail(log, str(e))
+    grad = p["proposal"]["graduates"]
     log(f"제안 Root #{rid} 「{p['proposal']['title']}」 — 중복 후보 {len(p['duplicates'])}건 · "
-        f"재검증 예정 {p['reverify'] or '없음'} · 쓰기 0건")
+        f"재검증 예정 {p['reverify'] or '없음'} · 안개 졸업 {grad if grad is not None else '없음'} · 쓰기 0건")
     return {"ok": True, **p, "log": log.lines}
 
 
@@ -630,6 +706,8 @@ def register_node(root_id, proposal, *, user_answer, project="", rm=None, logf=N
     순서: 노드 일감(부모·Root 의 마일스톤·표지) → 선행 관계 → 재검증 표시 + 상태 재계산 → Root 본문
     → 재검증 대상 노드마다 노트 「#<새> 추가로 재검증 대상 — 맵 Root #<root>」.
     중복 후보·재검증 대상은 **지금 지도로 다시 계산한다**(제안 뒤 지도가 바뀌었을 수 있다).
+    `proposal["graduates"]` 가 있으면 지금 안개에서 **글 그대로** 다시 찾는다 — 사라졌으면 쓰기 0건으로
+    거절하고, 있으면 노드 줄과 **같은 Root 쓰기**에서 안개에서 걷는다(노트 「안개 졸업: <글> → #<새>」).
     """
     log, rm = _log_of(logf), _port(rm)
     rid = _issue_id(root_id, "Root")
@@ -648,7 +726,10 @@ def register_node(root_id, proposal, *, user_answer, project="", rm=None, logf=N
                        differences=diffs)
     try:
         p = _proposal(compute_states(block), rid, proposal.get("title"), proposal.get("type"),
-                      proposal.get("parent"), proposal.get("deps"), proposal.get("summary", ""))
+                      proposal.get("parent"), proposal.get("deps"), proposal.get("summary", ""),
+                      proposal.get("graduates"), exact=True)
+    except _Conflict as e:
+        return _refuse(log, f"Root #{rid} 지도가 제안 뒤 바뀌었다 — 등록하지 않는다 ({e})")
     except WayfinderError as e:
         _fail(log, str(e))
     pr = p["proposal"]
@@ -667,12 +748,16 @@ def register_node(root_id, proposal, *, user_answer, project="", rm=None, logf=N
             n.state = REVERIFY
     block.nodes.append(MB.MapNode(nid, pr["title"], pr["type"], pr["parent"], WAITING,
                                   list(pr["deps"]), "", pr["summary"]))
+    if pr["graduates"] is not None:
+        block.fog = [x for x in block.fog if x != pr["graduates"]]
+        log(f"안개 졸업 「{pr['graduates']}」 → #{nid}")
     try:
         new = compute_states(block)
     except WayfinderError as e:
         return _stopped(log, "상태 계산", str(e), [nid])
     rv = "·".join(f"#{i}" for i in p["reverify"]) or "없음"
-    notes = f"노드 #{nid} 「{pr['title']}」 추가 — 재검증 대상 {rv}\n사용자 답: {user_answer}"
+    grad_note = f"\n안개 졸업: {pr['graduates']} → #{nid}" if pr["graduates"] is not None else ""
+    notes = f"노드 #{nid} 「{pr['title']}」 추가 — 재검증 대상 {rv}{grad_note}\n사용자 답: {user_answer}"
     try:
         _write_root(rm, rid, body, new, notes, log)
     except WayfinderTransportError as e:
@@ -683,7 +768,209 @@ def register_node(root_id, proposal, *, user_answer, project="", rm=None, logf=N
             return _stopped(log, f"재검증 노트 #{i}", str(out), [nid])
         log(f"쓰기 — #{i} 재검증 노트")
     return {"ok": True, "id": nid, "reverify": p["reverify"], "duplicates": p["duplicates"],
-            "frontier": _frontier_list(new), "log": log.lines}
+            "graduated": pr["graduates"], "frontier": _frontier_list(new), "log": log.lines}
+
+
+# ── 지도 편집 (`#1000` T2) ────────────────────────────────────────────────
+
+_SECTION_NAMES = {"destination": "목적지", "fog": "안개", "out_of_scope": "범위 밖"}
+
+
+def _no_text(op: str, text) -> None:
+    if text not in (None, ""):
+        raise WayfinderError(f"{op}: text 를 받지 않는다 — 대상(target)과 근거(reason)만 쓴다")
+
+
+def _need_reason(op: str, reason: str) -> str:
+    if not reason:
+        raise WayfinderError(f"{op}: 결정 근거(reason)가 필요하다 — Root 노트에 남는다")
+    return reason
+
+
+def _no_dup(items: list[str], text: str, what: str) -> None:
+    if text in items:
+        raise _Conflict(f"{what} 에 이미 있는 줄이다: {text!r}")
+
+
+def _plan_fog_add(b: MB.MapBlock, target, text, reason, exact) -> dict:
+    if target is not None:
+        raise WayfinderError(f"{FOG_ADD}: target 을 받지 않는다 — 새 줄은 text 로 준다")
+    text = _check_line(text, "안개")
+    _no_dup(b.fog, text, "안개")
+    b.fog.append(text)
+    return {"target": None, "text": text, "sections": ("fog",)}
+
+
+def _plan_fog_resolve(b, target, text, reason, exact) -> dict:
+    _no_text(FOG_RESOLVE, text)
+    _need_reason(FOG_RESOLVE, reason)
+    line = _pick(b.fog, target, "안개", exact=exact)
+    b.fog.remove(line)
+    return {"target": line, "text": "", "sections": ("fog",)}
+
+
+def _plan_fog_to_out(b, target, text, reason, exact) -> dict:
+    _no_text(FOG_TO_OUT, text)
+    _need_reason(FOG_TO_OUT, reason)
+    line = _pick(b.fog, target, "안개", exact=exact)
+    moved = _check_line(f"{line}{OUT_SEP}{reason}", "범위 밖")
+    _no_dup(b.out_of_scope, moved, "범위 밖")
+    b.fog.remove(line)
+    b.out_of_scope.append(moved)
+    return {"target": line, "text": moved, "sections": ("fog", "out_of_scope")}
+
+
+def _plan_destination(b, target, text, reason, exact) -> dict:
+    if target is not None:
+        raise WayfinderError(f"{DESTINATION}: target 을 받지 않는다 — 새 목적지는 text 로 준다")
+    text = _check_line(text, "목적지")
+    if text == b.destination:
+        raise _Conflict("목적지가 지금과 같다 — 바뀌는 것이 없다")
+    b.destination = text
+    return {"target": None, "text": text, "sections": ("destination",)}
+
+
+def _plan_out_edit(b, target, text, reason, exact) -> dict:
+    line = _pick(b.out_of_scope, target, "범위 밖", exact=exact)
+    text = _check_line(text, "범위 밖")
+    if text == line:
+        raise _Conflict("범위 밖 줄이 지금과 같다 — 바뀌는 것이 없다")
+    _no_dup(b.out_of_scope, text, "범위 밖")
+    b.out_of_scope[b.out_of_scope.index(line)] = text
+    return {"target": line, "text": text, "sections": ("out_of_scope",)}
+
+
+def _plan_out_to_fog(b, target, text, reason, exact) -> dict:
+    line = _pick(b.out_of_scope, target, "범위 밖", exact=exact)
+    if text in (None, ""):
+        text = line.rsplit(OUT_SEP, 1)[0] if OUT_SEP in line else line
+    text = _check_line(text, "안개")
+    _no_dup(b.fog, text, "안개")
+    b.out_of_scope.remove(line)
+    b.fog.append(text)
+    return {"target": line, "text": text, "sections": ("fog", "out_of_scope")}
+
+
+def _plan_node_out(b, target, text, reason, exact) -> dict:
+    raise WayfinderError(f"{NODE_OUT} 은 T3 에서 구현")
+
+
+_EDIT_PLANNERS = {
+    FOG_ADD: _plan_fog_add,
+    FOG_RESOLVE: _plan_fog_resolve,
+    FOG_TO_OUT: _plan_fog_to_out,
+    DESTINATION: _plan_destination,
+    OUT_EDIT: _plan_out_edit,
+    OUT_TO_FOG: _plan_out_to_fog,
+    NODE_OUT: _plan_node_out,
+}
+
+
+def _sections_of(b: MB.MapBlock, keys) -> dict:
+    return {k: copy.deepcopy(getattr(b, k)) for k in keys}
+
+
+def _plan_edit(block: MB.MapBlock, op, target, text, reason, *, exact: bool = False) -> dict:
+    """편집 하나를 지도 **사본**에 적용한다 → {"block", "target", "text", "reason", "before", "after"}.
+
+    대상·텍스트 판정과 `MB.render` 판정까지 여기서 끝낸다 — 쓰기 때가 아니라 제안 때 실패하도록.
+    `exact=True`(적용 때)는 대상을 글로만 다시 찾는다.
+    """
+    if op not in _EDIT_PLANNERS:
+        raise WayfinderError(f"모르는 편집 {op!r} (허용 {', '.join(_EDIT_PLANNERS)})")
+    reason = _check_text(reason if reason is not None else "", "근거", required=False)
+    if text is not None and not isinstance(text, str):
+        raise WayfinderError(f"text 는 글이다: {text!r}")
+    b = copy.deepcopy(block)
+    got = _EDIT_PLANNERS[op](b, target, text if text is not None else "", reason, exact)
+    _map_call(MB.render, b)
+    keys = got["sections"]
+    return {"block": b, "target": got["target"], "text": got["text"], "reason": reason,
+            "before": _sections_of(block, keys), "after": _sections_of(b, keys)}
+
+
+def _fmt_sections(sec: dict) -> str:
+    parts = []
+    for k, v in sec.items():
+        shown = (" · ".join(v) or "없음") if isinstance(v, list) else v
+        parts.append(f"{_SECTION_NAMES.get(k, k)} [{shown}]")
+    return " / ".join(parts)
+
+
+def propose_edit(root_id, op, *, target=None, text="", reason="", rm=None, logf=None) -> dict:
+    """지도 편집 제안 — **Redmine 쓰기 0건** (`#1000` T2).
+
+    `op` 는 `EDIT_LABELS` 의 이름이다:
+      fog_add      text(새 안개 줄) — 이미 있는 줄이면 거절
+      fog_resolve  target(안개 줄) + reason(결정 근거, 필수) — 줄을 걷는다. 근거는 Root 노트에만 남는다
+      fog_to_out   target(안개 줄) + reason(필수) — 범위 밖에 「<줄> — <근거>」로 옮긴다
+      destination  text(새 목적지)
+      out_edit     target(범위 밖 줄) + text(바꿀 글)
+      out_to_fog   target(범위 밖 줄) + text(선택 — 비우면 「 — 이유」 꼬리를 뗀 글)
+      node_out     예약(T3)
+    target 은 글 그대로 또는 1부터 센 번호다. 제안의 `target` 에는 **고른 글**이 담긴다.
+    """
+    log, rm = _log_of(logf), _port(rm)
+    rid = _issue_id(root_id, "Root")
+    block = _load(rm, rid)[1]
+    try:
+        plan = _plan_edit(block, op, target, text, reason)
+    except WayfinderError as e:
+        _fail(log, str(e))
+    label = EDIT_LABELS[op]
+    log(f"편집 제안 Root #{rid} {label} — 전 {_fmt_sections(plan['before'])} → "
+        f"후 {_fmt_sections(plan['after'])} · 쓰기 0건")
+    return {"ok": True,
+            "proposal": {"root": rid, "op": op, "target": plan["target"], "text": plan["text"],
+                         "reason": plan["reason"], "before": plan["before"], "after": plan["after"]},
+            "log": log.lines}
+
+
+def apply_edit(root_id, proposal, *, user_answer, rm=None, logf=None) -> dict:
+    """편집 제안을 적용한다. `user_answer` 가 있어야 돈다. 대조에 차이가 있으면 거절.
+
+    제안의 op·target·text·reason 으로 **지금 지도에서 다시 계산한다** — 대상이 사라졌거나 중복·변화
+    없음이면 쓰기 0건으로 거절. Root 는 한 번 쓰고, 노트에 편집 이름 · 전 → 후 · 근거 · 사용자 답을 남긴다.
+    """
+    log, rm = _log_of(logf), _port(rm)
+    rid = _issue_id(root_id, "Root")
+    if not str(user_answer or "").strip():
+        return _refuse(log, "사용자 답(user_answer)이 없다 — 지도를 고치지 않는다")
+    if not isinstance(proposal, dict):
+        _fail(log, "proposal 은 propose_edit 결과의 proposal dict 다")
+    if proposal.get("root") not in (None, rid):
+        return _refuse(log, f"제안의 Root #{proposal.get('root')} ≠ #{rid}")
+    op = proposal.get("op")
+    body, block = _load(rm, rid)
+    diffs = _differences(rm, rid, block)
+    if diffs:
+        return _refuse(log, f"Root #{rid} 지도와 Redmine 이 어긋난다 — 고치지 않는다 ({len(diffs)}건)",
+                       differences=diffs)
+    # fog_resolve·fog_to_out 의 제안 text 는 결과 표시일 뿐 입력이 아니다(out_to_fog 는 제안 때 정한 글 그대로)
+    text = "" if op in (FOG_RESOLVE, FOG_TO_OUT) else proposal.get("text", "")
+    try:
+        plan = _plan_edit(block, op, proposal.get("target"), text, proposal.get("reason", ""),
+                          exact=True)
+    except _Conflict as e:
+        return _refuse(log, f"Root #{rid} 지도가 제안 뒤 바뀌었다 — 고치지 않는다 ({e})")
+    except WayfinderError as e:
+        _fail(log, str(e))
+    label = EDIT_LABELS[op]
+    try:
+        new = compute_states(plan["block"])
+    except WayfinderError as e:
+        _fail(log, str(e))
+    notes = (f"Wayfinder 맵 편집 — {label}\n"
+             f"전: {_fmt_sections(plan['before'])}\n"
+             f"후: {_fmt_sections(plan['after'])}\n"
+             f"근거: {plan['reason'] or '없음'}\n"
+             f"사용자 답: {user_answer}")
+    log(f"편집 적용 Root #{rid} {label} — 사용자 답: {user_answer}")
+    try:
+        _write_root(rm, rid, body, new, notes, log)
+    except WayfinderTransportError as e:
+        return _stopped(log, "Root 본문", str(e), [])
+    return {"ok": True, "op": op, "before": plan["before"], "after": plan["after"], "log": log.lines}
 
 
 # ── 선점 · 재검증 완료 · Root 마감 ────────────────────────────────────────
