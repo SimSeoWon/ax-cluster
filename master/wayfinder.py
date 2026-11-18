@@ -9,6 +9,12 @@
 
 [중요] **지도 영역이 기록이고 Redmine 부모·관계는 그 보이는 사본이다.** 둘이 어긋나면 고쳐 쓰지
 않고 차이 목록과 함께 거절한다(`check`). 쓰는 경로(`sync`·`register_node`)는 먼저 대조한다.
+🔴 [중요] **Redmine 에서 노드는 모두 Root 의 직속 하위 일감이다 — 파생 트리(「부모」 칸)는 지도에만 있다**
+(`#982` T7 실측 2026-11-18, 사용자 결정). 파생 트리를 Redmine 부모-자식으로 옮겼더니 두 번 막혔다:
+① 조상-후손 사이 `blocks` 를 422 로 거절(「일감은 하위 일감과 연결할 수 없습니다」, #986→#987) ·
+② **열린 하위 일감이 있는 부모는 닫히지 않는다**(#990 「완료」 요청 → 실제 「신규」, 자식 #991). 파생 트리에서는
+부모가 먼저 끝나야 하므로 ②가 근본 충돌이다. Redmine 의 부모-자식은 「범위가 품는다」이지 「앞선 일에서 파생됐다」가
+아니다. 그래서 Redmine 부모 = Root, 선행은 **전부** 형제 사이 `blocks` 로 건다. 재검증 B·Frontier 는 지도 기준 그대로다.
 [중요] **간선 방향** — 지도의 선행 `B.deps = [A]` 는 Redmine 관계 `create_relation(A, B)`(= A 가 B 를
 막는다)다. `check` 는 `blocked_by(list_relations(B), B) == sorted(B.deps)` 로 대조한다.
 [중요] **제안은 아무것도 쓰지 않는다** — `create_map(confirm=False)`·`propose_node` 는 Redmine 읽기만
@@ -235,14 +241,13 @@ def _blocked_by(relations, issue_id: int) -> list[int]:
 def _differences(rm, root_id: int, block: MB.MapBlock) -> list[str]:
     """지도(기록)와 Redmine(사본)의 차이 — 부모 · 선행 관계 · 노드 표지."""
     diffs: list[str] = []
-    parent_of = {x.id: x.parent for x in block.nodes}
     for n in sorted(block.nodes, key=lambda x: x.id):
         iss = _get(rm, n.id)
-        want_parent = n.parent if n.parent is not None else root_id
+        want_parent = root_id          # #982 T7 — Redmine 에서는 모든 노드가 Root 직속(파생 트리는 지도에만)
         got_parent = iss.get("parent")
         if got_parent != want_parent:
             diffs.append(f"#{n.id}: Redmine 부모 {('#' + str(got_parent)) if got_parent else '없음'}"
-                         f" ≠ 지도 부모 #{want_parent}")
+                         f" ≠ Root #{want_parent}")
         try:
             marker = MB.parse_node(iss.get("description") or "")
         except MB.MapError as e:
@@ -260,7 +265,7 @@ def _differences(rm, root_id: int, block: MB.MapBlock) -> list[str]:
             reason = rels.get("error") if isinstance(rels, dict) else "응답 형식이 아니다"
             raise WayfinderTransportError(f"#{n.id} 관계를 읽지 못했다 — {reason}")
         got = _blocked_by(rels.get("relations") or [], n.id)
-        want = sorted(_mirrored_deps(parent_of, n.id, n.deps))   # 조상·후손 선행은 지도에만(#982 T7)
+        want = sorted(n.deps)
         missing = [d for d in want if d not in got]
         extra = [d for d in got if d not in want]
         if missing:
@@ -334,32 +339,6 @@ def _relate(rm, dep: int, node: int, log: _Log) -> str:
         return (got.get("error") if isinstance(got, dict) else "응답 형식이 아니다") or "실패"
     log(f"쓰기 — 관계 #{dep} blocks #{node}")
     return ""
-
-
-# 🔴 `#982` T7 실측 (2026-11-18) — Redmine 은 **조상-후손 사이의 관계를 거절한다**:
-#     `관계 생성 실패 #986→#987 — HTTP 422 — 일감은 하위 일감과 연결할 수 없습니다.`
-# 파생 트리에서는 선행이 곧 부모·조상인 일이 흔하다(HUD 는 사전조사가 끝나야 한다). 그래서 (사용자 결정 A)
-# **조상·후손 선행은 지도(노드 표·다이어그램·Frontier)에만 두고 Redmine 관계로 옮기지 않는다** — 그 순서는
-# Redmine 「하위 일감」 트리가 이미 보인다. 형제·다른 가지 사이 선행만 `blocks` 로 건다. 대조(`_differences`)도
-# 같은 기준으로 조상·후손 쌍을 뺀다. [주의] 단위 검사의 대역은 이 제약을 몰랐다 — 실물이 잡았다.
-
-def _ancestors(parent_of: dict, node) -> set:
-    """`parent_of[n]` = 부모(Root 면 None)를 따라 올라간 조상 집합. 순환은 입력 검사가 이미 막는다."""
-    seen, cur = set(), parent_of.get(node)
-    while cur is not None and cur not in seen:
-        seen.add(cur)
-        cur = parent_of.get(cur)
-    return seen
-
-
-def _hierarchy_pair(parent_of: dict, a, b) -> bool:
-    """a·b 가 조상-후손 관계면 참 — Redmine 이 관계를 거절하는 쌍이다."""
-    return a in _ancestors(parent_of, b) or b in _ancestors(parent_of, a)
-
-
-def _mirrored_deps(parent_of: dict, node, deps) -> list:
-    """Redmine `blocks` 로 옮길 선행 — 조상·후손 선행은 뺀다(지도에만 남는다)."""
-    return [d for d in deps if not _hierarchy_pair(parent_of, d, node)]
 
 
 # ── create_map ───────────────────────────────────────────────────────────
@@ -479,16 +458,13 @@ def create_map(root_id, destination, nodes, *, fog=(), out_of_scope=(), confirm=
     if not confirm:
         writes = []
         for s in order:
-            parent = f"Root #{rid}" if s["parent"] == MB.ROOT else f"{s['parent']}(임시 #{tmp[s['parent']]})"
-            writes.append(f"create_issue 「{s['title']}」 타입 {s['type']} · 부모 {parent} · "
+            parent = f"Root #{rid}" if s["parent"] == MB.ROOT else \
+                f"Root #{rid} (지도 파생 부모 {s['parent']} 임시 #{tmp[s['parent']]})"
+            writes.append(f"create_issue 「{s['title']}」 타입 {s['type']} · Redmine 부모 {parent} · "
                           f"마일스톤 {version or '없음'} · 본문 = 요약 + 노드 표지")
-        kpar = {x["key"]: (None if x["parent"] == MB.ROOT else x["parent"]) for x in order}
         for s in order:
             for d in s["deps"]:
-                if _hierarchy_pair(kpar, d, s["key"]):
-                    writes.append(f"(관계 없음) {d}→{s['key']} 은 조상·후손 선행 — 지도에만 · Redmine 하위 일감 트리가 순서를 보인다")
-                else:
-                    writes.append(f"create_relation {d}(임시 #{tmp[d]}) blocks {s['key']}(임시 #{tmp[s['key']]})")
+                writes.append(f"create_relation {d}(임시 #{tmp[d]}) blocks {s['key']}(임시 #{tmp[s['key']]})")
         writes.append(f"update_issue Root #{rid} — 본문에 지도 영역 + 노트")
         log(f"미리보기 Root #{rid} — 노드 {len(order)}개 · 예정 쓰기 {len(writes)}건 · 실제 쓰기 0건")
         return {"ok": True, "confirmed": False, "preview": preview, "temp_ids": tmp,
@@ -498,7 +474,7 @@ def create_map(root_id, destination, nodes, *, fog=(), out_of_scope=(), confirm=
     log(f"등록 시작 Root #{rid} — 사용자 답: {user_answer}")
     created: dict[str, int] = {}
     for s in order:
-        parent_id = rid if s["parent"] == MB.ROOT else created[s["parent"]]
+        parent_id = rid                # #982 T7 — Redmine 부모는 늘 Root, 파생 부모는 지도 「부모」 칸
         nid, why = _create_node_issue(rm, root_id=rid, title=s["title"], type_=s["type"],
                                       summary=s["summary"], parent_id=parent_id, version=version,
                                       project=project, log=log)
@@ -507,12 +483,8 @@ def create_map(root_id, destination, nodes, *, fog=(), out_of_scope=(), confirm=
         if why:
             return _stopped(log, f"노드 생성 {s['key']}", why, list(created.values()))
     relations = []
-    kpar = {x["key"]: (None if x["parent"] == MB.ROOT else x["parent"]) for x in order}
     for s in order:
         for d in s["deps"]:
-            if _hierarchy_pair(kpar, d, s["key"]):
-                log(f"관계 생략 #{created[d]}→#{created[s['key']]} — 조상·후손 선행(지도에만, Redmine 거절 쌍)")
-                continue
             why = _relate(rm, created[d], created[s["key"]], log)
             if why:
                 return _stopped(log, f"관계 {d}→{s['key']}", why, list(created.values()),
@@ -681,16 +653,11 @@ def register_node(root_id, proposal, *, user_answer, project="", rm=None, logf=N
         _fail(log, str(e))
     pr = p["proposal"]
     nid, why = _create_node_issue(rm, root_id=rid, title=pr["title"], type_=pr["type"],
-                                  summary=pr["summary"], parent_id=pr["parent"] or rid,
+                                  summary=pr["summary"], parent_id=rid,
                                   version=root.get("fixed_version") or "", project=project, log=log)
     if why:
         return _stopped(log, "노드 생성", why, [nid] if nid else [])
-    rpar = {n.id: n.parent for n in block.nodes}
-    rpar[nid] = pr["parent"]
     for d in pr["deps"]:
-        if _hierarchy_pair(rpar, d, nid):
-            log(f"관계 생략 #{d}→#{nid} — 조상 선행(지도에만, Redmine 거절 쌍)")
-            continue
         why = _relate(rm, d, nid, log)
         if why:
             return _stopped(log, f"관계 #{d}→#{nid}", why, [nid])
