@@ -8,6 +8,7 @@
                                                               새 노드 제안(쓰기 0) → 동의 뒤 등록 (안개 졸업 포함, `#1000` T1)
     propose_edit(root_id, op, …) → apply_edit(..., user_answer)
                                                               안개·범위 밖·목적지 편집 제안(쓰기 0) → 동의 뒤 적용 (`#1000` T2)
+                                                              노드 → 범위 밖(`node_out`)도 같은 쌍이다 (`#1000` T3)
     claim / mark_verified / close_root                        선점 · 재검증 완료 · Root 마감(사람 게이트)
 
 [중요] **지도 영역이 기록이고 Redmine 부모·관계는 그 보이는 사본이다.** 둘이 어긋나면 고쳐 쓰지
@@ -25,6 +26,9 @@
 [중요] **안개는 지도 생성 뒤에도 바뀐다** (`#1000`) — 졸업(새 노드로 옮김)·해소·범위 밖 이동·추가와
 목적지·범위 밖 편집은 모두 제안(쓰기 0) → 사용자 답 → 적용이다. 결정 근거와 전·후는 **Root 노트에만** 남는다
 (지도 형식은 그대로, 사용자 결정 A). 적용은 **지금 지도로 다시 계산한다** — 대상이 사라졌으면 쓰지 않고 거절.
+[중요] **노드 → 범위 밖(`node_out`)은 관계를 먼저 지우고 지도를 쓴 뒤 노드를 닫는다** (`#1000` T3).
+열린 선행에 막힌 일감은 Redmine 이 닫지 않는다(실측 #982 — #992 가 닫힐 때까지 #993 이 「신규」) — 그래서
+그 노드에 걸린 관계를 전부 지운 뒤에 닫는다. 파생 자식이 있는 노드와 이미 완료된 노드는 제안 때 거절한다.
 [중요] **LLM 0** — 중복 후보는 제목+요약의 정규화 토큰 겹침(Jaccard)으로 점수만 낸다. 판정은 사람 몫.
 [중요] **모든 쓰기와 거절은 로그 한 줄을 남긴다** — `logf`(기본 stderr `[wayfinder] …`)로 흘리고
 결과 dict 의 `"log"` 에도 담는다.
@@ -65,7 +69,7 @@ FOG_TO_OUT = "fog_to_out"
 DESTINATION = "destination"
 OUT_EDIT = "out_edit"
 OUT_TO_FOG = "out_to_fog"
-NODE_OUT = "node_out"                               # T3 몫 — 이름만 예약
+NODE_OUT = "node_out"                               # `#1000` T3 — 노드를 표에서 빼 범위 밖으로
 EDIT_LABELS = {
     FOG_ADD: "안개 추가",
     FOG_RESOLVE: "안개 해소",
@@ -89,6 +93,15 @@ class WayfinderTransportError(WayfinderError):
 class _Conflict(WayfinderError):
     """지금 지도와 맞지 않는다(대상 없음·중복·변화 없음). 제안에서는 그대로 오르고,
     적용·등록에서는 지도가 그 사이 바뀐 것이므로 규칙 거절(`_refuse`)로 바꾼다."""
+
+
+class _RuleRefusal(WayfinderError):
+    """규칙이 막는다(파생 자식 있음·이미 완료) — 제안·적용 **둘 다** 규칙 거절 dict 로 돌려준다.
+    사람이 그 목록을 봐야 하므로 예외로 올리지 않는다. `extra` 는 거절 dict 에 함께 싣는다."""
+
+    def __init__(self, why: str, **extra):
+        super().__init__(why)
+        self.extra = extra
 
 
 # ── 포트 · 로그 ───────────────────────────────────────────────────────────
@@ -306,6 +319,15 @@ def _blocked_by(relations, issue_id: int) -> list[int]:
     return blocked_by(relations, issue_id)
 
 
+def _relations_of(rm, issue_id: int) -> list[dict]:
+    """그 일감에 걸린 Redmine 관계 전부(막는 쪽·막히는 쪽 모두). 읽기 실패는 `WayfinderTransportError`."""
+    rels = rm.list_relations(issue_id)
+    if not isinstance(rels, dict) or rels.get("error"):
+        reason = rels.get("error") if isinstance(rels, dict) else "응답 형식이 아니다"
+        raise WayfinderTransportError(f"#{issue_id} 관계를 읽지 못했다 — {reason}")
+    return list(rels.get("relations") or [])
+
+
 def _differences(rm, root_id: int, block: MB.MapBlock) -> list[str]:
     """지도(기록)와 Redmine(사본)의 차이 — 부모 · 선행 관계 · 노드 표지."""
     diffs: list[str] = []
@@ -328,11 +350,7 @@ def _differences(rm, root_id: int, block: MB.MapBlock) -> list[str]:
                 diffs.append(f"#{n.id}: 표지 root={marker.root} ≠ 지도 Root #{root_id}")
             if marker.type != n.type:
                 diffs.append(f"#{n.id}: 표지 type={marker.type} ≠ 지도 타입 {n.type}")
-        rels = rm.list_relations(n.id)
-        if not isinstance(rels, dict) or rels.get("error"):
-            reason = rels.get("error") if isinstance(rels, dict) else "응답 형식이 아니다"
-            raise WayfinderTransportError(f"#{n.id} 관계를 읽지 못했다 — {reason}")
-        got = _blocked_by(rels.get("relations") or [], n.id)
+        got = _blocked_by(_relations_of(rm, n.id), n.id)
         want = sorted(n.deps)
         missing = [d for d in want if d not in got]
         extra = [d for d in got if d not in want]
@@ -773,7 +791,7 @@ def register_node(root_id, proposal, *, user_answer, project="", rm=None, logf=N
 
 # ── 지도 편집 (`#1000` T2) ────────────────────────────────────────────────
 
-_SECTION_NAMES = {"destination": "목적지", "fog": "안개", "out_of_scope": "범위 밖"}
+_SECTION_NAMES = {"destination": "목적지", "fog": "안개", "out_of_scope": "범위 밖", "nodes": "노드"}
 
 
 def _no_text(op: str, text) -> None:
@@ -851,8 +869,46 @@ def _plan_out_to_fog(b, target, text, reason, exact) -> dict:
     return {"target": line, "text": text, "sections": ("fog", "out_of_scope")}
 
 
+def _node_row(n: MB.MapNode) -> str:
+    """노드 표 한 줄의 요지 — 노트·미리보기용(`#번호 제목 — 상태 (선행 …)`)."""
+    deps = f" (선행 {'·'.join(f'#{d}' for d in n.deps)})" if n.deps else ""
+    return f"#{n.id} {n.title} — {n.state}{deps}"
+
+
 def _plan_node_out(b, target, text, reason, exact) -> dict:
-    raise WayfinderError(f"{NODE_OUT} 은 T3 에서 구현")
+    """노드를 표에서 빼고 범위 밖에 「#<번호> <제목> — <근거>」를 붙인다(`#1000` T3).
+
+    다른 노드의 선행에서도 걷고 상태를 다시 계산한다(그 노드만 기다리던 노드는 Frontier 가 될 수 있다).
+    파생 자식이 있으면(사용자 결정 A)·이미 완료면 `_RuleRefusal`, 지도에 없으면 `_Conflict`.
+    """
+    _no_text(NODE_OUT, text)
+    _need_reason(NODE_OUT, reason)
+    nid = _issue_id(target, "노드")
+    n = b.node(nid)
+    if n is None:
+        now = " · ".join(f"#{x.id} {x.title}" for x in sorted(b.nodes, key=lambda x: x.id)) or "없음"
+        raise _Conflict(f"#{nid} 는 지도의 노드가 아니다 (지금 노드: {now})")
+    node = {"id": n.id, "title": n.title, "state": n.state}
+    if n.state == DONE:
+        raise _RuleRefusal(f"#{nid} — 이미 완료된 노드는 범위 밖으로 돌리지 않는다 — 결과가 이미 적용됐다",
+                           node=node)
+    children = sorted((x for x in b.nodes if x.parent == nid), key=lambda x: x.id)
+    if children:
+        listed = " · ".join(f"#{x.id} {x.title}" for x in children)
+        raise _RuleRefusal(f"#{nid} 에 파생 자식이 있다 — 자식부터 정리해야 범위 밖으로 돌린다: {listed}",
+                           node=node, children=[{"id": x.id, "title": x.title} for x in children])
+    line = _check_line(f"#{nid} {n.title}{OUT_SEP}{reason}", "범위 밖")
+    _no_dup(b.out_of_scope, line, "범위 밖")
+    dependents = sorted(x.id for x in b.nodes if nid in x.deps)
+    b.nodes = [x for x in b.nodes if x.id != nid]
+    for x in b.nodes:
+        if nid in x.deps:
+            x.deps = [d for d in x.deps if d != nid]
+    b.out_of_scope.append(line)
+    computed = compute_states(b)                      # 미리보기에도 바뀐 상태(Frontier)를 보인다
+    b.nodes, b.diagram = computed.nodes, computed.diagram
+    return {"target": nid, "text": line, "sections": ("nodes", "out_of_scope"),
+            "extra": {"node": node, "children": [], "dependents": dependents}}
 
 
 _EDIT_PLANNERS = {
@@ -867,11 +923,17 @@ _EDIT_PLANNERS = {
 
 
 def _sections_of(b: MB.MapBlock, keys) -> dict:
-    return {k: copy.deepcopy(getattr(b, k)) for k in keys}
+    out = {}
+    for k in keys:
+        if k == "nodes":                              # 표는 줄 요지 글로 — 노트·제안에 그대로 싣는다
+            out[k] = [_node_row(n) for n in sorted(b.nodes, key=lambda x: x.id)]
+        else:
+            out[k] = copy.deepcopy(getattr(b, k))
+    return out
 
 
 def _plan_edit(block: MB.MapBlock, op, target, text, reason, *, exact: bool = False) -> dict:
-    """편집 하나를 지도 **사본**에 적용한다 → {"block", "target", "text", "reason", "before", "after"}.
+    """편집 하나를 지도 **사본**에 적용한다 → {"block", "target", "text", "reason", "before", "after", "extra"}.
 
     대상·텍스트 판정과 `MB.render` 판정까지 여기서 끝낸다 — 쓰기 때가 아니라 제안 때 실패하도록.
     `exact=True`(적용 때)는 대상을 글로만 다시 찾는다.
@@ -886,7 +948,8 @@ def _plan_edit(block: MB.MapBlock, op, target, text, reason, *, exact: bool = Fa
     _map_call(MB.render, b)
     keys = got["sections"]
     return {"block": b, "target": got["target"], "text": got["text"], "reason": reason,
-            "before": _sections_of(block, keys), "after": _sections_of(b, keys)}
+            "before": _sections_of(block, keys), "after": _sections_of(b, keys),
+            "extra": got.get("extra", {})}
 
 
 def _fmt_sections(sec: dict) -> str:
@@ -907,23 +970,33 @@ def propose_edit(root_id, op, *, target=None, text="", reason="", rm=None, logf=
       destination  text(새 목적지)
       out_edit     target(범위 밖 줄) + text(바꿀 글)
       out_to_fog   target(범위 밖 줄) + text(선택 — 비우면 「 — 이유」 꼬리를 뗀 글)
-      node_out     예약(T3)
-    target 은 글 그대로 또는 1부터 센 번호다. 제안의 `target` 에는 **고른 글**이 담긴다.
+      node_out     target(노드 번호) + reason(필수) — 표에서 빼고 범위 밖에 「#<번호> <제목> — <근거>」.
+                   제안에 `node`(번호·제목·상태) · `children`(지도 파생 자식) · `relations`(그 일감에 걸린
+                   Redmine 관계 번호, 읽기만) · `dependents`(그 노드를 선행으로 둔 노드 — 선행을 잃는다)를 싣는다.
+                   파생 자식이 있거나 이미 완료면 **규칙 거절 dict**(`refused`)로 돌려준다 — 목록을 봐야 하므로.
+    target 은 글 그대로 또는 1부터 센 번호다(node_out 은 노드 번호). 제안의 `target` 에는 **고른 글**이 담긴다.
     """
     log, rm = _log_of(logf), _port(rm)
     rid = _issue_id(root_id, "Root")
     block = _load(rm, rid)[1]
     try:
         plan = _plan_edit(block, op, target, text, reason)
+    except _RuleRefusal as e:
+        return _refuse(log, f"Root #{rid} {EDIT_LABELS.get(op, op)} 거절 — {e} · 쓰기 0건", **e.extra)
     except WayfinderError as e:
         _fail(log, str(e))
     label = EDIT_LABELS[op]
+    proposal = {"root": rid, "op": op, "target": plan["target"], "text": plan["text"],
+                "reason": plan["reason"], "before": plan["before"], "after": plan["after"]}
+    extra = ""
+    if op == NODE_OUT:
+        rels = _relations_of(rm, plan["target"])
+        proposal.update(plan["extra"], relations=sorted(r["id"] for r in rels))
+        extra = (f" · 관계 {proposal['relations'] or '없음'} 삭제 예정"
+                 f" · 선행을 잃는 노드 {proposal['dependents'] or '없음'}")
     log(f"편집 제안 Root #{rid} {label} — 전 {_fmt_sections(plan['before'])} → "
-        f"후 {_fmt_sections(plan['after'])} · 쓰기 0건")
-    return {"ok": True,
-            "proposal": {"root": rid, "op": op, "target": plan["target"], "text": plan["text"],
-                         "reason": plan["reason"], "before": plan["before"], "after": plan["after"]},
-            "log": log.lines}
+        f"후 {_fmt_sections(plan['after'])}{extra} · 쓰기 0건")
+    return {"ok": True, "proposal": proposal, "log": log.lines}
 
 
 def apply_edit(root_id, proposal, *, user_answer, rm=None, logf=None) -> dict:
@@ -931,6 +1004,11 @@ def apply_edit(root_id, proposal, *, user_answer, rm=None, logf=None) -> dict:
 
     제안의 op·target·text·reason 으로 **지금 지도에서 다시 계산한다** — 대상이 사라졌거나 중복·변화
     없음이면 쓰기 0건으로 거절. Root 는 한 번 쓰고, 노트에 편집 이름 · 전 → 후 · 근거 · 사용자 답을 남긴다.
+
+    node_out 은 쓰기가 셋이고 이 순서다: ① 그 노드에 걸린 관계 전부 삭제(지금 다시 읽은 목록) → ② Root
+    지도(행 제거 · 다른 노드 선행에서 제거 · 범위 밖 줄 · 상태 재계산) → ③ 노드 일감 「완료」(100%) +
+    노트. ①②에서 멈추면 `_stopped`(되돌리지 않는다). ③이 실패하면 지도는 이미 범위 밖이라 되돌리지 않고
+    `{"ok": False, "step": "노드 닫기", "map_written": True, …}` 로 크게 알린다.
     """
     log, rm = _log_of(logf), _port(rm)
     rid = _issue_id(root_id, "Root")
@@ -946,11 +1024,13 @@ def apply_edit(root_id, proposal, *, user_answer, rm=None, logf=None) -> dict:
     if diffs:
         return _refuse(log, f"Root #{rid} 지도와 Redmine 이 어긋난다 — 고치지 않는다 ({len(diffs)}건)",
                        differences=diffs)
-    # fog_resolve·fog_to_out 의 제안 text 는 결과 표시일 뿐 입력이 아니다(out_to_fog 는 제안 때 정한 글 그대로)
-    text = "" if op in (FOG_RESOLVE, FOG_TO_OUT) else proposal.get("text", "")
+    # fog_resolve·fog_to_out·node_out 의 제안 text 는 결과 표시일 뿐 입력이 아니다(out_to_fog 는 제안 때 정한 글 그대로)
+    text = "" if op in (FOG_RESOLVE, FOG_TO_OUT, NODE_OUT) else proposal.get("text", "")
     try:
         plan = _plan_edit(block, op, proposal.get("target"), text, proposal.get("reason", ""),
                           exact=True)
+    except _RuleRefusal as e:
+        return _refuse(log, f"Root #{rid} 지도가 제안 뒤 바뀌었다 — 고치지 않는다 ({e})", **e.extra)
     except _Conflict as e:
         return _refuse(log, f"Root #{rid} 지도가 제안 뒤 바뀌었다 — 고치지 않는다 ({e})")
     except WayfinderError as e:
@@ -966,11 +1046,49 @@ def apply_edit(root_id, proposal, *, user_answer, rm=None, logf=None) -> dict:
              f"근거: {plan['reason'] or '없음'}\n"
              f"사용자 답: {user_answer}")
     log(f"편집 적용 Root #{rid} {label} — 사용자 답: {user_answer}")
+    if op == NODE_OUT:
+        return _apply_node_out(rm, rid, body, new, plan, notes, log)
     try:
         _write_root(rm, rid, body, new, notes, log)
     except WayfinderTransportError as e:
         return _stopped(log, "Root 본문", str(e), [])
     return {"ok": True, "op": op, "before": plan["before"], "after": plan["after"], "log": log.lines}
+
+
+def _apply_node_out(rm, rid: int, body: str, new: MB.MapBlock, plan: dict, notes: str, log: _Log) -> dict:
+    """node_out 쓰기 셋 — 관계 삭제 → Root 지도 → 노드 닫기 (`#1000` T3)."""
+    nid, ex = plan["target"], plan["extra"]
+    result = {"op": NODE_OUT, "node": ex["node"], "dependents": ex["dependents"],
+              "before": plan["before"], "after": plan["after"]}
+    deleted: list[int] = []
+    # ① 관계 — 열린 선행에 막힌 일감은 Redmine 이 닫지 않는다(#982 실측), 선행을 잃는 노드의 관계도 지도와 맞춘다
+    for r in sorted(_relations_of(rm, nid), key=lambda x: x["id"]):
+        got = rm.delete_relation(r["id"])
+        if not isinstance(got, dict) or not got.get("ok"):
+            why = (got.get("error") if isinstance(got, dict) else "응답 형식이 아니다") or "실패"
+            return _stopped(log, f"관계 삭제 {r['id']}", why, [], **result, deleted_relations=deleted)
+        deleted.append(r["id"])
+        log(f"쓰기 — 관계 {r['id']} 삭제 (#{r.get('issue_id')} {r.get('relation_type', 'blocks')} "
+            f"#{r.get('issue_to_id')})")
+    result["deleted_relations"] = deleted
+    # ② Root 지도
+    try:
+        _write_root(rm, rid, body, new, notes + f"\n삭제한 관계: {deleted or '없음'}", log)
+    except WayfinderTransportError as e:
+        return _stopped(log, "Root 본문", str(e), [], **result)
+    # ③ 노드 닫기 — 실패해도 되돌리지 않는다(지도는 이미 범위 밖이라 close_root 를 막지 않는다)
+    try:
+        out = rm.update_issue(nid, notes=f"웨이파인더 범위 밖 — {plan['reason']} (맵 Root #{rid})",
+                              status_name=DONE, done_ratio=100)
+    except Exception as e:                            # noqa: BLE001 — 지도는 이미 썼다, 크게 알리고 끝낸다
+        out = f"[주의] 노드 닫기 예외 — {type(e).__name__}: {e}"
+    if str(out).startswith("[주의]"):
+        log(f"[주의] 중단 — 노드 닫기 #{nid}: {out} (지도는 이미 범위 밖 · 관계 삭제 {deleted or '없음'} · "
+            f"되돌리지 않는다 — 노드 일감을 사람이 닫아야 한다)")
+        return {"ok": False, "step": "노드 닫기", "why": str(out), "map_written": True, **result,
+                "log": log.lines}
+    log(f"쓰기 — 노드 #{nid} 「{DONE}」 마감 (범위 밖)")
+    return {"ok": True, **result, "log": log.lines}
 
 
 # ── 선점 · 재검증 완료 · Root 마감 ────────────────────────────────────────

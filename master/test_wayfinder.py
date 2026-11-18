@@ -81,10 +81,18 @@ class FakeRedmine:
         iss = self.issues[int(issue_id)]
         if description:
             iss["description"] = description
-        if status_name:
-            iss["status"] = status_name
         if notes:
             iss["journals"].append({"notes": notes})
+        if status_name:
+            # `#982` 실측 — 열린 선행에 막힌 일감은 닫히지 않는다(#993 이 #992 가 닫힐 때까지 「신규」).
+            # 실 `redmine.update_issue` 처럼 코멘트는 남고 상태만 미반영 — `[주의]` 로 말한다.
+            open_blockers = sorted(r["issue_id"] for r in self.relations
+                                   if r["issue_to_id"] == int(issue_id) and r["relation_type"] == "blocks"
+                                   and (self.issues.get(r["issue_id"]) or {}).get("status") != "완료")
+            if status_name == "완료" and open_blockers:
+                return (f"[주의] #{issue_id} 상태 「{status_name}」 반영 안 됨 — 열린 선행 "
+                        + ", ".join(f"#{b}" for b in open_blockers))
+            iss["status"] = status_name
         return f"#{issue_id} 갱신"
 
     def create_issue(self, subject, description="", *, fixed_version="", parent_issue_id=None, **kw):
@@ -689,8 +697,8 @@ def test_edit_refusals():
     check("fog_to_out 근거 없음", _raises(lambda: WF.propose_edit(
         ROOT, "fog_to_out", target=1, reason="", rm=rm, logf=lg), "근거"))
     check("모르는 op", _raises(lambda: WF.propose_edit(ROOT, "fog_zap", rm=rm, logf=lg), "fog_add"))
-    check("node_out 은 T3", _raises(lambda: WF.propose_edit(ROOT, "node_out", target=1, rm=rm, logf=lg),
-                                   "node_out 은 T3 에서 구현"))
+    check("node_out 근거 없음", _raises(lambda: WF.propose_edit(ROOT, "node_out", target=1, rm=rm, logf=lg),
+                                      "근거"))
     check("없는 대상", _raises(lambda: WF.propose_edit(
         ROOT, "fog_resolve", target="없음줄", reason="x", rm=rm, logf=lg), "로컬라이즈"))
     for bad in ("a|b", "x</pre>", "<!-- y", "두\n줄", " 공백", "## 제목", ""):
@@ -759,13 +767,144 @@ def test_fog_cleared_close_root():
           f"{pv.get('blockers')} {out}")
 
 
+# ── 노드 → 범위 밖 (`#1000` T3) ────────────────────────────────────────────
+
+def _out_ready():
+    """_fogged 지도에서 inv 만 완료(pre 는 열림) — hud 를 빼면 ver 의 남은 선행(inv)이 완료라 Frontier."""
+    rm, c = _fogged()
+    rm.issues[c["inv"]]["status"] = "완료"
+    assert WF.sync(ROOT, closed_node=c["inv"], rm=rm, logf=_quiet()[1])["ok"]
+    return rm, c
+
+
+def test_fake_refuses_blocked_close():
+    rm, c = _made()
+    out = rm.update_issue(c["hud"], notes="닫기", status_name="완료", done_ratio=100)
+    check("대역: 열린 선행이 막으면 닫지 않음", str(out).startswith("[주의]")
+          and rm.issues[c["hud"]]["status"] == "신규" and f"#{c['pre']}" in out, str(out))
+
+
+def test_node_out_propose():
+    rm, c = _out_ready()
+    n = len(rm.writes())
+    lines, logf = _quiet()
+    out = WF.propose_edit(ROOT, "node_out", target=str(c["hud"]), reason="HUD 는 다음 마일스톤", rm=rm, logf=logf)
+    check("node_out 제안 쓰기 0건", out["ok"] and len(rm.writes()) == n, str(out))
+    p = out["proposal"]
+    check("제안 노드", p["target"] == c["hud"] and p["node"] == {"id": c["hud"], "title": "HUD 위젯", "state": "차단"},
+          str(p.get("node")))
+    check("제안 자식 없음", p["children"] == [])
+    want_rels = sorted(r["id"] for r in rm.relations if c["hud"] in (r["issue_id"], r["issue_to_id"]))
+    check("제안 관계(읽기)", p["relations"] == want_rels and len(want_rels) == 2, str(p["relations"]))
+    check("제안 dependents", p["dependents"] == [c["ver"]])
+    line = f"#{c['hud']} HUD 위젯 — HUD 는 다음 마일스톤"
+    check("후: 범위 밖 줄", p["after"]["out_of_scope"][-1] == line and p["text"] == line, str(p["after"]))
+    check("후: 표에서 빠짐", not any(x.startswith(f"#{c['hud']} ") for x in p["after"]["nodes"])
+          and any(x.startswith(f"#{c['hud']} ") for x in p["before"]["nodes"]))
+    check("후: ver Frontier 미리보기", any(x.startswith(f"#{c['ver']} ") and "Frontier" in x
+                                       for x in p["after"]["nodes"]), str(p["after"]["nodes"]))
+    check("node_out 제안 로그", any("쓰기 0건" in x and "삭제 예정" in x for x in lines))
+    # 파생 자식 → 거절 dict, 목록 포함
+    n = len(rm.writes())
+    lines, logf = _quiet()
+    out = WF.propose_edit(ROOT, "node_out", target=c["pre"], reason="x", rm=rm, logf=logf)
+    check("자식 있으면 거절 dict", not out["ok"] and out["refused"]
+          and f"#{c['hud']} HUD 위젯" in out["why"] and f"#{c['inv']} 인벤토리 연결" in out["why"]
+          and [x["id"] for x in out["children"]] == sorted([c["hud"], c["inv"]]) and len(rm.writes()) == n, str(out))
+    check("자식 거절 로그", any(x.startswith("거절") for x in lines))
+    out = WF.propose_edit(ROOT, "node_out", target=c["inv"], reason="x", rm=rm, logf=logf)
+    check("완료 노드 거절", not out["ok"] and out["refused"] and "이미 완료된 노드" in out["why"]
+          and len(rm.writes()) == n, str(out))
+    check("모르는 노드", _raises(lambda: WF.propose_edit(ROOT, "node_out", target=9999, reason="x", rm=rm, logf=logf),
+                            "노드가 아니다"))
+    check("text 거절", _raises(lambda: WF.propose_edit(ROOT, "node_out", target=c["hud"], text="y", reason="x",
+                                                      rm=rm, logf=logf), "text"))
+    check("node_out 거절들 쓰기 0건", len(rm.writes()) == n)
+
+
+def test_node_out_apply():
+    rm, c = _out_ready()
+    p = WF.propose_edit(ROOT, "node_out", target=c["hud"], reason="HUD 는 다음 마일스톤", rm=rm,
+                        logf=_quiet()[1])["proposal"]
+    n = len(rm.writes())
+    lines, logf = _quiet()
+    out = WF.apply_edit(ROOT, p, user_answer="", rm=rm, logf=logf)
+    check("node_out 답 없으면 거절 · 쓰기 0건", not out["ok"] and out["refused"] and len(rm.writes()) == n)
+    start = len(rm.calls)
+    out = WF.apply_edit(ROOT, p, user_answer="빼자", rm=rm, logf=logf)
+    check("node_out 적용 ok", out["ok"] and out["op"] == "node_out", str(out))
+    check("결과 필드", out["node"]["id"] == c["hud"] and out["deleted_relations"] == p["relations"]
+          and out["dependents"] == [c["ver"]] and "before" in out and "after" in out)
+    w = [x for x in rm.calls[start:] if x[0] in WRITES]
+    kinds = [("del" if x[0] == "delete_relation" else "root" if x[1] == ROOT else "node") for x in w]
+    check("순서: 관계 삭제 → Root → 닫기", kinds == ["del", "del", "root", "node"], str(kinds))
+    check("관계 다 지워짐", not any(c["hud"] in (r["issue_id"], r["issue_to_id"]) for r in rm.relations))
+    check("열린 선행이어도 닫힘(관계 먼저 지워서)", rm.issues[c["hud"]]["status"] == "완료"
+          and rm.issues[c["pre"]]["status"] == "신규")
+    close = w[-1][2]
+    check("닫기 노트·100%", close["status_name"] == "완료" and close["done_ratio"] == 100
+          and close["notes"] == f"웨이파인더 범위 밖 — HUD 는 다음 마일스톤 (맵 Root #{ROOT})", str(close))
+    blk = _map(rm)
+    check("표에서 빠짐", blk.node(c["hud"]) is None)
+    check("범위 밖 줄", blk.out_of_scope[-1] == f"#{c['hud']} HUD 위젯 — HUD 는 다음 마일스톤", str(blk.out_of_scope))
+    check("ver 선행에서 걷힘 · Frontier", blk.node(c["ver"]).deps == [c["inv"]]
+          and blk.node(c["ver"]).state == "Frontier")
+    note = _last_note(rm)
+    check("Root 노트", "노드 → 범위 밖" in note and "근거: HUD 는 다음 마일스톤" in note and "사용자 답: 빼자" in note
+          and "전: 노드 [" in note and "삭제한 관계" in note, note)
+    check("쓰기 로그 4줄", sum(x.startswith("쓰기 —") for x in lines) == 4, str(lines))
+    check("node_out 뒤 대조 통과", WF.check(ROOT, rm=rm, logf=_quiet()[1])["ok"])
+    pv = WF.close_root(ROOT, rm=rm, logf=_quiet()[1])
+    check("close_root 를 막지 않음", not any(b.startswith(f"#{c['hud']} ") for b in pv["blockers"]), str(pv["blockers"]))
+    n = len(rm.writes())
+    out = WF.apply_edit(ROOT, p, user_answer="응", rm=rm, logf=_quiet()[1])
+    check("두 번째 적용(노드 없음) 거절 · 쓰기 0건", not out["ok"] and out["refused"] and len(rm.writes()) == n, str(out))
+
+
+def test_node_out_close_fails():
+    rm, c = _out_ready()
+    p = WF.propose_edit(ROOT, "node_out", target=c["ver"], reason="검증 생략", rm=rm, logf=_quiet()[1])["proposal"]
+    rm.fail["update_issue"] = rm.counts.get("update_issue", 0) + 2      # Root 쓰기는 되고 닫기만 실패
+    lines, logf = _quiet()
+    out = WF.apply_edit(ROOT, p, user_answer="응", rm=rm, logf=logf)
+    check("닫기 실패 보고", not out["ok"] and out["step"] == "노드 닫기" and out["map_written"] is True
+          and out["why"].startswith("[주의]") and out["deleted_relations"] == p["relations"], str(out))
+    check("지도는 이미 범위 밖(되돌리지 않음)", _map(rm).node(c["ver"]) is None
+          and rm.issues[c["ver"]]["status"] == "신규")
+    check("닫기 실패 로그", any(x.startswith("[주의] 중단 — 노드 닫기") for x in lines))
+    rm.fail.clear()
+    pv = WF.close_root(ROOT, rm=rm, logf=_quiet()[1])
+    check("닫기 실패여도 close_root 막지 않음", not any(b.startswith(f"#{c['ver']} ") for b in pv["blockers"]))
+
+
+def test_node_out_changed_between():
+    # 제안 뒤 파생 자식이 생김 → 거절 · 쓰기 0건
+    rm, c = _out_ready()
+    p = WF.propose_edit(ROOT, "node_out", target=c["ver"], reason="x", rm=rm, logf=_quiet()[1])["proposal"]
+    q = WF.propose_node(ROOT, "결합 검증 보조", "작업", c["ver"], rm=rm, logf=_quiet()[1])
+    reg = WF.register_node(ROOT, q["proposal"], user_answer="응", rm=rm, logf=_quiet()[1])
+    assert reg["ok"], reg
+    n = len(rm.writes())
+    out = WF.apply_edit(ROOT, p, user_answer="응", rm=rm, logf=_quiet()[1])
+    check("그 사이 자식 생김 → 거절 · 쓰기 0건", not out["ok"] and out["refused"] and len(rm.writes()) == n
+          and f"#{reg['id']} 결합 검증 보조" in out["why"] and out["children"], str(out))
+    # 대조 차이 → 거절
+    rm, c = _out_ready()
+    p = WF.propose_edit(ROOT, "node_out", target=c["hud"], reason="x", rm=rm, logf=_quiet()[1])["proposal"]
+    rm.issues[c["inv"]]["parent"] = None
+    n = len(rm.writes())
+    out = WF.apply_edit(ROOT, p, user_answer="응", rm=rm, logf=_quiet()[1])
+    check("node_out 대조 차이 → 거절 · 쓰기 0건", not out["ok"] and out["differences"] and len(rm.writes()) == n)
+
+
 def main() -> int:
     for fn in (test_create_map_preview, test_create_map_confirm, test_create_map_refusals,
                test_title_validation, test_compute_states, test_check, test_sync,
                test_sync_keeps_reverify, test_on_node_closed, test_propose_node, test_register_node,
                test_claim, test_mark_verified, test_close_root, test_logs, test_end_to_end_direct,
                test_graduate_propose, test_graduate_register, test_edit_ops, test_edit_refusals,
-               test_fog_cleared_close_root):
+               test_fog_cleared_close_root, test_fake_refuses_blocked_close, test_node_out_propose,
+               test_node_out_apply, test_node_out_close_fails, test_node_out_changed_between):
         try:
             fn()
         except Exception as e:                       # noqa: BLE001
