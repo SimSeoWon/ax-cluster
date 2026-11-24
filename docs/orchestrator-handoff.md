@@ -1,7 +1,7 @@
 # 현재 AX 작업 인수인계
 
-> 2026-11-25 — Claude 의 #1018(웨이파인더 #741 첫 노드) 처리 뒤 현재 체크포인트. main 은 `206c6bc` 까지 반영됐고 잠금은 해제됐다.
-> 이 인계 커밋 직후 `master.issue_wrapup 1018` 을 다시 실행해 배달·check 하고 결과를 Redmine 에 기록한다(배달 예정).
+> 2026-11-25 — Claude 세션 종료 체크포인트(사용자 「오늘은 여기까지」). 이번 세션: M8 표기 · #839 · #1017 등록 · #741 웨이파인더 맵 · #1018.
+> main 은 이 인계 커밋까지 · 일감 잠금 없음 · #1018 배달은 `462160a` 로 rc0(세 대 OK). 이 커밋 직후 `master.client update` 로 다시 맞춘다(배달 예정).
 > 결과·근거의 정본은 Redmine과 reports/다. 이 문서는 현재 작업·남은 관측·다음 행동 한 벌만 유지한다.
 
 ## 현재 상태
@@ -11,7 +11,8 @@
   기준선: 색인 2,662 · 미귀속 2,608(empty_cwd 1,499 agy · tmp_ax 983 · master_home 112 · other 14) · work/task 0 ·
   usage_log 결합 가능 codex 974행(967 tmp_ax). 마감이 맵을 자동 갱신해 **Frontier = #1019 · #1020 · #1021**(순서는 사용자 선택).
   맵 편집 후보(미제안): #1020 이중 구분자 0건 → 범위 조정 · 안개② agy 세션 ID(usage_log 0/2,174) · 안개③ issue 필드(귀속된 `.ax-issues` 14건 번호 버림).
-  관찰: 노드 일감에도 `wayfinder_ask` 가 붙는다(노드 표지 있으면 묻지 않는 쪽이 맞다 — 후속 후보).
+  관찰: 노드 일감에도 `wayfinder_ask` 가 붙는다(노드 표지 있으면 묻지 않는 쪽이 맞다 — 후속 후보, 아직 일감 미등록).
+  Root #741 은 「신규」로 열려 있다(지도일 뿐 잠금 없음). 노드 #1019~#1023 은 마일스톤 8 — 개선·확장.
 - #839 doc_sync 운영 스냅샷(분류 신규 기능): 완료·100, T1~T4·C1~C4 충족. 커밋 4건 `5486733..c3ac616` · 리포트 209.
   `python -m master.ops_snapshot` → `docs/snapshots/redmine-open.md`(ax-cluster 열린 일감 메타, 아이디어는 건수만) ·
   `docs/snapshots/ops-state.md`(상주 서비스 · HEAD · 워커 배달 리비전). 손으로 돌려 커밋 · 못 닿으면 rc 1 · handoff 근거에만 등록(2→4).
@@ -22,8 +23,6 @@
   등록부 `inventory: true`(readme·modules) 문서는 가상 근거 `inventory:master`(운영 모듈 경로+docstring 첫 줄 · 스킬 · `@mcp.tool` 이름)를 자동으로 받는다.
   `--since` 새 사유 `inventory-source-changed` · plan `undocumented_count`·`undocumented` · draft 프롬프트 미언급 구획(정보만, unchanged 를 막지 않음). 전문은 여전히 등록 evidence 만.
   재기동 불필요(상주 서비스 무관, wrapup 신선도 판정 셋 다 최신). 미언급 모듈 62개(두 README 공통)를 실제로 반영하는 일은 범위 밖.
-- `.43` 배달 뒤처짐(2커밋, 6cfbdcc 문서 커밋)은 11-24 `master.client update` 로 해소 — 세 대 check OK.
-- #1009~#1016 이 11-19 인계 뒤 등록됐다(#1016 외에는 아이디어 버킷).
 - #982 웨이파인더 맵: 완료·100(배달·스킬 링크 13/13 끝). 커밋 10건 `eabb4af..6140388` · 리포트 206.
   Root 일감 본문 `ax:map`(노드 표·다이어그램·안개) + 노드 일감 `ax:node` 표지 · 도구 `ax-projects:wayfinder_*_tool` 8종 · 스킬 `ax-wayfinder`.
 - 🔴 Redmine 에서 노드는 **모두 Root 직속**이다 — 파생 트리는 지도 「부모」 칸에만(실측: 조상-후손 blocks 422 · 열린 자식 있는 부모는 안 닫힘).
@@ -32,8 +31,7 @@
   `wayfinder_edit_propose_tool`/`wayfinder_edit_apply_tool`(fog_add·fog_resolve·fog_to_out·destination·out_edit·out_to_fog·node_out)
   + `wayfinder_propose_tool(graduates)`. 해소 근거는 Root 노트에만(사용자 A). 파생 자식 있는 노드 범위 밖은 거절(A).
 - **완료 노드는 범위 밖으로 돌리지 않는다** — 사용자 확인 2026-11-19: node_out 은 마감 정리·중요하지 않아 유보할 때 쓴다(#1000 노트).
-- #1000 마감 뒤 배달은 `9690b1e` 로 끝났다(Redmine #1000 노트). 그 뒤 #982 문서 커밋 2건(`196df00`·`6cfbdcc`)이 더 올라갔다.
-- 진행 중 일감 없음. 다른 일감은 사용자 선택을 기다린다.
+- 진행 중 일감 없음(잠금 없음). 웨이파인더 #741 은 다음 노드 선택을, 다른 일감은 사용자 선택을 기다린다.
 
 ## #979·#980 으로 바뀐 것 (운영 계약)
 
@@ -65,13 +63,16 @@
 - worktree 에는 `.venv` 가 없다 — 검사는 `/home/sim/ax-cluster/.venv/bin/python` 으로 돌린다. 마감 뒤 worktree 가 지워지므로 이어지는 명령은 운영 체크아웃에서 실행한다.
 - 인계서는 한 벌로 덮어쓰며 끝난 일감 표·목록을 쌓지 않는다(#842·#975, 이번 변경의 상한 500줄).
 - 미처리 리뷰: #929 · #930 · #931 · #934 · #829 · #942 의 R 번호 — 각 Redmine 노트. #211·#979·#980 커밋 리뷰·종합 리뷰는 도착하는 대로 각 일감 노트로 붙는다.
-- 결정·구현 대기: #326 · #935 · #741 · #738 · #941 · #968 · #978. 조건 대기: #272 · #858.
+- 결정·구현 대기: #326 · #935 · #738 · #941 · #968 · #978. 조건 대기: #272 · #858.
 - ⑦ 전진·finalize·파괴적 Git·자동 로드 문서 변경은 기존 사람 게이트를 따른다. 다른 일감은 사용자 선택을 기다린다.
 
 ## 바로 다음 작업
 
-- 이 인계 커밋·push 뒤 `AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -m master.issue_wrapup 1018 --project AXCluster` 재실행.
-- #741 다음 노드는 사용자 선택(Frontier #1019·#1020·#1021). #1018·#839·#1016 해시별·종합 리뷰는 도착하는 대로 각 일감 노트로 붙는다.
+- 세션 시작: `ax-handoff` → `ax-projects:wayfinder_status_tool(741)` 로 Frontier·대조(마지막 확인 차이 0) 재확인.
+- #741 다음 노드는 사용자 선택(Frontier #1019 확정 장부 Join · #1020 경로 규칙 · #1021 스탬프 누락 방지).
+  고르기 전에 맵 편집 후보 3개(위 「현재 상태」)를 제안할지 묻는다 — 편집은 `wayfinder_edit_propose_tool` → 동의 → apply.
+  노드 착수는 `wayfinder_claim_tool` → `ax-plan` 흐름. 측정 기준선 재실행: `.venv/bin/python -m master.work.session_provenance`.
+- #1018·#839·#1016 해시별·종합 리뷰는 도착하는 대로 각 일감 노트로 붙는다.
 - 웨이파인더 후속 일감(착수는 사용자 결정): #1007 `.33` 언리얼 표면(`ax-client` 도구·`infra_finish` map_hook) · #1008 Root 원격 브랜치·노드 서브 브랜치(의존 없는 노드 분산).
 - 다른 일감은 착수하지 않는다. 아래 항목은 사용자 선택 대기다.
 
