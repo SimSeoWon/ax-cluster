@@ -18,19 +18,25 @@ description: AX 마스터의 등록된 운영 문서(README·모듈 안내·온�
 ## 개요
 
 > 정본: `~/ax-cluster/master/skills/ax-docsync/SKILL.md` · 명령 정본 `master/doc_sync/__main__.py`
-> 근거: `#838` · `#1016`(인벤토리) · 사용법·계약 `docs/document-sync.md` · 등록 목록 `docs/document-registry.json`
+> 근거: `#838` · `#1016`(인벤토리) · `#839`(운영 스냅샷) · 사용법·계약 `docs/document-sync.md` · 등록 목록 `docs/document-registry.json`
 
 ## 0. 무엇을 하는가
 
 Python 이 **등록된 문서와 근거 파일 전문**(+ `inventory: true` 문서는 결정적 인벤토리 `inventory:master` —
 모듈 경로·docstring 첫 줄·스킬 설명·MCP 도구 이름, `#1016`)을 모아 LLM(`codex`·`claude` 레인)에 수정안을 받고, 해시·인용·링크를 검증한 뒤
 **사람이 승인한 문서 ID 만** 적용한다. **명령이 일을 하고, 이 스킬은 순서와 멈출 자리를 정한다.**
-등록되지 않은 운영 상태(Redmine·서비스 상태)는 모델이 추측해 채우지 않는다 — 필요하면 근거 파일을
-먼저 만들어 등록 목록에 넣는 것이 사람의 결정이다.
+등록되지 않은 운영 상태(Redmine·서비스 상태)는 모델이 추측해 채우지 않는다 — Redmine 열린 일감·서비스·워커
+배달 상태는 운영 스냅샷 파일(`docs/snapshots/*.md`, `handoff` 근거)로만 들어온다(`#839`). 다른 근거를 더하는
+것은 사람의 결정이다.
 
 작업 위치 `/home/sim/ax-cluster`, Python 은 `.venv/bin/python`. 실행 전 쓸 명령을 사용자에게 알린다.
 
 ## 1. 목록 확인 (읽기 전용)
+
+인수인계서(`handoff`)가 대상이면 먼저 운영 스냅샷을 새로 떠서 커밋할지 사용자에게 묻는다(네트워크·SSH 읽기,
+LLM 0). rc 1 이면 `닿지 않았다` 줄을 그대로 보이고 커밋 여부를 다시 묻는다.
+
+    .venv/bin/python -m master.ops_snapshot
 
     .venv/bin/python -B -m master.doc_sync plan
 

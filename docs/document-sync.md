@@ -10,6 +10,21 @@ README·CLAUDE·AGENTS·온보딩·인수인계서는 각 문서의 역할과 �
 `evidence`는 저장소 안의 실제 파일 목록이다. 최신 검증·Redmine 결과를 반영하려면 해당 근거를
 먼저 파일로 준비해 목록에 포함해야 한다. 등록되지 않은 운영 상태를 모델이 추측해서 채우지 않는다.
 
+**운영 스냅샷**(#839) — Redmine·서비스 상태는 손으로 돌리는 결정적 명령이 파일로 떠 둔다(live 조회는 기각,
+10-30 사용자 결정: 근거가 커밋에 묶이지 않고 doc_sync 가 네트워크를 다루게 된다).
+
+    .venv/bin/python -m master.ops_snapshot [--project ax-cluster] [--only redmine|ops]
+
+- `docs/snapshots/redmine-open.md`: `ax-cluster` 열린 일감 메타데이터(번호·제목·상태·진척·우선순위·갱신일,
+  버전별) · 받은 수와 `total_count` · 아이디어 버킷은 건수만. 공개 읽기 API(키 없음), 마운트를 따르지 않는다.
+- `docs/snapshots/ops-state.md`: 상주 서비스 `systemctl show` · 마스터 HEAD·dirty · 마운트 프로젝트 워커
+  배달 리비전(`bundle.compare_version`).
+- 머리말에 출처·생성 시각·HEAD. 파일마다 한 벌 덮어쓰기. 일감 본문·노트·메일·절대 경로·토큰은 싣지 않는다.
+- 못 닿은 원천은 빈 표가 아니라 `닿지 않았다: 사유` 이고 rc 1(파일은 쓴다) — 커밋 전에 사람이 본다.
+- 두 파일은 `handoff` 근거로만 등록돼 있다(보호 문서 무등록). 갱신은 **운영 체크아웃에서** 돌려 커밋한다 —
+  워커 판정은 그 체크아웃의 HEAD 와 대조하므로 일감 worktree 에서 돌리면 `drifted` 로 나온다.
+  커밋하면 `plan --since` 가 `handoff` 를 `registered-dependency-changed` 로 고른다.
+
 선택 필드 `inventory: true`(현재 `readme`·`modules`) 문서는 등록 근거 뒤에 **결정적 인벤토리**를
 자동 근거로 받는다(#1016). 가상 경로 `inventory:master`이며 파일 본문은 싣지 않는다.
 
@@ -89,7 +104,7 @@ LLM이 읽고 판단한 `decision=unchanged`와 구분한다. Git 범위 조회 
 탐지에 포함되지 않지만 선택된 문서의 현재 본문에는 포함될 수 있다. 삭제·이동으로 현재 등록된
 파일이 없어졌다면 기존 등록 검증에서 오류가 나므로 먼저 등록 관계를 검토해야 한다.
 이 탐지는 명시 등록 의존 관계와 인벤토리 원천 경로의 후보 추천이며 의미적 영향 전체를 보장하지 않는다.
-Redmine·운영 상태 수집과 보호 문서 적용은 기존의 별도 사람 결정·승인 절차를 따른다.
+Redmine·운영 상태는 위 운영 스냅샷 파일로만 들어온다. 보호 문서 적용은 기존의 별도 사람 결정·승인 절차를 따른다.
 
 ## 수정안과 적용
 
