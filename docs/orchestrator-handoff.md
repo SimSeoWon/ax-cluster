@@ -1,16 +1,22 @@
 # 현재 AX 작업 인수인계
 
-> 2026-11-24 — Claude 의 #839 처리 뒤 현재 체크포인트. main 은 `c3ac616` 까지 반영됐고 잠금은 해제됐다.
-> 이 인계 커밋 직후 `master.issue_wrapup 839` 를 다시 실행해 배달·check 하고 결과를 Redmine 에 기록한다(배달 예정).
+> 2026-11-25 — Claude 의 #1018(웨이파인더 #741 첫 노드) 처리 뒤 현재 체크포인트. main 은 `206c6bc` 까지 반영됐고 잠금은 해제됐다.
+> 이 인계 커밋 직후 `master.issue_wrapup 1018` 을 다시 실행해 배달·check 하고 결과를 Redmine 에 기록한다(배달 예정).
 > 결과·근거의 정본은 Redmine과 reports/다. 이 문서는 현재 작업·남은 관측·다음 행동 한 벌만 유지한다.
 
 ## 현재 상태
 
+- **웨이파인더 실증 — Root #741(세션 프로젝트·일감 출처 보강, 분류 신규 기능)**: 맵 등록(노드 6 · blocks 9 · 안개 3 · 범위 밖 3, 사용자 「등록해」).
+  노드 #1018 프리필 완료·100 — `python -m master.work.session_provenance [--json]`(읽기 전용) · 커밋 `5a4cd6c`·`206c6bc` · 리포트 210.
+  기준선: 색인 2,662 · 미귀속 2,608(empty_cwd 1,499 agy · tmp_ax 983 · master_home 112 · other 14) · work/task 0 ·
+  usage_log 결합 가능 codex 974행(967 tmp_ax). 마감이 맵을 자동 갱신해 **Frontier = #1019 · #1020 · #1021**(순서는 사용자 선택).
+  맵 편집 후보(미제안): #1020 이중 구분자 0건 → 범위 조정 · 안개② agy 세션 ID(usage_log 0/2,174) · 안개③ issue 필드(귀속된 `.ax-issues` 14건 번호 버림).
+  관찰: 노드 일감에도 `wayfinder_ask` 가 붙는다(노드 표지 있으면 묻지 않는 쪽이 맞다 — 후속 후보).
 - #839 doc_sync 운영 스냅샷(분류 신규 기능): 완료·100, T1~T4·C1~C4 충족. 커밋 4건 `5486733..c3ac616` · 리포트 209.
   `python -m master.ops_snapshot` → `docs/snapshots/redmine-open.md`(ax-cluster 열린 일감 메타, 아이디어는 건수만) ·
   `docs/snapshots/ops-state.md`(상주 서비스 · HEAD · 워커 배달 리비전). 손으로 돌려 커밋 · 못 닿으면 rc 1 · handoff 근거에만 등록(2→4).
   워커 판정은 돌린 체크아웃의 HEAD 와 대조한다 — 운영 체크아웃에서 돌린다. 재기동 불필요(wrapup 판정 셋 다 최신).
-  **③ 보호 문서 4개 실증 · ④ 교차 계열 검토는 새 일감으로 떼기로 했다(스펙) — 버전 선택은 사용자, 아직 등록 안 함.**
+  ③ 보호 문서 4개 실증 · ④ 교차 계열 검토는 #1017(아이디어 버킷, 사용자 지시)로 뗐다.
 - 마일스톤 표기: 자동 로드 문서 3곳(`machines/sim-desktop.md`·`CLAUDE.md`·`AGENTS.md`)을 M8 로 고쳤다(`1fec594`, 사용자 지시). M8 전용 문서는 없고 `7-improvements.md` 를 이어 쓴다.
 - #1016 doc_sync 인벤토리 근거(분류 버그): 완료·100, T1~T4·C1~C4 충족. 커밋 4건 `9b139a4..a7d2d10` · 리포트 208.
   등록부 `inventory: true`(readme·modules) 문서는 가상 근거 `inventory:master`(운영 모듈 경로+docstring 첫 줄 · 스킬 · `@mcp.tool` 이름)를 자동으로 받는다.
@@ -64,8 +70,8 @@
 
 ## 바로 다음 작업
 
-- 이 인계 커밋·push 뒤 `AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -m master.issue_wrapup 839 --project AXCluster` 재실행.
-- #839 의 ③·④ 를 새 일감으로 등록(버전은 사용자 선택). #839·#1016 해시별·종합 리뷰는 도착하는 대로 각 일감 노트로 붙는다.
+- 이 인계 커밋·push 뒤 `AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -m master.issue_wrapup 1018 --project AXCluster` 재실행.
+- #741 다음 노드는 사용자 선택(Frontier #1019·#1020·#1021). #1018·#839·#1016 해시별·종합 리뷰는 도착하는 대로 각 일감 노트로 붙는다.
 - 웨이파인더 후속 일감(착수는 사용자 결정): #1007 `.33` 언리얼 표면(`ax-client` 도구·`infra_finish` map_hook) · #1008 Root 원격 브랜치·노드 서브 브랜치(의존 없는 노드 분산).
 - 다른 일감은 착수하지 않는다. 아래 항목은 사용자 선택 대기다.
 
