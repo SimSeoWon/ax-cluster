@@ -49,10 +49,10 @@ failure to edit source; compare paths and retain the evidence ([report 89](repor
   · **② 지금 열린 축의 지도** [`docs/12-multi-project.md`](docs/12-multi-project.md).
   둘 다 읽지 않고 코드부터 grep 하면 규칙을 코드에서 알아내려 하게 된다 — 2026-08-21 세션이
   그렇게 §11.5(데몬 재기동)를 어겼다. [주의] **항목·진행은 레드마인만** 본다.
-  **M1–M6 all closed (M6 closed 2026-10-18, user decision — one milestone ran too long);
-  M7 (개선·확장, continues M6) is open.**
-  → [`docs/milestones/7-improvements.md`](docs/milestones/7-improvements.md) —
-  numbers live in Redmine (version *마일스톤 7*; bugs → *마일스톤 7 - 버그/개선*). 개선은 실측이 앞선다 — 검색 관련은
+  **M1–M7 all closed (M6 closed 2026-10-18, user decision — one milestone ran too long;
+  M7 versions closed 2026-11-08); M8 (개선·확장, continues M7) is open.**
+  → [`docs/milestones/7-improvements.md`](docs/milestones/7-improvements.md) (M8 has no doc of its own yet) —
+  numbers live in Redmine (version *마일스톤 8 — 개선·확장*; bugs → *마일스톤 8 - 버그/개선*). 개선은 실측이 앞선다 — 검색 관련은
   **정답 집합 없이 손대지 않는다** (M2 규칙). M5 의 판정들(git-carried·한글 베이스 머지·
   중앙화 가드)은 부활 조건과 함께 닫혔다 — `5-version-reconcile.md` 「여기서 배운 것」.
   M6 「여기서 배운 것」 → `6-improvements.md`.
@@ -226,8 +226,8 @@ made AX no longer one game's tooling). Game/tool issues go where `<twin>/config.
 AX issues **and their milestone versions** belong to `ax-cluster` (user decision 2026-10-05: 107
 closed `[AX]` issues moved from `modularstage`; versions 마일스톤 6 · 버그·개선 · 아이디어 recreated in
 `ax-cluster` as ids 17·19·18, the old `modularstage` copies un-shared so name lookups resolve once).
-2026-10-18: M6(17) and its bug version (19, renamed *마일스톤 6 - 버그/개선*) closed; open now
-마일스톤 7 — 개선·확장(21) · 마일스톤 7 - 버그/개선(22) · 아이디어(18).
+2026-10-18: M6(17) and its bug version (19, renamed *마일스톤 6 - 버그/개선*) closed; 2026-11-08: M7(21·22)
+closed; open now 마일스톤 8 — 개선·확장(23) · 마일스톤 8 - 버그/개선(24) · 아이디어(18).
 Tracker `코드리뷰` only — **never create a project or tracker without the user.** Read is public; writing needs the admin API key, which is **not on disk** — pull it
 from the master's own container DB. [중요] **Never write the key value into a doc or commit.**
 → [`docs/10-references.md`](docs/10-references.md) §10.1

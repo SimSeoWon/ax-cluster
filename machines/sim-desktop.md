@@ -70,14 +70,15 @@ prerequisites before offering dispatch; an unready path needs preparation. Selec
 source boundaries and checks from registered `kind` (`unreal`/`code`/`index_only`).
 Details: [`../master/skills/distribute/SKILL.md`](../master/skills/distribute/SKILL.md).
 
-**M1–M6 all closed (M6 closed 2026-10-18, user decision). M7 (개선·확장, continues M6)
-is open — numbers live in Redmine (version *마일스톤 7*; bugs → *마일스톤 7 - 버그/개선*). A separate dateless bucket
+**M1–M7 all closed (M7 versions closed 2026-11-08). M8 (개선·확장, continues M7) is open — numbers
+live in Redmine (version *마일스톤 8 — 개선·확장*; bugs → *마일스톤 8 - 버그/개선*). M8 has no doc of its
+own yet — `7-improvements.md` still carries the goal and rules. A separate dateless bucket
 *아이디어 — 추후 검토 수집* holds not-yet-decided ideas (issue body/comments only — no wiki) — items there
 are NOT work.**
 
 | | |
 |---|---|
-| Current milestone — **read only this one** | `~/ax-cluster/docs/milestones/7-improvements.md` |
+| Current milestone — **read only this one** | `~/ax-cluster/docs/milestones/7-improvements.md` (M8 continues it; no `8-*.md` yet) |
 | Closed, kept as reference | `6-improvements.md` (「여기서 배운 것」 — 호출부 0 · 실경로 재현 · 코드가 강제) · `5-version-reconcile.md` (「여기서 배운 것」 — 전제가 죽은 선택 · 허위 인용 · 중앙화의 새 좌표) · `4-origin-reconciliation.md` (왕복이 계약 · 원전 기본값 · census 한계) · `3-work-pipeline.md` (gates/grounding 실측) · `2-twin-restoration.md` · `1-infrastructure.md` |
 
 > [주의] **Below are the traps that still bind, not the closed milestones' records.** Progress and
