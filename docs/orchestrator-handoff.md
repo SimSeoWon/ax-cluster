@@ -1,17 +1,23 @@
 # 현재 AX 작업 인수인계
 
-> 2026-11-24 — Claude 의 #1016 처리 뒤 현재 체크포인트. main 은 `a7d2d10` 까지 반영됐고 잠금은 해제됐다.
-> 이 인계 커밋 직후 `master.issue_wrapup 1016` 을 다시 실행해 배달·check 하고 결과를 Redmine 에 기록한다(배달 예정).
+> 2026-11-24 — Claude 의 #839 처리 뒤 현재 체크포인트. main 은 `c3ac616` 까지 반영됐고 잠금은 해제됐다.
+> 이 인계 커밋 직후 `master.issue_wrapup 839` 를 다시 실행해 배달·check 하고 결과를 Redmine 에 기록한다(배달 예정).
 > 결과·근거의 정본은 Redmine과 reports/다. 이 문서는 현재 작업·남은 관측·다음 행동 한 벌만 유지한다.
 
 ## 현재 상태
 
+- #839 doc_sync 운영 스냅샷(분류 신규 기능): 완료·100, T1~T4·C1~C4 충족. 커밋 4건 `5486733..c3ac616` · 리포트 209.
+  `python -m master.ops_snapshot` → `docs/snapshots/redmine-open.md`(ax-cluster 열린 일감 메타, 아이디어는 건수만) ·
+  `docs/snapshots/ops-state.md`(상주 서비스 · HEAD · 워커 배달 리비전). 손으로 돌려 커밋 · 못 닿으면 rc 1 · handoff 근거에만 등록(2→4).
+  워커 판정은 돌린 체크아웃의 HEAD 와 대조한다 — 운영 체크아웃에서 돌린다. 재기동 불필요(wrapup 판정 셋 다 최신).
+  **③ 보호 문서 4개 실증 · ④ 교차 계열 검토는 새 일감으로 떼기로 했다(스펙) — 버전 선택은 사용자, 아직 등록 안 함.**
+- 마일스톤 표기: 자동 로드 문서 3곳(`machines/sim-desktop.md`·`CLAUDE.md`·`AGENTS.md`)을 M8 로 고쳤다(`1fec594`, 사용자 지시). M8 전용 문서는 없고 `7-improvements.md` 를 이어 쓴다.
 - #1016 doc_sync 인벤토리 근거(분류 버그): 완료·100, T1~T4·C1~C4 충족. 커밋 4건 `9b139a4..a7d2d10` · 리포트 208.
   등록부 `inventory: true`(readme·modules) 문서는 가상 근거 `inventory:master`(운영 모듈 경로+docstring 첫 줄 · 스킬 · `@mcp.tool` 이름)를 자동으로 받는다.
   `--since` 새 사유 `inventory-source-changed` · plan `undocumented_count`·`undocumented` · draft 프롬프트 미언급 구획(정보만, unchanged 를 막지 않음). 전문은 여전히 등록 evidence 만.
   재기동 불필요(상주 서비스 무관, wrapup 신선도 판정 셋 다 최신). 미언급 모듈 62개(두 README 공통)를 실제로 반영하는 일은 범위 밖.
 - `.43` 배달 뒤처짐(2커밋, 6cfbdcc 문서 커밋)은 11-24 `master.client update` 로 해소 — 세 대 check OK.
-- #1009~#1016 이 11-19 인계 뒤 등록됐다(#1016 외에는 아이디어 버킷). Redmine 버전 이름은 「마일스톤 8」이다 — 자동 로드 CLAUDE.md 의 M7 서술은 낡았다(고치려면 사용자 동의 필요).
+- #1009~#1016 이 11-19 인계 뒤 등록됐다(#1016 외에는 아이디어 버킷).
 - #982 웨이파인더 맵: 완료·100(배달·스킬 링크 13/13 끝). 커밋 10건 `eabb4af..6140388` · 리포트 206.
   Root 일감 본문 `ax:map`(노드 표·다이어그램·안개) + 노드 일감 `ax:node` 표지 · 도구 `ax-projects:wayfinder_*_tool` 8종 · 스킬 `ax-wayfinder`.
 - 🔴 Redmine 에서 노드는 **모두 Root 직속**이다 — 파생 트리는 지도 「부모」 칸에만(실측: 조상-후손 blocks 422 · 열린 자식 있는 부모는 안 닫힘).
@@ -53,13 +59,13 @@
 - worktree 에는 `.venv` 가 없다 — 검사는 `/home/sim/ax-cluster/.venv/bin/python` 으로 돌린다. 마감 뒤 worktree 가 지워지므로 이어지는 명령은 운영 체크아웃에서 실행한다.
 - 인계서는 한 벌로 덮어쓰며 끝난 일감 표·목록을 쌓지 않는다(#842·#975, 이번 변경의 상한 500줄).
 - 미처리 리뷰: #929 · #930 · #931 · #934 · #829 · #942 의 R 번호 — 각 Redmine 노트. #211·#979·#980 커밋 리뷰·종합 리뷰는 도착하는 대로 각 일감 노트로 붙는다.
-- 결정·구현 대기: #326 · #935 · #839 · #741 · #738 · #941 · #968 · #978. 조건 대기: #272 · #858.
+- 결정·구현 대기: #326 · #935 · #741 · #738 · #941 · #968 · #978. 조건 대기: #272 · #858.
 - ⑦ 전진·finalize·파괴적 Git·자동 로드 문서 변경은 기존 사람 게이트를 따른다. 다른 일감은 사용자 선택을 기다린다.
 
 ## 바로 다음 작업
 
-- 이 인계 커밋·push 뒤 `AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -m master.issue_wrapup 1016 --project AXCluster` 재실행.
-- #1016 해시별·종합 리뷰는 도착하는 대로 그 일감 노트로 붙는다.
+- 이 인계 커밋·push 뒤 `AX_PROJECTS_ROOT=/home/sim/ax-cluster .venv/bin/python -m master.issue_wrapup 839 --project AXCluster` 재실행.
+- #839 의 ③·④ 를 새 일감으로 등록(버전은 사용자 선택). #839·#1016 해시별·종합 리뷰는 도착하는 대로 각 일감 노트로 붙는다.
 - 웨이파인더 후속 일감(착수는 사용자 결정): #1007 `.33` 언리얼 표면(`ax-client` 도구·`infra_finish` map_hook) · #1008 Root 원격 브랜치·노드 서브 브랜치(의존 없는 노드 분산).
 - 다른 일감은 착수하지 않는다. 아래 항목은 사용자 선택 대기다.
 
