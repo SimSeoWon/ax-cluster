@@ -6,9 +6,24 @@ README·CLAUDE·AGENTS·온보딩·인수인계서는 각 문서의 역할과 �
 ## 등록 목록
 
 기본 목록은 [document-registry.json](document-registry.json)이다. 문서별 `id`, `path`, `role`,
-`protected`, `instructions`, `evidence`를 명시한다. 자동 검색한 모든 파일을 LLM에 보내지 않는다.
+`protected`, `instructions`, `evidence`를 명시한다. **파일 전문은 등록된 `evidence`만** LLM에 보낸다.
 `evidence`는 저장소 안의 실제 파일 목록이다. 최신 검증·Redmine 결과를 반영하려면 해당 근거를
 먼저 파일로 준비해 목록에 포함해야 한다. 등록되지 않은 운영 상태를 모델이 추측해서 채우지 않는다.
+
+선택 필드 `inventory: true`(현재 `readme`·`modules`) 문서는 등록 근거 뒤에 **결정적 인벤토리**를
+자동 근거로 받는다(#1016). 가상 경로 `inventory:master`이며 파일 본문은 싣지 않는다.
+
+- 운영 모듈: `master/**/*.py` 경로 + docstring 첫 줄. `test_*`·`tests/`·`__pycache__`·비밀 경로 제외
+- 스킬: `master/skills/*/SKILL.md` 이름 + `description`
+- MCP 도구: `master/projects/mcp_server.py`·`master/task_queue/mcp_server.py`의 `@mcp.tool()` 함수 이름(AST, import 안 함)
+
+정렬된 현재 작업 트리 기준이라 같은 트리면 같은 해시이며, 적용 때 다른 근거처럼 재수집·대조된다.
+인용은 `inventory:master:줄번호`다. 문서·근거 크기 한도에 함께 센다.
+
+인벤토리 문서마다 본문이 언급하지 않는 운영 모듈을 `undocumented`로 모은다 — 루트 기준 경로·`master/`
+기준 경로·점 표기가 있거나 모듈 이름이 단어 경계로 나오면 언급이다(`__init__`·`__main__`은 패키지 이름).
+`plan` 출력에 `undocumented_count`·`undocumented`로, `draft` 프롬프트에 정보 구획으로 실린다.
+**목록 전용**이며 `unchanged`를 막지 않는다.
 
 CLAUDE.md·AGENTS.md 및 홈 진입 문서 정본은 `protected=true`가 필요하다. 홈 심볼릭링크를
 등록할 때는 저장소 안 정본을 가리키는 명시적 링크만 허용하며, 쓰기는 정본에 수행해 링크를 유지한다.
@@ -60,8 +75,11 @@ rename은 이전·이후 경로를 모두 포함하며 삭제 경로도 보존�
 ```
 
 계획·수정안 JSON과 CLI 결과의 `selection`은 확정 커밋 해시·`changed_paths`·`included`·
-`excluded`를 담는다. 포함 사유는 `registered-dependency-changed` 또는 `registry-changed`,
-제외 사유는 `explicit-id-filter` 또는 `no-registered-dependency-change`다.
+`excluded`를 담는다. 포함 사유는 `registered-dependency-changed`·`registry-changed`·
+`inventory-source-changed`, 제외 사유는 `explicit-id-filter` 또는 `no-registered-dependency-change`다.
+`inventory-source-changed`(#1016)는 인벤토리 문서에 등록 의존 변경이 없을 때, 변경 경로에 인벤토리
+원천(운영 모듈 경로 모양 · `master/skills/*/SKILL.md` · 두 `mcp_server.py`)이 있으면 붙는다. 경로 모양으로
+판정하므로 삭제된 모듈도 포함되며, 그 경로가 `matched_paths`에 실린다. 테스트 파일만 바뀌면 붙지 않는다.
 `matched_paths`로 대조 근거를 확인한다. 영향 없음으로 제외된 문서는 LLM에 보내지 않으며,
 LLM이 읽고 판단한 `decision=unchanged`와 구분한다. Git 범위 조회 실패는 오류로 보고한다.
 
@@ -70,7 +88,7 @@ LLM이 읽고 판단한 `decision=unchanged`와 구분한다. Git 범위 조회 
 이를 표시한다. 과거 `--until`을 지정해도 과거 본문을 복원하지 않는다. 미커밋 변경은 변경 경로
 탐지에 포함되지 않지만 선택된 문서의 현재 본문에는 포함될 수 있다. 삭제·이동으로 현재 등록된
 파일이 없어졌다면 기존 등록 검증에서 오류가 나므로 먼저 등록 관계를 검토해야 한다.
-이 탐지는 명시 등록 의존 관계의 후보 추천이며 의미적 영향 전체를 보장하지 않는다.
+이 탐지는 명시 등록 의존 관계와 인벤토리 원천 경로의 후보 추천이며 의미적 영향 전체를 보장하지 않는다.
 Redmine·운영 상태 수집과 보호 문서 적용은 기존의 별도 사람 결정·승인 절차를 따른다.
 
 ## 수정안과 적용
