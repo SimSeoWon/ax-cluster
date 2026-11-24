@@ -6,6 +6,7 @@
       "path": "README.md",
       "role": "프로젝트 개요·기능·사용법",
       "protected": false,
+      "inventory": true,
       "instructions": "현재 구현된 기능과 사용법을 설명한다. 진행 항목·완료율은 Redmine으로 연결하고 추정하지 않는다. 역사적 실측은 현재 상태와 구분한다.",
       "evidence": [
         "master/webui/nav.py",
@@ -22,6 +23,7 @@
       "path": "master/README.md",
       "role": "모듈 역할과 호출 계약 색인",
       "protected": false,
+      "inventory": true,
       "instructions": "실제 모듈·함수·CLI를 근거로 설명한다. 검증되지 않은 기능을 있다고 적지 않는다.",
       "evidence": [
         "master/context_search/search_log.py",
