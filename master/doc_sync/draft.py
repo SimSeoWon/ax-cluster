@@ -39,8 +39,21 @@ def _prompt(document):
         "update는 비어 있지 않은 최종 본문과 최소 하나의 제공 근거 인용이 필요하다. "
         "unchanged는 content를 생략하고 사유를 설명하라. 인용은 아래 실제 식별자만 사용하라.\n"
         + json.dumps(payload, ensure_ascii=False) + "\n근거:\n" + "\n\n".join(evidence)
+        + _undocumented_section(document)
     )
     return prompt, allowed
+
+
+def _undocumented_section(document):
+    """inventory 문서의 미언급 모듈 목록(정보). unchanged 를 막는 조건이 아니다 (#1016)."""
+    modules = document.get("undocumented")
+    if not isinstance(modules, list):
+        return ""
+    listed = "\n".join(f"- {path}" for path in modules) if modules else "(없음)"
+    return ("\n\n문서에 언급되지 않은 운영 모듈(정보): "
+            "근거 inventory:master 는 운영 모듈·스킬·MCP 도구가 현재 존재한다는 근거다. "
+            "아래 모듈은 현재 본문에 경로나 이름이 나오지 않는다. 문서 역할에 비추어 반영할지는 "
+            "판단에 따르며, 이 목록만으로 update가 필요한 것은 아니다.\n" + listed)
 
 
 def _unfence(text):

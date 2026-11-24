@@ -133,5 +133,34 @@ class ApplyTests(unittest.TestCase):
             self.apply(draft)
 
 
+class InventoryApplyTests(ApplyTests):
+    """inventory 근거를 실은 수정안의 미리보기·오래된 근거 거부 (#1016)."""
+
+    def setUp(self):
+        super().setUp()
+        (self.root / 'master').mkdir()
+        self.module = self.root / 'master' / 'alpha.py'
+        self.module.write_text('"""알파."""\n', encoding='utf-8')
+        self.entries = [dict(self.entries[0], inventory=True)]
+        self.save_registry()
+
+    def test_inventory_preview_and_stale_inventory_rejected(self):
+        draft = self.artifact()
+        doc = draft['documents'][0]
+        self.assertEqual(doc['evidence'][-1]['path'], 'inventory:master')
+        doc['citations'] = ['source.py:1', 'inventory:master:2']
+        self.assertEqual(self.apply(draft)['changed'], ['guide'])
+        self.assertEqual(self.doc.read_text(), 'old\n')
+        self.module.write_text('"""바뀐 알파."""\n', encoding='utf-8')
+        with self.assertRaisesRegex(DocSyncError, '오래되거나 변조된 근거'):
+            self.apply(draft)
+
+    def test_inventory_citation_line_range_checked(self):
+        draft = self.artifact()
+        draft['documents'][0]['citations'] = ['inventory:master:999']
+        with self.assertRaisesRegex(DocSyncError, '줄번호'):
+            self.apply(draft)
+
+
 if __name__ == '__main__':
     unittest.main()

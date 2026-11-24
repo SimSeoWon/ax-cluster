@@ -10,12 +10,20 @@ from . import LANES, DocSyncError, read_text
 from .registry import collect
 
 
+def _doc_summary(doc):
+    """문서별 요약. inventory 문서만 미언급 모듈을 덧붙인다 — 나머지는 종전 형태 그대로."""
+    item = {key: doc[key] for key in ("id", "path", "target", "role", "protected")}
+    if doc.get("inventory"):
+        undocumented = doc.get("undocumented", [])
+        item.update(inventory=True, undocumented_count=len(undocumented),
+                    undocumented=undocumented)
+    return item
+
+
 def _summary(plan):
     summary = {"schema_version": plan["schema_version"], "root": plan["root"],
             "registry": plan["registry"], "head": plan["head"],
-            "documents": [{key: doc[key] for key in
-                           ("id", "path", "target", "role", "protected")}
-                          for doc in plan["documents"]]}
+            "documents": [_doc_summary(doc) for doc in plan["documents"]]}
     if "selection" in plan:
         summary["selection"] = plan["selection"]
     return summary

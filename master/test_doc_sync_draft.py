@@ -183,5 +183,51 @@ class DraftTests(unittest.TestCase):
             self.assertEqual((record["rc"], record["lane"], record["measured"]), (1, "claude", False))
 
 
+class InventoryDraftTests(unittest.TestCase):
+    """inventory 근거·미언급 목록이 프롬프트와 인용 집합에 실린다 (#1016)."""
+
+    def inventory_plan(self):
+        data = plan()
+        doc = data["documents"][0]
+        doc["inventory"] = True
+        doc["undocumented"] = ["master/gamma.py"]
+        doc["evidence"].append({"path": "inventory:master", "sha256": "x",
+                                "text": "# 운영 모듈\nmaster/alpha.py — 알파.\n"})
+        return data
+
+    def test_prompt_carries_inventory_lines_and_undocumented_section(self):
+        seen = []
+
+        def generator(prompt, lane, timeout):
+            seen.append(prompt)
+            return response(citations=["inventory:master:2"])
+
+        result = generate(self.inventory_plan(), generator=generator)
+        self.assertIn("inventory:master:2 master/alpha.py — 알파.", seen[0])
+        self.assertIn("문서에 언급되지 않은 운영 모듈(정보)", seen[0])
+        self.assertIn("- master/gamma.py", seen[0])
+        doc = result["documents"][0]
+        self.assertEqual(doc["citations"], ["inventory:master:2"])
+        self.assertEqual(doc["undocumented"], ["master/gamma.py"])
+
+    def test_unchanged_allowed_and_out_of_range_inventory_citation_rejected(self):
+        result = generate(self.inventory_plan(), generator=lambda *args: response(
+            decision="unchanged", citations=[]))
+        self.assertEqual(result["documents"][0]["decision"], "unchanged")
+        with self.assertRaises(DocSyncError):
+            generate(self.inventory_plan(), generator=lambda *args: response(
+                citations=["inventory:master:3"]))
+
+    def test_plain_document_prompt_has_no_section(self):
+        seen = []
+        generate(plan(), generator=lambda prompt, *args: seen.append(prompt) or response())
+        self.assertNotIn("문서에 언급되지 않은 운영 모듈", seen[0])
+        data = self.inventory_plan()
+        data["documents"][0]["undocumented"] = []
+        generate(data, generator=lambda prompt, *args: seen.append(prompt) or response())
+        self.assertIn("문서에 언급되지 않은 운영 모듈(정보)", seen[1])
+        self.assertIn("(없음)", seen[1])
+
+
 if __name__ == "__main__":
     unittest.main()

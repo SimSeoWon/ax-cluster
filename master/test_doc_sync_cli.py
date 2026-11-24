@@ -158,5 +158,42 @@ class CliTests(unittest.TestCase):
         self.assertEqual((self.root / "README.md").read_text(), "old\n")
 
 
+class InventoryCliTests(CliTests):
+    """plan 출력의 inventory·undocumented 필드 (#1016)."""
+
+    def setUp(self):
+        super().setUp()
+        (self.root / "master").mkdir()
+        (self.root / "master" / "alpha.py").write_text('"""알파."""\n', encoding="utf-8")
+        (self.root / "master" / "beta.py").write_text('"""베타."""\n', encoding="utf-8")
+        (self.root / "README.md").write_text("alpha 설명\n", encoding="utf-8")
+        (self.root / "plain.md").write_text("plain\n", encoding="utf-8")
+        self.registry.write_text(json.dumps({"version": 1, "documents": [
+            {"id": "readme", "path": "README.md", "role": "overview", "protected": False,
+             "inventory": True, "instructions": "근거만 사용", "evidence": ["source.py"]},
+            {"id": "plain", "path": "plain.md", "role": "plain", "protected": False,
+             "instructions": "근거만 사용", "evidence": ["source.py"]}]}), encoding="utf-8")
+
+    def test_plan_shows_inventory_fields_only_for_inventory_documents(self):
+        rc, output, error = self.run_cli("plan")
+        self.assertEqual(rc, 0)
+        self.assertIn("[doc-sync] 인벤토리", error)
+        readme, plain = json.loads(output)["documents"]
+        self.assertEqual((readme["inventory"], readme["undocumented_count"], readme["undocumented"]),
+                         (True, 1, ["master/beta.py"]))
+        self.assertEqual(sorted(plain), ["id", "path", "protected", "role", "target"])
+
+    # 부모의 단일 문서 전제 검사는 이 등록부에서 다시 돌리지 않는다.
+    test_plan_is_read_only_and_summarizes_registered_targets = None
+    test_range_options_and_selection_survive_plan_and_draft = None
+    test_until_requires_since_before_model_call = None
+    test_draft_saves_artifact_but_does_not_apply = None
+    test_draft_passes_claude_lane = None
+    test_draft_parse_failure_saves_raw_response = None
+    test_apply_requires_explicit_ids_and_is_repeatable = None
+    test_existing_output_is_refused_before_model_call = None
+    test_invalid_artifact_does_not_write = None
+
+
 if __name__ == "__main__":
     unittest.main()
