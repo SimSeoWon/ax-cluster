@@ -22,7 +22,8 @@
    **활성 프로젝트로 떨어뜨리지 않는다.** [주의] 마스터(`local`)는 등록 작업장이 아니라서
    `MASTER_CHECKOUTS` 로 따로 잇는다(사용자 결정 2026-10-04: cwd `~/ax-cluster` → AXCluster).
    그 밖의 마스터 세션(`~` 등)은 `_unassigned` 다. task_id 는 cwd 가 `<체크아웃>/.ax/work/<task_id>` 아래일 때만,
-   work_id 는 그 task_id 를 큐 파일에서 찾았을 때만 채운다.
+   work_id 는 그 task_id 를 큐 파일에서 찾았을 때만 채운다. issue_id 는 cwd 가 등록 체크아웃의
+   `.ax-issues/<N>`(마스터 일감 worktree, `#907`) 아래일 때만 N 으로 채운다(`#1020`, `issue_of`).
 [중요] **원격에는 아무것도 쓰지 않는다** — 목록(크기·mtime)을 읽고 `tar` 스트림으로 읽기만 한다.
    지우지도 옮기지도 않는다(`.33` 은 사람의 메인 PC — 손님 규칙: 읽기 전용). 원격 삭제는
    **구현하지 않는다.** 원격에서 사라진 파일(30일 정리)의 사본과 색인 줄은 보존 기간까지 남는다.
@@ -383,7 +384,7 @@ def _store(store: Path, host: str, s: Session, origin: str, meta: dict | None = 
     tmp.write_text(json.dumps({"host": host, "tool": s.tool, "session_id": s.session_id,
                                "origin": origin, "collected_at": _now(),
                                "project": meta.get("project"), "work_id": meta.get("work_id"),
-                               "task_id": meta.get("task_id"),
+                               "task_id": meta.get("task_id"), "issue_id": meta.get("issue_id"),
                                "records": s.records}, ensure_ascii=False), encoding="utf-8")
     tmp.replace(out)                       # 원자적 교체 — 반쯤 쓴 파일을 남기지 않는다
     return out
@@ -391,8 +392,14 @@ def _store(store: Path, host: str, s: Session, origin: str, meta: dict | None = 
 
 # ---------------------------------------------------------------- 귀속 (cwd → 프로젝트)
 
+_REPEATED_SEP = re.compile(r"/{2,}")
+_AX_ISSUE_DIR = re.compile(r"(?:^|/)\.ax-issues/(\d+)(?:/|$)")
+
+
 def _norm(path: str, windows: bool) -> str:
-    p = (path or "").replace("\\", "/").rstrip("/")
+    """구분자를 `/` 로 · 연속 구분자를 하나로 접는다(`#1020` — Windows 이중 역슬래시) · 끝 `/` 제거.
+    윈도우 경로는 대소문자를 접는다."""
+    p = _REPEATED_SEP.sub("/", (path or "").replace("\\", "/")).rstrip("/")
     return p.casefold() if windows else p
 
 
@@ -467,11 +474,30 @@ def attribute(cwd: str, host: str, shops: dict) -> tuple[str | None, str | None]
         p = _norm(checkout, windows)
         if not p or not (c == p or c.startswith(p + "/")):
             continue
-        rest = cwd.replace("\\", "/").rstrip("/")[len(p):].lstrip("/").split("/")
+        rest = _norm(cwd, False)[len(p):].lstrip("/").split("/")
         task = rest[2] if len(rest) >= 3 and _norm(rest[0], windows) == ".ax" \
             and _norm(rest[1], windows) == "work" and rest[2] else None
         return project, task
     return None, None
+
+
+def issue_of(cwd: str, host: str, shops: dict) -> int | None:
+    """`<체크아웃>/.ax-issues/<N>` 아래 세션의 일감 번호 N (`#1020`). 그 host 의 등록 체크아웃 밖이면 None.
+
+    [중요] 추정하지 않는다 — 귀속(`attribute`)과 같은 체크아웃 판정 안에서만 번호를 읽는다.
+    `.ax-issues` 는 마스터 일감 worktree 다(`#907`). `attribute` 의 (project, task) 반환은 그대로 둔다.
+    """
+    windows = HOSTS.get(host, ("", False))[1]
+    c = _norm(cwd, windows)
+    if not c:
+        return None
+    for checkout, _project in shops.get(host, ()):
+        p = _norm(checkout, windows)
+        if not p or not (c == p or c.startswith(p + "/")):
+            continue
+        m = _AX_ISSUE_DIR.search(c[len(p):])
+        return int(m.group(1)) if m else None
+    return None
 
 
 def _queue_root(queue_root: Path | None) -> Path:
@@ -707,6 +733,7 @@ def _place(raw_root: Path, store: Path, host: str, tool: str, origin: str, tmp_p
     cwd = session_cwd(tmp_path, tool)
     project, task = attribute(cwd, host, shops)
     work = work_of(task, queue_root) if task else None
+    issue = issue_of(cwd, host, shops)
     rel = _raw_rel(project, host, tool, origin)
     dest = raw_root / rel
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -715,7 +742,8 @@ def _place(raw_root: Path, store: Path, host: str, tool: str, origin: str, tmp_p
     if old and old.get("raw") and old["raw"] != rel:
         # 귀속이 바뀌었다 — 마스터 쪽 옛 사본만 치운다(원격은 건드리지 않는다)
         (raw_root / old["raw"]).unlink(missing_ok=True)
-    entry = {"project": project, "work_id": work, "task_id": task, "host": host, "tool": tool,
+    entry = {"project": project, "work_id": work, "task_id": task, "issue_id": issue,
+             "host": host, "tool": tool,
              "origin": origin, "raw": rel, "cwd": cwd, "size": size, "mtime": mtime,
              "sha256": sha, "collected_at": _now()}
     index[_key(host, tool, origin)] = entry

@@ -209,6 +209,31 @@ class CollectTests(unittest.TestCase):
         self.assertEqual(su.attribute("/home/sim/ax-cluster", "local", SHOPS), (None, None))
         self.assertEqual(su.attribute("", "192.168.0.33", SHOPS), (None, None))
 
+    def test_issue_of_rules_1020(self):
+        # #1020: 등록 체크아웃 안의 .ax-issues/<N> 만 번호를 낸다 — 추정 없음
+        self.assertEqual(su.issue_of("/home/sim/trunk/NS/.ax-issues/982", "192.168.0.43", SHOPS), 982)
+        self.assertEqual(su.issue_of("/home/sim/trunk/NS/.ax-issues/982/master/x", "192.168.0.43",
+                                     SHOPS), 982)
+        self.assertEqual(su.issue_of("C:\\Trunk\\AXCluster\\.AX-ISSUES\\42\\src", "192.168.0.33",
+                                     SHOPS), 42)                     # 윈도우: 대소문자·역슬래시
+        self.assertIsNone(su.issue_of("/home/sim/trunk/NS/.ax/work/ff00ee11", "192.168.0.43", SHOPS))
+        self.assertIsNone(su.issue_of("/home/sim/trunk/NS/.ax-issues/abc", "192.168.0.43", SHOPS))
+        self.assertIsNone(su.issue_of("/home/sim/trunk/NS/.ax-issues-old/7", "192.168.0.43", SHOPS))
+        self.assertIsNone(su.issue_of("/tmp/x/.ax-issues/5", "192.168.0.43", SHOPS))  # 체크아웃 밖
+        self.assertIsNone(su.issue_of("/home/sim/trunk/NS/.ax-issues/5", "192.168.0.33", SHOPS))
+        self.assertIsNone(su.issue_of("", "192.168.0.43", SHOPS))
+        # attribute 반환은 그대로 (project, task)
+        self.assertEqual(su.attribute("/home/sim/trunk/NS/.ax-issues/982", "192.168.0.43", SHOPS),
+                         ("NS", None))
+
+    def test_norm_collapses_repeated_separators_1020(self):
+        self.assertEqual(su._norm("C:\\\\trunk\\\\AXCluster\\\\", True), "c:/trunk/axcluster")
+        self.assertEqual(su._norm("/home//sim///x/", False), "/home/sim/x")
+        self.assertEqual(su.attribute("C:\\\\trunk\\\\AXCluster\\\\.ax\\\\work\\\\abcd1234",
+                                      "192.168.0.33", SHOPS), ("AXCluster", "abcd1234"))
+        self.assertEqual(su.issue_of("C:\\\\trunk\\\\AXCluster\\\\.ax-issues\\\\9", "192.168.0.33",
+                                     SHOPS), 9)
+
     def test_master_checkout_maps_to_axcluster(self):
         # 사용자 결정 2026-10-04: 마스터 세션은 cwd 가 ~/ax-cluster 면 AXCluster
         home = str(Path.home())
@@ -293,6 +318,22 @@ class CollectTests(unittest.TestCase):
         self.assertEqual(out["moved"], 1)
         self.assertTrue((self.raw / "New/192.168.0.43/codex" / o).is_file())
         self.assertFalse((self.raw / "_unassigned/192.168.0.43/codex" / o).exists())
+
+    def test_issue_id_in_index_snapshot_and_reparse_1020(self):
+        o = "sessions/i.jsonl"
+        self.remote.put("codex", o, _blob(_codex_lines("/home/sim/trunk/NS/.ax-issues/982/m")), 1)
+        self.run_collect("192.168.0.43")
+        e = su.load_index(self.raw)[su._key("192.168.0.43", "codex", o)]
+        self.assertEqual((e["project"], e["task_id"], e["issue_id"]), ("NS", None, 982))
+        snap = json.loads((self.store / "192.168.0.43/codex/sessions__i.json").read_text(encoding="utf-8"))
+        self.assertEqual(snap["issue_id"], 982)
+        # 옛 색인 줄(issue_id 키 없음)을 reparse 가 채운다
+        index = su.load_index(self.raw)
+        del index[su._key("192.168.0.43", "codex", o)]["issue_id"]
+        su.save_index(self.raw, index)
+        su.reparse(raw_root=self.raw, store=self.store, queue_root=self.queue, shops=SHOPS)
+        e = su.load_index(self.raw)[su._key("192.168.0.43", "codex", o)]
+        self.assertEqual(e["issue_id"], 982)
 
     def test_remote_commands_are_read_only(self):
         remote = su._PS_LIST + "\n" + su._SH_LIST + "\n" + inspect.getsource(su.fetch_remote)
