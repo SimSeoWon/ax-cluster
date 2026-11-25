@@ -57,6 +57,9 @@ class AgyResult:
     actual_model: str = ""
     model_source: str = ""
     attempts: list = field(default_factory=list)
+    # `#1021` — 대화 id(`~/.gemini/antigravity-cli/conversations/<id>.db` = 수집 사본 `brain/<id>`).
+    #    `layer2_verify.run_agy` 가 호출 뒤 BRIEF 표지로 찾는다. 못 찾으면 빈 값.
+    conversation_id: str = ""
 
 
 def default_state_path() -> Path:

@@ -194,6 +194,7 @@ def call_agy(prompt: str, *, timeout: int = TIMEOUT, model: str = "",
     u.requested_model = result.requested_model
     u.actual_model = result.actual_model
     u.model_source = result.model_source
+    u.session_id = getattr(result, "conversation_id", "") or ""     # `#1021` — 최종 대화 id
     attempts = [a for a in result.attempts if "rc" in a]
     if len(attempts) > 1:
         parsed_attempts = [parse_agy_json(a["raw"]) if a.get("raw") else None for a in attempts]

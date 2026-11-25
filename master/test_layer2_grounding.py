@@ -1,6 +1,7 @@
 """#696: 기준 커밋의 선언과 완전한 검증 입력. 외부 모델/네트워크 없이 검사한다."""
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import tempfile
@@ -479,6 +480,81 @@ class AgyHeartbeatTests(unittest.TestCase):
         with self.fake_execute(self.AM.AgyResult(raw="x", rc=0), delay=0.1), f, r:
             L2.call_agy_why("p", timeout=5, heartbeat=lambda m: None)
         self.assertNotIn("agy-heartbeat", [t.name for t in threading.enumerate()])
+
+
+class AgyConversationIdTests(unittest.TestCase):
+    """`#1021` — run_agy 가 끝나면 대화 id 를 찾아 사용량의 session_id 로 넘긴다(하트비트 무관)."""
+
+    ENV = json.dumps({"response": "본문", "usage": {"input_tokens": 3, "output_tokens": 4}})
+
+    def setUp(self):
+        from master import agy_models as AM, agy_trace as AT
+        self.AM, self.AT = AM, AT
+        self.emitted, self.markers = [], []
+        for st in (patch.object(L2.shutil, "which", return_value="/fake/agy"),
+                   patch.object(L2, "_emit_usage",
+                                side_effect=lambda lane, u, **kw: self.emitted.append(u)),
+                   patch.object(L2, "_LOGF", lambda m: None)):
+            st.start()
+            self.addCleanup(st.stop)
+
+    def run_with(self, result, find):
+        seen = {}
+
+        def run(exe, build, runner, **kw):
+            seen["cmd"] = build("gemini-x", "")
+            return result
+        with patch.object(self.AM, "execute", side_effect=run), \
+                patch.object(self.AT, "find_conversation", side_effect=find):
+            out = L2.call_agy_why("p", timeout=5)
+        return out, seen
+
+    def attempt(self, **kw):
+        return {"rc": 0, "raw": self.ENV, "seconds": 1, "requested_model": "gemini-x", **kw}
+
+    def test_found_id_goes_to_usage_and_marker_is_brief(self):
+        def find(marker, *, since):
+            self.markers.append((marker, since))
+            return Path("/fake/conversations/9f1c-agy.db")
+        res = self.AM.AgyResult(raw=self.ENV, rc=0, attempts=[self.attempt()])
+        (out, why), seen = self.run_with(res, find)
+        self.assertEqual((out, why), ("본문", ""))
+        self.assertEqual(res.conversation_id, "9f1c-agy")
+        self.assertEqual([u.session_id for u in self.emitted], ["9f1c-agy"])
+        brief = seen["cmd"][seen["cmd"].index("--add-dir") + 1]
+        self.assertEqual([m for m, _ in self.markers], [brief])
+        self.assertLess(self.markers[0][1], time.time())
+
+    def test_not_found_and_error_leave_empty_and_call_succeeds(self):
+        for find in (lambda marker, *, since: None,
+                     lambda marker, *, since: (_ for _ in ()).throw(OSError("db locked"))):
+            self.emitted.clear()
+            res = self.AM.AgyResult(raw=self.ENV, rc=0, attempts=[self.attempt()])
+            (out, why), _ = self.run_with(res, find)
+            self.assertEqual((out, why), ("본문", ""))
+            self.assertEqual(res.conversation_id, "")
+            self.assertEqual([u.session_id for u in self.emitted], [""])
+
+    def test_fallback_only_final_attempt_gets_id(self):
+        res = self.AM.AgyResult(raw=self.ENV, rc=0, attempts=[
+            self.attempt(rc=1, why="429"), {"requested_model": "skipped"}, self.attempt()])
+        self.run_with(res, lambda marker, *, since: Path("/x/final-conv.db"))
+        self.assertEqual([u.session_id for u in self.emitted], ["", "final-conv"])
+
+    def test_no_attempt_means_no_lookup(self):
+        res = self.AM.AgyResult(why="정책 거절")
+        (out, why), _ = self.run_with(res, lambda marker, *, since: self.fail("조회하면 안 된다"))
+        self.assertEqual((out, why), (None, "정책 거절"))
+        self.assertEqual(res.conversation_id, "")
+
+    def test_lane_call_agy_carries_id(self):
+        from master.work import usage as U
+        res = self.AM.AgyResult(raw=self.ENV, rc=0, attempts=[self.attempt()],
+                                conversation_id="lane-conv")
+        with patch.object(L2, "run_agy", return_value=res):
+            call = U.call_agy("p", timeout=5)
+        self.assertEqual((call.text, call.usage.session_id), ("본문", "lane-conv"))
+        self.assertEqual(U.meta_from_usage(call.usage)["session_id"], "lane-conv")
 
 
 if __name__ == "__main__":

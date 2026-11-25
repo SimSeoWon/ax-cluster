@@ -332,6 +332,7 @@ def run_agy(prompt: str, *, timeout: int = TIMEOUT_SEC,
         return agy_models.AgyResult(why=MISSING_EXE)
     if workdir is not None:
         _log(f"[agy] 작업 디렉터리 {workdir} (읽기 전용 강제 없음)")
+    started = time.time()
     with agy_brief(prompt) as brief_dir:
         def build(selected, log_path):
             return agy_cmd(exe, brief_dir, workdir, model=selected, log_file=log_path)
@@ -350,7 +351,23 @@ def run_agy(prompt: str, *, timeout: int = TIMEOUT_SEC,
                                              fallback_models=fallback_models)
         if result.attempts and not result.actual_model:
             _log(f"[agy] 실제 모델 미상 · 요청={result.requested_model}; canonical catalog만 확인")
+        if result.attempts:
+            result.conversation_id = _conversation_id(brief_dir, started)
         return result
+
+
+def _conversation_id(brief_dir: str, started: float) -> str:
+    """`#1021` — 이번 호출의 대화 id. BRIEF 디렉터리 표지로 `agy_trace.find_conversation`(`#888`)이 찾는다.
+
+    폴백으로 대화가 여럿이면 가장 최근(최종 시도) 것이다. 못 찾거나 읽기 오류면 빈 값 — 호출을 죽이지
+    않고 지어내지 않는다. 파일 mtime 이 초 미만을 자를 수 있어 1초 앞당겨 본다(하트비트와 같다).
+    """
+    try:
+        path = _agy_trace_mod().find_conversation(brief_dir, since=started - 1)
+    except Exception as e:                                   # noqa: BLE001
+        _log(f"[agy] 대화 id 조회 실패 — {type(e).__name__}")
+        return ""
+    return path.stem if path is not None else ""
 
 
 def call_agy_why(prompt: str, *, timeout: int = TIMEOUT_SEC,
@@ -372,14 +389,16 @@ def call_agy_why(prompt: str, *, timeout: int = TIMEOUT_SEC,
     hb = {} if heartbeat is None else {"heartbeat": heartbeat, "heartbeat_note": heartbeat_note}
     result = run_agy(prompt, timeout=timeout, workdir=workdir, model=model,
                      allow_argon=allow_argon, fallback_models=fallback_models, **hb)
-    for attempt in result.attempts:
-        if "rc" not in attempt:
-            continue
+    ran = [a for a in result.attempts if "rc" in a]
+    for attempt in ran:
         _text, u, _why, _model = _unwrap_agy(attempt.get("raw") or "")
         if u is not None:
             u.requested_model = attempt.get("requested_model", "")
             u.actual_model = attempt.get("actual_model", "")
             u.model_source = attempt.get("model_source", "")
+            if attempt is ran[-1]:
+                # `#1021` — 대화 id 는 최종 시도의 것 하나다(폴백 중간 시도는 비운다)
+                u.session_id = getattr(result, "conversation_id", "") or ""
         _emit_usage("agy", u, seconds=attempt.get("seconds", 0),
                     rc=attempt["rc"], model=attempt.get("actual_model", ""))
     if result.why:
