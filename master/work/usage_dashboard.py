@@ -80,6 +80,13 @@ RAG: AXCluster/context/master/work/usage.md 및 session_usage.md.
   — dispatch 소스에서 `session_id` 가 있는 기록만, 최근 `_CONDUCTOR_LIMIT` 건. metrics 는
   `session_usage.conductor_metrics`, 사본은 `find_rollout`(raw 루트 = 세션 스냅샷 루트의 형제 `raw`).
   사본이 없으면 collected=False·metrics=None(화면 「미수집」 — 0 이 아니다). 경로는 싣지 않는다.
+
+🔴 `#1022` 미분류 원인별 — 추가 키만:
+- unassigned:[{cause,sessions,calls,measured_calls,unmeasured_calls,failed_calls,tokens}] —
+  프로젝트가 없는 세션 레코드만, 원인 순서는 `UNASSIGNED_CAUSES`(#1018 원인 7개 + unknown).
+  원인은 수집이 스냅샷에 적은 `unassigned_cause`(session_usage `_place`), 칸이 없으면 unknown
+  (보존 기간이 지나 원본·cwd 가 없는 옛 스냅샷). sessions 는 스냅샷 파일 수. 기간·계열 필터를 따른다.
+  project 필터가 있거나 source=dispatch 면 [] 다. 원인 이름과 숫자만 — 경로·cwd 는 싣지 않는다.
 """
 from __future__ import annotations
 
@@ -92,7 +99,11 @@ from zoneinfo import ZoneInfo
 
 from ..projects.config import Registry
 from ..task_queue.persistence import _read_md, _tasks_dir
+from .session_provenance import CAUSES as _CAUSES
 from .session_usage import DEFAULT_STORE, conductor_metrics, find_rollout, same_usage
+
+# `#1022` — 미분류 원인 순서: #1018 원인 7개 + 원인 칸 없는 옛 스냅샷(보존 기간이 지나 원본·cwd 가 없다)
+UNASSIGNED_CAUSES = (*_CAUSES, "unknown")
 from .usage import input_split
 
 
@@ -394,6 +405,11 @@ def _read_sessions(root: Path, warnings: list[str], errors: dict):
                             _warn(warnings, "같은 응답 id 인데 값이 다른 세션 기록이 있습니다(둘 다 셉니다).")
                     if tool == "agy":
                         record["_snapshot"] = str(path)   # `#949` — all 에서 파견 기록과 짝을 맞추는 단위
+                    if not owner:
+                        # `#1022` — 미분류 원인(수집이 적은 값, 없으면 unknown)과 세션 단위(스냅샷 파일)
+                        cause = data.get("unassigned_cause")
+                        record["_cause"] = cause if cause in UNASSIGNED_CAUSES else "unknown"
+                        record["_session_file"] = str(path)
                     yield owner, record
                 except (ValueError, TypeError) as exc:
                     _error("세션 레코드", exc)
@@ -507,6 +523,7 @@ def build_report(project: str = "", period: str = "daily", start: str = "",
               "duplicate_records": 0, "duplicate_conflicts": 0,
               "input_uncached": 0, "input_cached": 0}
     conductor: list = []                     # `#726` — session_id 가 있는 파견 기록
+    unassigned: dict[str, dict] = {}         # `#1022` — 원인 → {sessions(파일 집합), 계수}
     buckets: dict[tuple[str, str], dict] = {}
     models: dict[tuple[str, str], dict] = {}
     issues: dict[int, dict] = {}
@@ -543,6 +560,10 @@ def build_report(project: str = "", period: str = "daily", start: str = "",
         _add_split(model_row, rec)
         if source == "dispatch" and rec.get("session_id"):
             conductor.append((origin, rec))
+        if not project and not origin and rec.get("_cause"):
+            row = unassigned.setdefault(rec["_cause"], {"files": set(), **_empty_counts()})
+            row["files"].add(rec["_session_file"])
+            _add_counts(row, rec)
         if source != "dispatch":
             continue
         link = links.get(rec["work_id"])
@@ -571,4 +592,8 @@ def build_report(project: str = "", period: str = "daily", start: str = "",
             "totals": totals, "buckets": [buckets[k] for k in sorted(buckets)],
             "models": [models[k] for k in sorted(models)],
             "issues": sorted(issues.values(), key=lambda row: row["issue_id"]),
-            "conductor_sessions": _conductor_rows(conductor, store.parent / "raw", warnings)}
+            "conductor_sessions": _conductor_rows(conductor, store.parent / "raw", warnings),
+            # `#1022` — 미분류 세션 원인별(session·all · 프로젝트 필터 없을 때만). 원인 이름과 숫자만 싣는다
+            "unassigned": [{"cause": cause, "sessions": len(unassigned[cause]["files"]),
+                            **{k: v for k, v in unassigned[cause].items() if k != "files"}}
+                           for cause in UNASSIGNED_CAUSES if cause in unassigned]}

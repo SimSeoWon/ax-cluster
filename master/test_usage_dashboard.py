@@ -68,14 +68,17 @@ class UsageDashboardTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-    def add_session(self, host, tool, records, *, project=None, name="sample"):
+    def add_session(self, host, tool, records, *, project=None, name="sample", cause=None):
         path = self.session_store / host / tool / f"{name}.json"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({
+        data = {
             "host": host, "tool": tool, "session_id": name,
             "origin": f"{name}.jsonl", "collected_at": "2026-10-15T00:00:00",
             "project": project, "records": records,
-        }), encoding="utf-8")
+        }
+        if cause is not None:
+            data["unassigned_cause"] = cause          # `#1022` — 옛 스냅샷엔 이 칸이 없다
+        path.write_text(json.dumps(data), encoding="utf-8")
 
     def test_calendar_buckets_and_timezone(self):
         self.add_call("Alpha", "2026-10-03T14:59:00Z", input_tokens=1, output_tokens=0)
@@ -287,6 +290,35 @@ class UsageDashboardTests(unittest.TestCase):
         dispatch = self.report(source="dispatch", project="Alpha",
                                start="2026-10-10", end="2026-10-10")
         self.assertEqual(dispatch["totals"]["tokens"], 1001)       # 두 소스는 합산하지 않는다
+
+    def test_unassigned_by_cause_1022(self):
+        # #1022: 미분류 세션만 원인별 · 세션 수는 스냅샷 파일 수 · 칸 없는 옛 스냅샷은 unknown
+        codex = {"ts": "2026-10-10T01:00:00Z", "model": "gpt-5-codex", "input": 10, "output": 5}
+        claude = {"ts": "2026-10-10T02:00:00Z", "model": "claude-sonnet-4-5", "input": 1, "output": 1}
+        self.add_session("local", "codex", [codex, codex], name="lane1", cause="tmp_ax")
+        self.add_session("local", "codex", [codex], name="lane2", cause="tmp_ax")
+        self.add_session("local", "claude", [claude], name="home", cause="master_home")
+        self.add_session("local", "claude", [claude], name="old")                  # 원인 칸 없음
+        self.add_session("local", "codex", [codex], name="weird", cause="../etc")  # 모르는 값
+        self.add_session("192.168.0.2", "codex", [codex], project="Alpha", name="a", cause="tmp_ax")
+        every = self.report(source="session", start="2026-10-10", end="2026-10-10")
+        rows = {r["cause"]: r for r in every["unassigned"]}
+        self.assertEqual([r["cause"] for r in every["unassigned"]], ["master_home", "tmp_ax", "unknown"])
+        self.assertEqual((rows["tmp_ax"]["sessions"], rows["tmp_ax"]["calls"], rows["tmp_ax"]["tokens"]),
+                         (2, 3, 45))
+        self.assertEqual((rows["unknown"]["sessions"], rows["unknown"]["calls"]), (2, 2))
+        self.assertEqual(sum(r["calls"] for r in every["unassigned"]), every["totals"]["calls"] - 1)
+        self.assertNotIn("../etc", json.dumps(every["unassigned"]))
+        # 계열·기간 필터를 따른다
+        only_claude = self.report(source="session", family="claude", start="2026-10-10", end="2026-10-10")
+        self.assertEqual({r["cause"] for r in only_claude["unassigned"]}, {"master_home", "unknown"})
+        self.assertEqual(self.report(source="session", start="2026-10-11", end="2026-10-11")["unassigned"], [])
+        # 프로젝트 필터·dispatch 는 빈 목록, all 은 세션 계열이 든다
+        self.assertEqual(self.report(source="session", project="Alpha", start="2026-10-10",
+                                     end="2026-10-10")["unassigned"], [])
+        self.assertEqual(self.report(source="dispatch", start="2026-10-10", end="2026-10-10")["unassigned"], [])
+        both = self.report(source="all", start="2026-10-10", end="2026-10-10")
+        self.assertEqual({r["cause"] for r in both["unassigned"]}, {"master_home", "tmp_ax", "unknown"})
 
     def test_all_source_takes_one_origin_per_family(self):
         # 사용자 결정 2026-10-04: 모두 보기 = claude·codex 는 세션, 그 밖은 작업 실행 기록
