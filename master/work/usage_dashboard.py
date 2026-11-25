@@ -26,8 +26,9 @@ UI 조각 master/webui/usage_page.py, 라우트 조각 master/webui/app.py가 �
 - dispatch: 등록 프로젝트별 usage_log.jsonl, work_id로 큐 _request.md의 project,
   title, redmine_issue_id와 연결. 활성·보관 일감 모두 고려. 연결 실패는 unlinked_calls.
 - session: 기존 session_usage.DEFAULT_STORE 숫자 스냅샷만 읽는다. SSH/수집 실행 금지.
-  일감 귀속이 없으므로 issues=[]. 스냅샷의 project(세션 cwd 가 등록 작업장 체크아웃 아래일 때만,
-  2026-10-04 원본 복사와 함께)로 project 필터를 적용한다 — project 없는 스냅샷은 전체 보기에만 든다.
+  일감 귀속이 없으므로 issues=[]. 스냅샷의 project(확정 장부 usage_log session_id 가 앞서고 —
+  `#1019` — 없으면 세션 cwd 가 등록 작업장 체크아웃 아래일 때)로 project 필터를 적용한다 —
+  project 없는 스냅샷은 전체 보기에만 든다.
 - projects_root/queue_root/session_store는 서버·검사 주입 전용. 웹 쿼리로 경로를 받지 않는다.
   기본 Registry/AX_TASK_QUEUE_ROOT(또는 ~/ax-state)/DEFAULT_STORE를 사용한다.
 - 등록되지 않은 project, 잘못된 period/family/source는 ValueError. project=""는 전체.
@@ -496,9 +497,10 @@ def build_report(project: str = "", period: str = "daily", start: str = "",
         _warn(warnings, "모두 보기: Claude·Codex는 대화 세션 기록, 그 밖의 계열은 작업 실행 기록에서 셉니다"
                         "(같은 호출을 두 번 세지 않습니다). 일감별 표는 작업 실행 기록에서 봅니다.")
     if source in ("session", "all"):
-        _warn(warnings, "세션 사용량에는 일감 귀속이 없습니다. 프로젝트는 세션 작업 경로로만 정합니다.")
+        _warn(warnings, "세션 사용량에는 일감 귀속이 없습니다. 프로젝트는 확정 장부(session_id), "
+                        "없으면 작업 경로로 정합니다.")
         if project:
-            _warn(warnings, "프로젝트 필터는 작업 경로가 등록 작업장에 속한 세션만 포함합니다.")
+            _warn(warnings, "프로젝트 필터는 장부나 작업 경로로 그 프로젝트에 귀속된 세션만 포함합니다.")
     totals = {**_empty_counts(), "input_tokens": 0, "output_tokens": 0,
               "cache_read": 0, "cache_create": 0, "reasoning_tokens": 0,
               "issues": 0, "unlinked_calls": 0, "invalid_records": 0, "read_errors": 0,
