@@ -126,7 +126,23 @@ class ProvenanceTests(unittest.TestCase):
         self.assertEqual(r["work_or_task_set"], 0)
         self.assertEqual(r["assigned_ax_issues"], 1)
         self.assertEqual(r["assigned_ax_issue_numbers"], {"942": 1})
+        self.assertEqual(r["assigned_ax_issues_with_issue_id"], 0)     # 기준선: 옛 색인 줄
         self.assertEqual(r["assigned_ax_work"], 1)
+
+    def test_assigned_ax_issues_with_issue_id_1020(self):
+        # #1020: 색인 줄의 issue_id 가 경로의 N 과 같을 때만 센다 — 다른 값은 채움이 아니다
+        idx = self.raw / "index.jsonl"
+        rows = [json.loads(line) for line in idx.read_text(encoding="utf-8").splitlines()]
+        for row in rows:
+            if "/.ax-issues/942" in (row.get("cwd") or ""):
+                row["issue_id"] = 942
+        idx.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+        self.assertEqual(self.measure()["raw_index"]["assigned_ax_issues_with_issue_id"], 1)
+        for row in rows:
+            if row.get("issue_id") == 942:
+                row["issue_id"] = 7
+        idx.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+        self.assertEqual(self.measure()["raw_index"]["assigned_ax_issues_with_issue_id"], 0)
 
     def test_classify_order_and_rules(self):
         c = sp.classify

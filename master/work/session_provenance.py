@@ -128,7 +128,7 @@ def raw_index_section(index: dict, shops: dict, home: str) -> tuple[dict, dict]:
     by_host: dict = {}
     issues: dict = {}
     labels: dict = {}
-    stamped = assigned_issues = assigned_work = 0
+    stamped = assigned_issues = assigned_issue_filled = assigned_work = 0
     assigned_issue_numbers: dict = {}
     unassigned = 0
     for key in sorted(index):
@@ -145,6 +145,8 @@ def raw_index_section(index: dict, shops: dict, home: str) -> tuple[dict, dict]:
             if m:
                 assigned_issues += 1
                 _bump(assigned_issue_numbers, int(m.group(1)))
+                if e.get("issue_id") == int(m.group(1)):       # #1020 — 색인에 번호가 실렸나
+                    assigned_issue_filled += 1
             if _AX_WORK.search(flat):
                 assigned_work += 1
             continue
@@ -168,6 +170,7 @@ def raw_index_section(index: dict, shops: dict, home: str) -> tuple[dict, dict]:
         "ax_issue_numbers": {str(k): v for k, v in sorted(issues.items())},
         "work_or_task_set": stamped,
         "assigned_ax_issues": assigned_issues,
+        "assigned_ax_issues_with_issue_id": assigned_issue_filled,
         "assigned_ax_issue_numbers": {str(k): v for k, v in sorted(assigned_issue_numbers.items())},
         "assigned_ax_work": assigned_work,
     }
@@ -358,6 +361,8 @@ def render(rep: dict) -> str:
     out.append(f"  귀속됐지만 .ax-issues/<N> 아래: {r['assigned_ax_issues']}"
                + (" (" + ", ".join(f"#{k}={v}" for k, v in r["assigned_ax_issue_numbers"].items())
                   + ")" if r["assigned_ax_issue_numbers"] else ""))
+    out.append(f"  그중 issue_id 채워짐(#1020): {r['assigned_ax_issues_with_issue_id']}"
+               f"/{r['assigned_ax_issues']}")
     out.append(f"  귀속됐지만 .ax/work/<task> 아래: {r['assigned_ax_work']}")
     out += ["", f"[2] 스냅샷 토큰 ({s['label']}) — 파일 {s['files']} · 못 읽음 {s['unreadable']} · "
                 f"잘못된 레코드 {s['invalid_records']} · 스냅샷 없는 색인 항목 {s['index_without_snapshot']}"]
