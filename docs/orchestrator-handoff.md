@@ -1,7 +1,7 @@
 # 현재 AX 작업 인수인계
 
-> 2026-11-26 — #1019 마감 직후 체크포인트(Claude). 이번 세션: #741 지도 안개 2줄 해소 · 노드 #1020·#1019 완료.
-> main 은 이 인계 커밋까지 · 일감 잠금 없음 · `ax-projects` 재기동됨(wrapup 판정). 이 커밋 직후 `issue_wrapup 1019` 재실행으로 배달한다(배달 예정).
+> 2026-11-26 — #1022 마감 직후 체크포인트(Claude). 이번 세션: #741 지도 안개 2줄 해소 · 노드 #1020·#1019·#1022 완료.
+> main 은 이 인계 커밋까지 · 일감 잠금 없음 · `ax-projects` 재기동됨(wrapup 판정). 이 커밋 직후 `issue_wrapup 1022` 재실행으로 배달한다(배달 예정).
 > 결과·근거의 정본은 Redmine과 reports/다. 이 문서는 현재 작업·남은 관측·다음 행동 한 벌만 유지한다.
 
 ## 현재 상태
@@ -16,7 +16,10 @@
   노드 #1019 완료·100 — 확정 장부 우선 귀속: `session_usage.load_ledger`(usage_log session_id) → 장부 프로젝트가 cwd 보다 앞서고
   work·task 는 dispatch 행에서만(결정 A — 다른 출처 task_id 칸은 버림) · 색인 `attributed_by`·`ledger_source` · /usage 경고 문구 갱신.
   운영 reparse: 장부 974 · 이동 967 · 미귀속 2,618→1,651 · tmp_ax 983→16. 커밋 `506346b`·`cc12321`·`09e2fd2` · 리포트 212.
-  **Frontier = #1021 · #1022**(순서는 사용자 선택). #1023 은 #1021·#1022 대기. 남은 tmp_ax 16 은 장부에 session_id 없는 호출(#1021 몫).
+  노드 #1022 완료·100 — 수집이 미분류 원인(`unassigned_cause`, classify 한 벌)을 스냅샷에 싣고 `build_report` 추가 키 `unassigned` ·
+  /usage 「미분류 세션 — 원인별」 표 · 세션 안내문 #1019 반영(#1019 파급 측정 누락분). reparse 뒤 9/1~11/26: empty_cwd 1,514 ·
+  master_home 110(36억) · tmp_ax 12 · other 4 · unknown 1,269(65억, 원본 없음). 커밋 `e047a80`·`ca3fc84`·`c8894b3`·`a96eb46` · 리포트 213.
+  **Frontier = #1021**(agy 대화 id 확인이 첫 항목). #1023 은 #1021 대기. 남은 tmp_ax 는 장부에 session_id 없는 호출(#1021 몫).
   관찰: 노드 일감에도 `wayfinder_ask` 가 붙는다(노드 표지 있으면 묻지 않는 쪽이 맞다 — 후속 후보, 아직 일감 미등록).
   Root #741 은 「신규」로 열려 있다(지도일 뿐 잠금 없음). 노드 #1019~#1023 은 마일스톤 8 — 개선·확장.
 - #839 doc_sync 운영 스냅샷(분류 신규 기능): 완료·100, T1~T4·C1~C4 충족. 커밋 4건 `5486733..c3ac616` · 리포트 209.
@@ -75,10 +78,10 @@
 ## 바로 다음 작업
 
 - 세션 시작: `ax-handoff` → `ax-projects:wayfinder_status_tool(741)` 로 Frontier·대조(마지막 확인 차이 0) 재확인.
-- #741 다음 노드는 사용자 선택(Frontier #1021 스탬프 누락 방지 — agy 대화 id 확인이 첫 항목, agy 1회 = 공용 쿼터 · #1022 /usage 미분류 원인별 표시).
+- #741 다음 노드는 #1021 스탬프 누락 방지(유일한 Frontier) — agy 대화 id 확인이 첫 항목, agy 1회 = 공용 쿼터. 착수는 사용자 결정.
   노드 착수는 `wayfinder_claim_tool` → `ax-plan` 흐름. 측정 기준선 재실행: `AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.work.session_provenance`.
   `master.sweep`·`workshop_paths()` 측정은 `AX_PROJECTS_ROOT` 없이 돌리면 실패한다(test_sandbox 포함 — 회귀 아님, 리포트 211 §4).
-- #1019·#1020·#1018·#839·#1016 해시별·종합 리뷰는 도착하는 대로 각 일감 노트로 붙는다.
+- #1022·#1019·#1020·#1018·#839·#1016 해시별·종합 리뷰는 도착하는 대로 각 일감 노트로 붙는다.
 - 웨이파인더 후속 일감(착수는 사용자 결정): #1007 `.33` 언리얼 표면(`ax-client` 도구·`infra_finish` map_hook) · #1008 Root 원격 브랜치·노드 서브 브랜치(의존 없는 노드 분산).
 - 다른 일감은 착수하지 않는다. 아래 항목은 사용자 선택 대기다.
 
