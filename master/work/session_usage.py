@@ -24,6 +24,10 @@
    그 밖의 마스터 세션(`~` 등)은 `_unassigned` 다. task_id 는 cwd 가 `<체크아웃>/.ax/work/<task_id>` 아래일 때만,
    work_id 는 그 task_id 를 큐 파일에서 찾았을 때만 채운다. issue_id 는 cwd 가 등록 체크아웃의
    `.ax-issues/<N>`(마스터 일감 worktree, `#907`) 아래일 때만 N 으로 채운다(`#1020`, `issue_of`).
+   🔴 `#1019` — **확정 장부가 cwd 보다 앞선다.** 등록 프로젝트의 `usage_log.jsonl`(호출이 직접 남긴
+   session_id)에 이 세션 id 가 있으면 그 프로젝트로 귀속한다(`attributed_by: ledger`, 출처는
+   `ledger_source`). work·task 는 장부의 `dispatch` 행에서만 — 다른 출처의 task_id 칸은 큐 task 가 아니다.
+   장부 프로젝트가 갈리면 추정하지 않고 cwd 로 둔다(`load_ledger`·`ledger_attribution`).
 [중요] **원격에는 아무것도 쓰지 않는다** — 목록(크기·mtime)을 읽고 `tar` 스트림으로 읽기만 한다.
    지우지도 옮기지도 않는다(`.33` 은 사람의 메인 PC — 손님 규칙: 읽기 전용). 원격 삭제는
    **구현하지 않는다.** 원격에서 사라진 파일(30일 정리)의 사본과 색인 줄은 보존 기간까지 남는다.
@@ -500,6 +504,90 @@ def issue_of(cwd: str, host: str, shops: dict) -> int | None:
     return None
 
 
+# ---------------------------------------------------------------- 확정 장부 (usage_log session_id → 귀속)
+
+_UUID_TAIL = re.compile(r"([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-"
+                        r"[0-9A-Fa-f]{12})$")
+
+
+def origin_sid(tool: str, origin: str) -> str:
+    """origin(원래 상대 경로)에서 세션 id — codex 는 파일 이름 끝 uuid · claude 는 파일 이름 ·
+    agy 는 `brain/<대화 id>/`. 못 읽으면 빈 문자열(`session_provenance.origin_session_id` 와 같은 규칙)."""
+    parts = [p for p in str(origin).replace("\\", "/").split("/") if p]
+    if not parts:
+        return ""
+    if tool == "agy":
+        return parts[1] if len(parts) >= 3 and parts[0] == "brain" else ""
+    stem = parts[-1].removesuffix(".jsonl")
+    if tool == "codex":
+        m = _UUID_TAIL.search(stem)
+        return m.group(1) if m else ""
+    return stem if tool == "claude" else ""
+
+
+def load_ledger(projects_root: Path | None = None) -> dict[str, list[dict]]:
+    """등록 프로젝트의 `usage_log.jsonl` → {session_id: [{project, source, work_id, task_id}]} (`#1019`).
+
+    호출이 **직접 남긴** 확정값이다(`usage.py`) — 추정이 아니다. 레지스트리를 못 읽으면 예외를 올린다
+    (`workshop_paths` 와 같은 fail-closed). 한 프로젝트 파일을 못 읽으면 그 프로젝트만 건너뛰고 경고한다 —
+    장부에 없는 세션은 종전대로 cwd 로 귀속되므로 잃는 것은 그 프로젝트의 우선 적용뿐이다.
+    """
+    from ..projects.config import Registry
+    reg = Registry.load(projects_root)
+    out: dict[str, list[dict]] = {}
+    rows = bad = 0
+    for name in reg.names:
+        path = Path(reg.root) / name / "usage_log.jsonl"
+        if not path.is_file():
+            continue
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError as e:
+            _log(f"[주의] 장부 읽기 실패 {name}: {type(e).__name__} — 그 프로젝트는 cwd 귀속만")
+            continue
+        for line in lines:
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                bad += 1
+                continue
+            sid = rec.get("session_id") if isinstance(rec, dict) else None
+            if not (isinstance(sid, str) and sid.strip()):
+                continue
+            rows += 1
+            out.setdefault(sid.strip(), []).append({
+                "project": name, "source": str(rec.get("source") or ""),
+                "work_id": str(rec.get("work_id") or ""), "task_id": str(rec.get("task_id") or "")})
+    _log(f"확정 장부 — 세션 {len(out)} · 행 {rows} · 깨진 줄 {bad}")
+    return out
+
+
+def ledger_attribution(sids, ledger: dict) -> dict | None:
+    """세션 id 후보들 → 장부 귀속 {project, work_id, task_id, source} 또는 None(장부 없음·상충).
+
+    - 프로젝트가 둘 이상으로 갈리면 **추정하지 않고** None(cwd 폴백)이고 로그를 남긴다.
+    - work_id·task_id 는 `source == "dispatch"` 행에서만 — 다른 출처의 task_id 칸은 큐 task 가 아니다
+      (`P10`·`readme`·모듈 경로 — 사용자 결정 A). dispatch 행끼리 (work, task) 가 갈리면 둘 다 비운다.
+    - `source` 는 행들의 출처를 정렬해 `,` 로 잇는다.
+    """
+    rows = [r for sid in sorted({s for s in sids if s}) for r in ledger.get(sid, ())]
+    if not rows:
+        return None
+    projects = {r["project"] for r in rows}
+    if len(projects) > 1:
+        _log(f"[주의] 장부 프로젝트 상충 {len(projects)}개 — cwd 귀속으로 둔다")
+        return None
+    pairs = {(r["work_id"], r["task_id"]) for r in rows
+             if r["source"] == "dispatch" and r["task_id"]}
+    work, task = next(iter(pairs)) if len(pairs) == 1 else ("", "")
+    if len(pairs) > 1:
+        _log(f"[주의] 장부 dispatch work/task 상충 {len(pairs)}개 — 비운다")
+    return {"project": projects.pop(), "work_id": work or None, "task_id": task or None,
+            "source": ",".join(sorted({r["source"] for r in rows if r["source"]}))}
+
+
 def _queue_root(queue_root: Path | None) -> Path:
     return Path(queue_root) if queue_root is not None else \
         Path(os.environ.get("AX_TASK_QUEUE_ROOT") or Path.home() / "ax-state")
@@ -718,9 +806,14 @@ def _safe_origin(origin: str) -> bool:
     return bool(origin) and not origin.startswith("/") and ".." not in parts and ":" not in origin
 
 
-def _snapshot(raw: Path, store: Path, host: str, tool: str, origin: str, meta: dict) -> int:
+def _parse(raw: Path, tool: str):
     with raw.open("rb") as fh:
-        s = PARSERS[tool](fh.read().decode("utf-8", "replace").splitlines())
+        return PARSERS[tool](fh.read().decode("utf-8", "replace").splitlines())
+
+
+def _snapshot(raw: Path, store: Path, host: str, tool: str, origin: str, meta: dict,
+              s=None) -> int:
+    s = s if s is not None else _parse(raw, tool)
     if s is None:
         return 0
     _store(store, host, s, origin, meta)
@@ -728,12 +821,25 @@ def _snapshot(raw: Path, store: Path, host: str, tool: str, origin: str, meta: d
 
 
 def _place(raw_root: Path, store: Path, host: str, tool: str, origin: str, tmp_path: Path,
-           shops: dict, queue_root, index: dict, size: int, mtime: int, sha: str) -> dict:
-    """받은 사본의 귀속을 정해 제자리에 두고 색인·스냅샷을 갱신한다."""
+           shops: dict, queue_root, index: dict, size: int, mtime: int, sha: str,
+           ledger: dict | None = None) -> dict:
+    """받은 사본의 귀속을 정해 제자리에 두고 색인·스냅샷을 갱신한다.
+
+    `#1019` — 확정 장부(`load_ledger`)에 이 세션 id(origin·스냅샷)가 있으면 그 프로젝트가 cwd 귀속보다
+    앞선다(`attributed_by: ledger`). work·task 는 장부의 dispatch 행에서만 온다. 없거나 상충이면 cwd 다.
+    """
     cwd = session_cwd(tmp_path, tool)
     project, task = attribute(cwd, host, shops)
     work = work_of(task, queue_root) if task else None
     issue = issue_of(cwd, host, shops)
+    s = _parse(tmp_path, tool)
+    hit = ledger_attribution({origin_sid(tool, origin), getattr(s, "session_id", "") or ""},
+                             ledger or {})
+    by, source = "cwd", None
+    if hit:
+        by, source, project = "ledger", hit["source"] or None, hit["project"]
+        if hit["task_id"]:
+            task, work = hit["task_id"], hit["work_id"]
     rel = _raw_rel(project, host, tool, origin)
     dest = raw_root / rel
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -743,11 +849,12 @@ def _place(raw_root: Path, store: Path, host: str, tool: str, origin: str, tmp_p
         # 귀속이 바뀌었다 — 마스터 쪽 옛 사본만 치운다(원격은 건드리지 않는다)
         (raw_root / old["raw"]).unlink(missing_ok=True)
     entry = {"project": project, "work_id": work, "task_id": task, "issue_id": issue,
+             "attributed_by": by, "ledger_source": source,
              "host": host, "tool": tool,
              "origin": origin, "raw": rel, "cwd": cwd, "size": size, "mtime": mtime,
              "sha256": sha, "collected_at": _now()}
     index[_key(host, tool, origin)] = entry
-    _snapshot(dest, store, host, tool, origin, entry)
+    _snapshot(dest, store, host, tool, origin, entry, s)
     return entry
 
 
@@ -787,7 +894,7 @@ def _stream(host: str, tool: str, want: dict, fetcher):
 def collect(host: str, *, raw_root: Path = DEFAULT_RAW, store: Path = DEFAULT_STORE,
             projects_root: Path | None = None, queue_root: Path | None = None,
             shops: dict | None = None, lister=None, fetcher=None,
-            cutoff: float | None = None) -> dict:
+            cutoff: float | None = None, ledger: dict | None = None) -> dict:
     """한 기계의 두 도구 세션 원본을 증분 복사한다. 반환: 도구별 통계.
 
     `lister(host)->[Entry]` · `fetcher(host, tool, origins)->iter((origin, fh, mtime))` 는
@@ -798,6 +905,9 @@ def collect(host: str, *, raw_root: Path = DEFAULT_RAW, store: Path = DEFAULT_ST
     raw_root, store = Path(raw_root), Path(store)
     if shops is None:
         shops = workshop_paths(projects_root)
+        if ledger is None:
+            ledger = load_ledger(projects_root)          # `#1019` — 레지스트리를 읽는 자리에서 함께
+    ledger = ledger or {}
     stats = {tool: {"listed": 0, "skipped": 0, "old": 0, "copied": 0, "bytes": 0, "errors": 0,
                     "error": "", "seconds": 0.0} for tool, _, _ in SOURCES}
     t0 = time.monotonic()
@@ -854,7 +964,7 @@ def collect(host: str, *, raw_root: Path = DEFAULT_RAW, store: Path = DEFAULT_ST
                         # [주의] 크기는 **실제 받은 바이트**, mtime 은 **목록 값** — 받는 사이 자랐으면
                         #    다음 목록과 어긋나 한 번 더 받는다(손해는 재전송뿐, 누락은 없다).
                         _place(raw_root, store, host, tool, origin, tmp_path, shops, queue_root,
-                               index, n, listed_mtime, sha)
+                               index, n, listed_mtime, sha, ledger)
                         got.add(origin)
                         st["copied"] += 1
                         st["bytes"] += n
@@ -962,13 +1072,16 @@ def retention_days(projects_root: Path | None = None) -> int | None:
 
 def reparse(*, raw_root: Path = DEFAULT_RAW, store: Path = DEFAULT_STORE,
             projects_root: Path | None = None, queue_root: Path | None = None,
-            shops: dict | None = None) -> dict:
-    """전송 없이 색인의 모든 사본을 다시 귀속하고 스냅샷을 다시 만든다(파서·레지스트리 변경 뒤)."""
+            shops: dict | None = None, ledger: dict | None = None) -> dict:
+    """전송 없이 색인의 모든 사본을 다시 귀속하고 스냅샷을 다시 만든다(파서·레지스트리·장부 변경 뒤)."""
     raw_root, store = Path(raw_root), Path(store)
     if shops is None:
         shops = workshop_paths(projects_root)
+        if ledger is None:
+            ledger = load_ledger(projects_root)          # `#1019`
+    ledger = ledger or {}
     index = load_index(raw_root)
-    n = moved = missing = 0
+    n = moved = missing = by_ledger = 0
     for key, e in list(index.items()):
         src = raw_root / e.get("raw", "")
         if not src.is_file():
@@ -978,13 +1091,14 @@ def reparse(*, raw_root: Path = DEFAULT_RAW, store: Path = DEFAULT_STORE,
         tmp.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, tmp)
         new = _place(raw_root, store, e["host"], e["tool"], e["origin"], tmp, shops, queue_root,
-                     index, e["size"], e["mtime"], e["sha256"])
+                     index, e["size"], e["mtime"], e["sha256"], ledger)
         moved += int(new["raw"] != e.get("raw"))
+        by_ledger += int(new.get("attributed_by") == "ledger")
         n += 1
     shutil.rmtree(raw_root / ".staging" / "reparse", ignore_errors=True)
     save_index(raw_root, index)
-    _log(f"재귀속 — 사본 {n} · 이동 {moved} · 사본 없음 {missing}")
-    return {"files": n, "moved": moved, "missing": missing}
+    _log(f"재귀속 — 사본 {n} · 이동 {moved} · 사본 없음 {missing} · 장부 귀속 {by_ledger}")
+    return {"files": n, "moved": moved, "missing": missing, "by_ledger": by_ledger}
 
 
 # ---------------------------------------------------------------- 잠금·화면 열기 트리거
@@ -1017,15 +1131,18 @@ def collect_all(hosts, *, raw_root: Path = DEFAULT_RAW, store: Path = DEFAULT_ST
     fd = _acquire(raw_root)
     try:
         shops = inject.pop("shops", None)
+        ledger = inject.pop("ledger", None)
         if shops is None:
             shops = workshop_paths(projects_root)
+            if ledger is None:
+                ledger = load_ledger(projects_root)       # `#1019`
         days = retention_days(projects_root) if retention is _FROM_REGISTRY else retention
         cutoff = None
         if days is not None:
             prune_raw(raw_root, days, now=now)
             cutoff = _cutoff_of(days, now)
         res = {h: collect(h, raw_root=raw_root, store=store, queue_root=queue_root,
-                          shops=shops, cutoff=cutoff, **inject) for h in hosts}
+                          shops=shops, cutoff=cutoff, ledger=ledger or {}, **inject) for h in hosts}
         if cutoff is not None:
             old = sum(v.get("old", 0) for r in res.values() for v in r.values())
             _log(f"보존 기간 지난 목록 항목 {old}개는 받지 않았다(기준 {days}일)")

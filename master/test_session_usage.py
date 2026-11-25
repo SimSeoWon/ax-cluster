@@ -319,6 +319,77 @@ class CollectTests(unittest.TestCase):
         self.assertTrue((self.raw / "New/192.168.0.43/codex" / o).is_file())
         self.assertFalse((self.raw / "_unassigned/192.168.0.43/codex" / o).exists())
 
+    UUID = "01a14890-1340-7000-8000-00000000abcd"
+
+    def _ledger(self, *rows):
+        return {self.UUID: [dict(zip(("project", "source", "work_id", "task_id"), r)) for r in rows]}
+
+    def _collect_ledger(self, cwd, ledger, host="local", shops=None):
+        o = f"sessions/2026/11/25/rollout-2026-11-25T00-00-00-{self.UUID}.jsonl"
+        self.remote.put("codex", o, _blob(_codex_lines(cwd)), 1)
+        su.collect(host, raw_root=self.raw, store=self.store, queue_root=self.queue,
+                   shops=shops or SHOPS, lister=self.remote.lister, fetcher=self.remote.fetcher,
+                   ledger=ledger)
+        return o, su.load_index(self.raw)[su._key(host, "codex", o)]
+
+    def test_ledger_beats_cwd_non_dispatch_1019(self):
+        # #1019: /tmp/ax-* 레인 호출 — cwd 로는 미귀속, 장부가 프로젝트를 준다 · task 칸(P10)은 버린다(결정 A)
+        o, e = self._collect_ledger("/tmp/ax-lane-x", self._ledger(("AXCluster", "synth", "", "P10")))
+        self.assertEqual((e["project"], e["work_id"], e["task_id"]), ("AXCluster", None, None))
+        self.assertEqual((e["attributed_by"], e["ledger_source"]), ("ledger", "synth"))
+        self.assertTrue((self.raw / "AXCluster/local/codex" / o).is_file())
+        snap = next(self.store.rglob("*.json"))
+        self.assertEqual(json.loads(snap.read_text(encoding="utf-8"))["project"], "AXCluster")
+
+    def test_ledger_dispatch_fills_work_and_task_1019(self):
+        _, e = self._collect_ledger("/home/sim/trunk/NS", self._ledger(
+            ("NS", "dispatch", "20261009_w", "21a0637d"), ("NS", "synth", "", "readme")),
+            host="192.168.0.43")
+        self.assertEqual((e["project"], e["work_id"], e["task_id"]), ("NS", "20261009_w", "21a0637d"))
+        self.assertEqual((e["attributed_by"], e["ledger_source"]), ("ledger", "dispatch,synth"))
+
+    def test_ledger_conflict_falls_back_to_cwd_1019(self):
+        _, e = self._collect_ledger("/home/sim/trunk/NS/.ax/work/abcd1234", self._ledger(
+            ("NS", "dispatch", "w1", "t1"), ("AXCluster", "synth", "", "P1")), host="192.168.0.43")
+        self.assertEqual((e["project"], e["task_id"], e["attributed_by"]), ("NS", "abcd1234", "cwd"))
+        self.assertIsNone(e["ledger_source"])
+        # dispatch work/task 가 둘로 갈리면 프로젝트만
+        self.assertEqual(su.ledger_attribution({self.UUID}, self._ledger(
+            ("NS", "dispatch", "w1", "t1"), ("NS", "dispatch", "w2", "t2"))),
+            {"project": "NS", "work_id": None, "task_id": None, "source": "dispatch"})
+
+    def test_no_ledger_keeps_cwd_rules_1019(self):
+        _, e = self._collect_ledger("/tmp/ax-lane-x", {})
+        self.assertEqual((e["project"], e["attributed_by"], e["ledger_source"]), (None, "cwd", None))
+        self.assertIsNone(su.ledger_attribution({"", "other"}, self._ledger(("NS", "synth", "", ""))))
+
+    def test_origin_sid_and_load_ledger_1019(self):
+        self.assertEqual(su.origin_sid("codex", f"sessions/2026/x/rollout-a-{self.UUID}.jsonl"), self.UUID)
+        self.assertEqual(su.origin_sid("claude", "projects/-home-sim/abc.jsonl"), "abc")
+        self.assertEqual(su.origin_sid("agy", "brain/conv1/.system_generated/logs/transcript.jsonl"),
+                         "conv1")
+        self.assertEqual(su.origin_sid("codex", "sessions/no-uuid.jsonl"), "")
+        root = self.root / "projects"
+        (root / "NS").mkdir(parents=True)
+        (root / "NS" / "usage_log.jsonl").write_text(
+            json.dumps({"session_id": " s1 ", "source": "dispatch", "work_id": "w", "task_id": "t"})
+            + "\n{broken\n" + json.dumps({"source": "synth"}) + "\n", encoding="utf-8")
+        reg = Mock(names=["NS", "AXCluster"], root=root)       # AXCluster 는 장부 파일 없음
+        with patch("master.projects.config.Registry.load", return_value=reg):
+            led = su.load_ledger()
+        self.assertEqual(led, {"s1": [{"project": "NS", "source": "dispatch", "work_id": "w",
+                                       "task_id": "t"}]})
+
+    def test_reparse_applies_ledger_1019(self):
+        o, e = self._collect_ledger("/tmp/ax-lane-x", {})
+        self.assertEqual(e["attributed_by"], "cwd")
+        out = su.reparse(raw_root=self.raw, store=self.store, queue_root=self.queue, shops=SHOPS,
+                         ledger=self._ledger(("AXCluster", "doc-sync", "", "readme")))
+        self.assertEqual((out["moved"], out["by_ledger"]), (1, 1))
+        e = su.load_index(self.raw)[su._key("local", "codex", o)]
+        self.assertEqual((e["project"], e["ledger_source"]), ("AXCluster", "doc-sync"))
+        self.assertFalse((self.raw / "_unassigned/local/codex" / o).exists())
+
     def test_issue_id_in_index_snapshot_and_reparse_1020(self):
         o = "sessions/i.jsonl"
         self.remote.put("codex", o, _blob(_codex_lines("/home/sim/trunk/NS/.ax-issues/982/m")), 1)
