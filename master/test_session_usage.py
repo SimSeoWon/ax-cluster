@@ -380,6 +380,24 @@ class CollectTests(unittest.TestCase):
         self.assertEqual(led, {"s1": [{"project": "NS", "source": "dispatch", "work_id": "w",
                                        "task_id": "t"}]})
 
+    def test_unassigned_cause_recorded_1022(self):
+        # #1022: 미분류면 원인(session_provenance.classify 한 벌), 귀속이면 null — 색인·스냅샷 둘 다
+        o, e = self._collect_ledger("/tmp/ax-lane-x", {})
+        self.assertEqual((e["project"], e["unassigned_cause"]), (None, "tmp_ax"))
+        snap = json.loads(next(self.store.rglob("*.json")).read_text(encoding="utf-8"))
+        self.assertEqual(snap["unassigned_cause"], "tmp_ax")
+        self.assertNotIn("/tmp", json.dumps({k: v for k, v in snap.items() if k != "records"}
+                                            ).replace('"origin"', ""))     # 원인 이름만, 경로 없음
+        # 같은 세션이 장부로 귀속되면 원인은 null
+        su.reparse(raw_root=self.raw, store=self.store, queue_root=self.queue, shops=SHOPS,
+                   ledger=self._ledger(("AXCluster", "synth", "", "")))
+        e = su.load_index(self.raw)[su._key("local", "codex", o)]
+        self.assertEqual((e["project"], e["unassigned_cause"]), ("AXCluster", None))
+        _, e2 = self._collect_ledger("", {}, host="192.168.0.43")
+        self.assertEqual(e2["unassigned_cause"], "empty_cwd")
+        _, e3 = self._collect_ledger("/home/sim/trunk/NS/x", {}, host="192.168.0.43")
+        self.assertIsNone(e3["unassigned_cause"])
+
     def test_reparse_applies_ledger_1019(self):
         o, e = self._collect_ledger("/tmp/ax-lane-x", {})
         self.assertEqual(e["attributed_by"], "cwd")

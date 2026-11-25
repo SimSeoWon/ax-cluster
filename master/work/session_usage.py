@@ -389,6 +389,7 @@ def _store(store: Path, host: str, s: Session, origin: str, meta: dict | None = 
                                "origin": origin, "collected_at": _now(),
                                "project": meta.get("project"), "work_id": meta.get("work_id"),
                                "task_id": meta.get("task_id"), "issue_id": meta.get("issue_id"),
+                               "unassigned_cause": meta.get("unassigned_cause"),
                                "records": s.records}, ensure_ascii=False), encoding="utf-8")
     tmp.replace(out)                       # 원자적 교체 — 반쯤 쓴 파일을 남기지 않는다
     return out
@@ -820,6 +821,15 @@ def _snapshot(raw: Path, store: Path, host: str, tool: str, origin: str, meta: d
     return len(s.records)
 
 
+def _unassigned_cause(cwd: str, host: str, shops: dict) -> str:
+    """미분류 세션의 원인 (`#1022`) — 규칙은 `session_provenance.classify` 한 벌이다(#1018).
+
+    지연 import: `session_provenance` 가 이 모듈을 import 한다. 원인 이름만 돌려준다(경로·cwd 는 싣지 않는다 —
+    `/api/v1/usage` 는 무로그인이다)."""
+    from .session_provenance import classify
+    return classify(cwd, host, shops, str(Path.home()))[0]
+
+
 def _place(raw_root: Path, store: Path, host: str, tool: str, origin: str, tmp_path: Path,
            shops: dict, queue_root, index: dict, size: int, mtime: int, sha: str,
            ledger: dict | None = None) -> dict:
@@ -840,6 +850,7 @@ def _place(raw_root: Path, store: Path, host: str, tool: str, origin: str, tmp_p
         by, source, project = "ledger", hit["source"] or None, hit["project"]
         if hit["task_id"]:
             task, work = hit["task_id"], hit["work_id"]
+    cause = None if project else _unassigned_cause(cwd, host, shops)
     rel = _raw_rel(project, host, tool, origin)
     dest = raw_root / rel
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -849,7 +860,7 @@ def _place(raw_root: Path, store: Path, host: str, tool: str, origin: str, tmp_p
         # 귀속이 바뀌었다 — 마스터 쪽 옛 사본만 치운다(원격은 건드리지 않는다)
         (raw_root / old["raw"]).unlink(missing_ok=True)
     entry = {"project": project, "work_id": work, "task_id": task, "issue_id": issue,
-             "attributed_by": by, "ledger_source": source,
+             "attributed_by": by, "ledger_source": source, "unassigned_cause": cause,
              "host": host, "tool": tool,
              "origin": origin, "raw": rel, "cwd": cwd, "size": size, "mtime": mtime,
              "sha256": sha, "collected_at": _now()}
