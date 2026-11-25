@@ -161,6 +161,11 @@ def parse_claude_json(stdout: str) -> tuple | None:
                         and not isinstance(cost, bool) else None))
     if not u.known:
         u.note = "usage 키 없음"
+    # `#1021` — 봉투의 세션 id(`~/.claude/projects/**/<id>.jsonl` 의 파일 이름과 같다). 기록 칸은
+    #    `record` 가 만든다(`#726`) — 없으면 비워 둔다, 지어내지 않는다.
+    sid = d.get("session_id")
+    if isinstance(sid, str) and sid.strip():
+        u.session_id = sid.strip()
     # `modelUsage` 는 모델별 dict 다 — 보조 모델이 섞이면 출력이 가장 많은 쪽을 쓴다
     model = ""
     mu = d.get("modelUsage")

@@ -57,6 +57,24 @@ class Envelope(unittest.TestCase):
             if src:
                 self.assertEqual(meta["source"], src)
 
+    def test_claude_envelope_session_id_1021(self):
+        # #1021: 봉투의 session_id 가 Usage → record 의 session_id 칸까지 간다 · 없으면 칸 없음
+        env = {"type": "result", "result": "본문", "session_id": " 5f0c-claude ",
+               "usage": {"input_tokens": 3, "output_tokens": 4}}
+        text, u, _err, _model = U.parse_claude_json(json.dumps(env))
+        self.assertEqual((text, u.session_id), ("본문", "5f0c-claude"))
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d) / "usage_log.jsonl"
+            U.record(log, U.meta_from_usage(u), lane="claude")
+            rec = json.loads(log.read_text(encoding="utf-8"))
+            self.assertEqual(rec["session_id"], "5f0c-claude")
+            env.pop("session_id")
+            _t, u2, _e, _m = U.parse_claude_json(json.dumps(env))
+            self.assertEqual(u2.session_id, "")
+            U.record(log, U.meta_from_usage(u2), lane="claude")
+            last = json.loads(log.read_text(encoding="utf-8").splitlines()[-1])
+            self.assertNotIn("session_id", last)
+
     def test_unknown_values_never_become_zero(self):
         """🔴 `None` 을 0 으로 적으면 「안 썼다」가 된다 — 키 자체를 만들지 않는다."""
         meta = U.meta_from_usage(U.Usage(lane="agy", note="형식 불명"))
