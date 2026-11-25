@@ -273,10 +273,29 @@ def record(issue_id, step: str, result: str, user_answer: str, *, category: str 
            "category_doc": cats[cat].as_dict()["doc"], "guide": cats[cat].body, "log": log}
     # `#982` 트리거 A — 분류 문서 머리말 `wayfinder_ask` 가 참인 분류(신규 기능)만 확정 직후 묻는다.
     # [중요] 자동 경로로 모델에게 가는 글이라 명령형이 아니라 사실·선택지로 쓴다(명령형은 주입으로 거부된다).
+    # `#1024` — 이미 지도의 노드인 일감(`ax:node` 표지)은 Root 가 될 수 없어 묻지 않는다. 표지가 깨졌으면
+    #    노드로 만들려던 흔적이라 역시 묻지 않고 경고만 남긴다(깨진 노드를 Root 로 바꾸는 쪽이 더 위험하다).
+    #    판독은 `map_block.parse_node` 한 벌 — 위에서 이미 읽은 본문을 쓴다(추가 조회 없음).
     if step == CLASSIFY and cats[cat].wayfinder_ask:
-        out["wayfinder_ask"] = dict(WAYFINDER_ASK)
-        log.append(f"[interview] #{issue_id} 분류 {cat} — 웨이파인더 진행 여부 질문 첨부(wayfinder_ask)")
+        skip = _node_skip(got.get("description") or "")
+        if skip:
+            log.append(f"[interview] #{issue_id} {skip}")
+        else:
+            out["wayfinder_ask"] = dict(WAYFINDER_ASK)
+            log.append(f"[interview] #{issue_id} 분류 {cat} — 웨이파인더 진행 여부 질문 첨부(wayfinder_ask)")
     return out
+
+
+def _node_skip(body: str) -> str:
+    """노드 일감이면 웨이파인더 질문을 생략하는 사유 한 줄, 아니면 빈 문자열 (`#1024`)."""
+    from master import map_block as MB
+    try:
+        marker = MB.parse_node(body)
+    except MB.MapError as e:
+        return f"[주의] 노드 표지 형식 오류 — 웨이파인더 질문 생략({e})"
+    if marker is None:
+        return ""
+    return f"노드 일감(Root #{marker.root}) — 웨이파인더 질문 생략"
 
 
 def write_spec(issue_id, content: str, user_answer: str, *, getter=None, updater=None, cats=None) -> dict:

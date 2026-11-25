@@ -174,6 +174,19 @@ def test_wayfinder_ask_on_feature_classify_982():
         out = _rec(FakeIssue(), "classify", cat)
         check(f"#982 {cat} 분류 → 묻지 않는다", "wayfinder_ask" not in out
               and not any("wayfinder_ask" in ln for ln in out["log"]), str(out))
+    # `#1024` 재현 세 경우 — 노드 일감·깨진 표지는 묻지 않고(로그), 일반 일감은 그대로 묻는다
+    node = "## 문제\n\n본문\n\n<!-- ax:node v=1 root=741 type=작업 -->\n"
+    broken = "## 문제\n\n본문\n\n<!-- ax:node v=1 root=abc -->\n"
+    out = _rec(FakeIssue(node), "classify", "feature")
+    check("#1024 노드 일감 → 묻지 않는다", "wayfinder_ask" not in out, str(out))
+    check("#1024 노드 일감 로그", any("노드 일감(Root #741) — 웨이파인더 질문 생략" in ln for ln in out["log"]),
+          str(out["log"]))
+    check("#1024 노드 일감 분류는 그대로 기록", out["category"] == "feature" and out["next"] == "investigate", str(out))
+    out = _rec(FakeIssue(broken), "classify", "feature")
+    check("#1024 깨진 표지 → 묻지 않는다", "wayfinder_ask" not in out, str(out))
+    check("#1024 깨진 표지 [주의] 로그", any("[주의] 노드 표지 형식 오류" in ln for ln in out["log"]), str(out["log"]))
+    out = _rec(FakeIssue(), "classify", "feature")
+    check("#1024 일반 일감 → 그대로 묻는다", isinstance(out.get("wayfinder_ask"), dict), str(out))
     imperative = ("하세요", "하라", "해라", "하십시오")
     check("#982 질문 글은 명령형이 아니다",
           not any(w in IV.WAYFINDER_ASK["question"] + IV.WAYFINDER_ASK["how"] for w in imperative))
