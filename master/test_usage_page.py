@@ -125,6 +125,31 @@ class UsagePageTests(unittest.TestCase):
         self.assertIn("일감", empty_body)
         self.assertIn("연결", empty_body)
 
+    def test_unassigned_section_1022(self):
+        # #1022: 세션·전체 보기 + 프로젝트 필터 없음일 때만 원인별 표 · 키가 없어도 렌더 · 모르는 원인은 이스케이프
+        rows = [{"cause": "tmp_ax", "sessions": 967, "calls": 1200, "measured_calls": 1200,
+                 "unmeasured_calls": 0, "failed_calls": 0, "tokens": 69_000_000},
+                {"cause": "unknown", "sessions": 3, "calls": 4, "measured_calls": 4,
+                 "unmeasured_calls": 0, "failed_calls": 0, "tokens": 10},
+                {"cause": "<b>x</b>", "sessions": 1, "calls": 1, "measured_calls": 1,
+                 "unmeasured_calls": 0, "failed_calls": 0, "tokens": 1}]
+        body = _text(_report(source="session", project="", unassigned=rows))
+        self.assertIn("<h2>미분류 세션 — 원인별</h2>", body)
+        self.assertIn("레인 임시 디렉터리 (/tmp/ax-*)", body)
+        self.assertIn("원인 모름 — 원본 보존 기간 지남", body)
+        self.assertIn("967", body)
+        self.assertNotIn("<b>x</b>", body)
+        self.assertIn("&lt;b&gt;x&lt;/b&gt;", body)
+        self.assertIn("확정 장부(session_id)", body)                     # :394 안내문(#1019)
+        self.assertNotIn("대화 세션은 작업 디렉토리로 프로젝트를 판정하며", body)   # 옛 문구 전체
+        empty = _text(_report(source="all", project=""))                   # 키 없음
+        self.assertIn("미분류 없음", empty)
+        self.assertNotIn("<h2>미분류 세션 — 원인별</h2>", _text(_report(source="session", project="Game",
+                                                                       unassigned=rows)))
+        self.assertNotIn("<h2>미분류 세션 — 원인별</h2>", _text(_report(source="dispatch", project="")))
+        self.assertIn("전체 프로젝트 보기의 「미분류 세션 — 원인별」 표", body)   # 필터 시 표가 없는 이유
+        self.assertEqual(200, usage_page.page({}, loader=lambda **_: {})[0])   # 라우트가 주는 빈 보고서
+
     def test_untrusted_strings_are_escaped(self):
         attack = '<script>alert("x")</script>'
         report = _report(

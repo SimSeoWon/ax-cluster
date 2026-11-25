@@ -317,6 +317,45 @@ def _model_table(report: dict) -> str:
     return '<div class="wrap"><table class="usage"><tr><th>계열</th><th>실제 모델</th><th>호출</th><th>측정</th><th>미계측</th><th>실패</th><th>측정 토큰</th><th>비캐시 입력</th><th>캐시 입력</th></tr>' + "".join(rows) + "</table></div>"
 
 
+# `#1022` — 미분류 원인 이름(보고서의 cause 키 → 화면). 모르는 값은 그대로 이스케이프해 보인다
+_CAUSE_LABEL = {
+    "empty_cwd": "빈 작업 경로 (agy 헤드리스 등)",
+    "master_home": "마스터 홈 (~)",
+    "windows_double_slash": "Windows 이중 구분자",
+    "ax_issues": "일감 worktree (.ax-issues) — 체크아웃 밖",
+    "tmp_ax": "레인 임시 디렉터리 (/tmp/ax-*)",
+    "tmp_other": "기타 /tmp",
+    "other": "기타 경로",
+    "unknown": "원인 모름 — 원본 보존 기간 지남",
+}
+
+
+def _unassigned_table(report: dict) -> str:
+    """`#1022` — 미분류 세션 원인별. 보고서에 키가 없거나 비면 「미분류 없음」(라우트 검사는 {} 를 준다)."""
+    rows = []
+    for row in report.get("unassigned") or []:
+        if not isinstance(row, dict):
+            continue
+        cause = str(row.get("cause") or "")
+        rows.append(f'<tr><td>{html.escape(_CAUSE_LABEL.get(cause, cause))}</td>'
+                    f'<td class="num">{_int(row.get("sessions")):,}</td>'
+                    f'<td class="num">{_int(row.get("calls")):,}</td>'
+                    f'<td class="num">{_int(row.get("unmeasured_calls")):,}</td>'
+                    f'<td class="num">{_token(row.get("tokens"))}</td></tr>')
+    if not rows:
+        rows.append('<tr><td colspan="5" class="dim">미분류 없음</td></tr>')
+    return ('<div class="wrap"><table class="usage"><tr><th>원인</th><th>세션</th><th>호출</th>'
+            '<th>미계측</th><th>측정 토큰</th></tr>' + "".join(rows) + "</table></div>")
+
+
+def _unassigned_section(report: dict, source: str) -> str:
+    if source not in ("session", "all") or report.get("project"):
+        return ""
+    return ('<h2>미분류 세션 — 원인별</h2><div class="sub">프로젝트에 귀속되지 않은 대화 세션이다. '
+            '원인은 수집 때 작업 경로로 판정하며, 보존 기간이 지나 원본이 없는 옛 세션은 「원인 모름」이다.</div>'
+            + _unassigned_table(report))
+
+
 _CONDUCTOR_KEYS = ("calls", "first_input", "last_input", "input_sum", "uncached_sum",
                    "output_sum", "tool_calls")
 
@@ -391,7 +430,8 @@ def render(report: dict, pie_report: dict | None = None) -> bytes:
                        for w in (report.get("warnings") or []))
     source = str(report.get("source") or "dispatch")
     session_note = ('<div class="note">작업 실행 기록과 대화 세션 기록은 서로 겹칠 수 있어 합산하지 않는다. '
-                    '대화 세션은 작업 디렉토리로 프로젝트를 판정하며, 판정되지 않은 세션은 미분류로 모인다. 일감에는 연결되지 않는다.</div>' if source == "session"
+                    '대화 세션은 확정 장부(session_id)로, 없으면 작업 디렉토리로 프로젝트를 판정하며, 판정되지 않은 세션은 '
+                    '전체 프로젝트 보기의 「미분류 세션 — 원인별」 표로 나눈다. 일감에는 연결되지 않는다.</div>' if source == "session"
                     else '<div class="note">모두 보기는 Claude·Codex를 대화 세션 기록에서, 그 밖의 계열을 작업 실행 기록에서 센다 — '
                     '같은 호출을 두 번 세지 않는다. 일감별 표는 작업 실행 기록에서 본다.</div>' if source == "all"
                     else '<div class="note">작업 실행 기록과 대화 세션 기록은 서로 겹칠 수 있어 합산하지 않는다.</div>')
@@ -412,6 +452,7 @@ def render(report: dict, pie_report: dict | None = None) -> bytes:
 <h2>{html.escape(_pie_title(_pie_family(report)))}</h2>{_pie(pie_report, _pie_family(report))}
 <h2>기간별 측정 토큰</h2>{_legend()}{_chart(report)}{_bucket_table(report)}
 <h2>실제 모델별 요약</h2>{_model_table(report)}
+{_unassigned_section(report, source)}
 <h2>레드마인 일감별 작업</h2><div class="sub">제목은 작업 큐에 저장된 제목이다.</div>{_issue_table(report)}
 {_conductor_section(report, source)}
 </main></div></body></html>"""
