@@ -1,7 +1,7 @@
 # 현재 AX 작업 인수인계
 
-> 2026-11-25 — Claude 세션 종료 체크포인트(사용자 「오늘은 여기까지」). 이번 세션: M8 표기 · #839 · #1017 등록 · #741 웨이파인더 맵 · #1018.
-> main 은 이 인계 커밋까지 · 일감 잠금 없음 · #1018 배달은 `462160a` 로 rc0(세 대 OK). 이 커밋 직후 `master.client update` 로 다시 맞춘다(배달 예정).
+> 2026-11-26 — #1020 마감 직후 체크포인트(Claude). 이번 세션: #741 지도 안개 2줄 해소 · 노드 #1020 완료.
+> main 은 이 인계 커밋까지 · 일감 잠금 없음 · `ax-projects` 재기동됨(wrapup 판정). 이 커밋 직후 `issue_wrapup 1020` 재실행으로 배달한다(배달 예정).
 > 결과·근거의 정본은 Redmine과 reports/다. 이 문서는 현재 작업·남은 관측·다음 행동 한 벌만 유지한다.
 
 ## 현재 상태
@@ -9,8 +9,11 @@
 - **웨이파인더 실증 — Root #741(세션 프로젝트·일감 출처 보강, 분류 신규 기능)**: 맵 등록(노드 6 · blocks 9 · 안개 3 · 범위 밖 3, 사용자 「등록해」).
   노드 #1018 프리필 완료·100 — `python -m master.work.session_provenance [--json]`(읽기 전용) · 커밋 `5a4cd6c`·`206c6bc` · 리포트 210.
   기준선: 색인 2,662 · 미귀속 2,608(empty_cwd 1,499 agy · tmp_ax 983 · master_home 112 · other 14) · work/task 0 ·
-  usage_log 결합 가능 codex 974행(967 tmp_ax). 마감이 맵을 자동 갱신해 **Frontier = #1019 · #1020 · #1021**(순서는 사용자 선택).
-  맵 편집 후보(미제안): #1020 이중 구분자 0건 → 범위 조정 · 안개② agy 세션 ID(usage_log 0/2,174) · 안개③ issue 필드(귀속된 `.ax-issues` 14건 번호 버림).
+  usage_log 결합 가능 codex 974행(967 tmp_ax).
+  노드 #1020 완료·100 — `session_usage.issue_of` 로 색인·스냅샷에 `issue_id`(등록 체크아웃 안 `.ax-issues/<N>` 만) · `_norm` 연속 구분자 접기 ·
+  `session_provenance` 「issue_id 채워짐」 줄. 운영 reparse 로 14/14 채움(이동 0 · 미귀속 2,608 유지). 커밋 `804df8b`·`093a18b`·`a3efbcf` · 리포트 211.
+  지도 편집(사용자 승인): 안개 「agy 세션 ID」→ #1021 첫 확인 항목으로 합침 · 안개 「issue 필드」→ 새 필드로 해소. 남은 안개 1(마스터 홈 세션 정책).
+  **Frontier = #1019 · #1021**(순서는 사용자 선택). #1022 는 #1019 대기.
   관찰: 노드 일감에도 `wayfinder_ask` 가 붙는다(노드 표지 있으면 묻지 않는 쪽이 맞다 — 후속 후보, 아직 일감 미등록).
   Root #741 은 「신규」로 열려 있다(지도일 뿐 잠금 없음). 노드 #1019~#1023 은 마일스톤 8 — 개선·확장.
 - #839 doc_sync 운영 스냅샷(분류 신규 기능): 완료·100, T1~T4·C1~C4 충족. 커밋 4건 `5486733..c3ac616` · 리포트 209.
@@ -69,10 +72,10 @@
 ## 바로 다음 작업
 
 - 세션 시작: `ax-handoff` → `ax-projects:wayfinder_status_tool(741)` 로 Frontier·대조(마지막 확인 차이 0) 재확인.
-- #741 다음 노드는 사용자 선택(Frontier #1019 확정 장부 Join · #1020 경로 규칙 · #1021 스탬프 누락 방지).
-  고르기 전에 맵 편집 후보 3개(위 「현재 상태」)를 제안할지 묻는다 — 편집은 `wayfinder_edit_propose_tool` → 동의 → apply.
-  노드 착수는 `wayfinder_claim_tool` → `ax-plan` 흐름. 측정 기준선 재실행: `.venv/bin/python -m master.work.session_provenance`.
-- #1018·#839·#1016 해시별·종합 리뷰는 도착하는 대로 각 일감 노트로 붙는다.
+- #741 다음 노드는 사용자 선택(Frontier #1019 확정 장부 Join · #1021 스탬프 누락 방지 — agy 대화 id 확인이 첫 항목, agy 1회 = 공용 쿼터).
+  노드 착수는 `wayfinder_claim_tool` → `ax-plan` 흐름. 측정 기준선 재실행: `AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.work.session_provenance`.
+  `master.sweep`·`workshop_paths()` 측정은 `AX_PROJECTS_ROOT` 없이 돌리면 실패한다(test_sandbox 포함 — 회귀 아님, 리포트 211 §4).
+- #1020·#1018·#839·#1016 해시별·종합 리뷰는 도착하는 대로 각 일감 노트로 붙는다.
 - 웨이파인더 후속 일감(착수는 사용자 결정): #1007 `.33` 언리얼 표면(`ax-client` 도구·`infra_finish` map_hook) · #1008 Root 원격 브랜치·노드 서브 브랜치(의존 없는 노드 분산).
 - 다른 일감은 착수하지 않는다. 아래 항목은 사용자 선택 대기다.
 
