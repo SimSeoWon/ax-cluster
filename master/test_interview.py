@@ -187,6 +187,13 @@ def test_wayfinder_ask_on_feature_classify_982():
     check("#1024 깨진 표지 [주의] 로그", any("[주의] 노드 표지 형식 오류" in ln for ln in out["log"]), str(out["log"]))
     out = _rec(FakeIssue(), "classify", "feature")
     check("#1024 일반 일감 → 그대로 묻는다", isinstance(out.get("wayfinder_ask"), dict), str(out))
+    # `#1027` — 표지 문자열을 인용(코드 스팬·펜스)만 한 비노드 일감은 그대로 묻는다(깨진 표지로 오판하지 않는다)
+    quoted = ("## 문제\n\n본문 `<!-- ax:node v=1 root=741 type=작업 -->` 표지\n\n"
+              "```\n<!-- ax:node v=1 root=741 type=작업 -->\n```\n")
+    out = _rec(FakeIssue(quoted), "classify", "feature")
+    check("#1027 인용만 한 비노드 일감 → 그대로 묻는다", isinstance(out.get("wayfinder_ask"), dict), str(out))
+    check("#1027 인용만 한 비노드 일감 → 생략 로그 없음",
+          not any("웨이파인더 질문 생략" in ln for ln in out["log"]), str(out["log"]))
     imperative = ("하세요", "하라", "해라", "하십시오")
     check("#982 질문 글은 명령형이 아니다",
           not any(w in IV.WAYFINDER_ASK["question"] + IV.WAYFINDER_ASK["how"] for w in imperative))

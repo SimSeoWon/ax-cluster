@@ -374,6 +374,12 @@ def test_on_node_closed():
     out = WF.on_node_closed(77, rm=rm, logf=logf)
     check("표지 없음 → 건너뜀", out == {"ok": True, "skipped": "노드 표지 없음", "log": lines}
           and len(rm.writes()) == n)
+    # `#1027` — 본문이 표지 문자열을 인용만 했으면(#1024 마감 거절과 같은 꼴) 표지 없음으로 건너뛴다
+    rm.add(78, description="## 문제\n본문 `<!-- ax:node v=1 root=741 type=작업 -->` 표지\n\n"
+                           "## 스펙\n`<!-- ax:node v=1 root=741 type=작업 -->`\n")
+    out = WF.on_node_closed(78, rm=rm, logf=logf)
+    check("#1027 인용만 한 본문 → 표지 없음 건너뜀", out.get("ok") is True and out.get("skipped") == "노드 표지 없음"
+          and len(rm.writes()) == n, str(out))
     rm.issues[c["pre"]]["status"] = "완료"
     out = WF.on_node_closed(c["pre"], rm=rm, logf=logf)
     check("표지 있음 → sync", out["ok"] and out["changed"])
