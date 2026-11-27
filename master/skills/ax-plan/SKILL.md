@@ -91,10 +91,12 @@ RAG·온톨로지·보고서·최근 완료 일감)가 재료다 — 같은 조�
 - 응답의 `next` 가 다음 단계다. 단계를 고르는 것은 그 값이지 내 짐작이 아니다.
 - 분류 응답에 `wayfinder_ask` 가 실려 오면(머리말 `wayfinder_ask: true` 인 분류 — 지금은 신규 기능) 조사 단계 전에
   그 `question` 을 사용자에게 그대로 묻는다(`#982`). 수락이면 `ax-wayfinder` 스킬로 넘어가고 지금 일감이 맵의
-  Root 가 된다. 거절이면 이 인터뷰를 이어 간다. 버그·수정 분류에는 실리지 않는다 — 묻지 않는다.
+  Root 가 된다. 거절이면 이 인터뷰를 이어 간다. 버그·수정·검증 분류에는 실리지 않는다 — 묻지 않는다.
 - 분류 문서: [`reference/category-bug.md`](reference/category-bug.md) ·
   [`reference/category-modify.md`](reference/category-modify.md) ·
-  [`reference/category-feature.md`](reference/category-feature.md) — 분류를 더할 때는 문서 하나를 더한다(머리말 `name`·`label`·`steps`).
+  [`reference/category-feature.md`](reference/category-feature.md) ·
+  [`reference/category-verify.md`](reference/category-verify.md)(코드 무변경 실물 판정 — 웨이파인더 검증 노드, `#1025`)
+  — 분류를 더할 때는 문서 하나를 더한다(머리말 `name`·`label`·`steps`).
 
 질문하는 방식(#939)은 그대로다:
 
