@@ -241,9 +241,43 @@ def test_node_marker():
           and MB.STATES == ("대기", "Frontier", "작업중", "완료", "차단", "재검증"))
 
 
+def test_quoted_marker_1027():
+    """`#1027` 재현 — 인용(코드 스팬·펜스) 안의 표지 문자열은 표지가 아니다. 그 밖의 깨진 표지는 그대로 거절."""
+    M = "<!-- ax:node v=1 root=741 type=작업 -->"
+    mk = MB.NodeMarker(1000, "검증")
+    tick = f"## 문제\n본문 `{M}` 표지가 붙는다.\n"
+    check("#1027 백틱 인용만 → None", MB.parse_node(tick) is None)
+    check("#1027 이중 백틱 인용 → None", MB.parse_node(f"설명 `` a `{M}` b `` 끝\n") is None)
+    fence = f"## 예\n```\n{M}\n```\n"
+    check("#1027 펜스 블록만 → None", MB.parse_node(fence) is None)
+    check("#1027 물결 펜스·CRLF → None", MB.parse_node(f"예\r\n~~~~text\r\n{M}\r\n~~~~\r\n") is None)
+    check("#1027 닫히지 않은 펜스 → 끝까지 인용", MB.parse_node(f"```\n{M}\n") is None)
+    check("#1027 짧은 닫기는 펜스를 닫지 않음",
+          MB.parse_node(f"````\n```\n{M}\n````\n") is None)
+    both = f"설명 `{M}` 인용\n\n```\n{M}\n```\n\n{M}\n"
+    check("#1027 인용 + 진짜 → 진짜만", MB.parse_node(both) == MB.NodeMarker(741, "작업"))
+    after_fence = f"```\n예\n```\n{M}\n"
+    check("#1027 닫힌 펜스 뒤 진짜 표지", MB.parse_node(after_fence) == MB.NodeMarker(741, "작업"))
+    check("#1027 짝 없는 백틱은 인용 아님 → 줄 중간 거절",
+          _raises(lambda: MB.parse_node(f"앞 ` {M}\n"), "한 줄"))
+    check("#1027 인용 밖 줄 중간 → 거절 유지", _raises(lambda: MB.parse_node(f"앞 {M}\n"), "한 줄"))
+    check("#1027 인용 밖 둘 → 거절 유지", _raises(lambda: MB.parse_node(f"{M}\n\n`{M}`\n\n{M}\n"), "2개"))
+    check("#1027 인용 밖 형식 깨짐 → 거절 유지",
+          _raises(lambda: MB.parse_node("`<!-- ax:node v=1 root=1 type=작업 -->`\n<!-- ax:node root=1 -->\n"), "형식"))
+    out = MB.put_node(fence, mk)
+    check("#1027 put_node 펜스 인용 보존 + 끝에 표지",
+          out == fence + "\n<!-- ax:node v=1 root=1000 type=검증 -->\n", repr(out))
+    out = MB.put_node(tick, mk)
+    check("#1027 put_node 백틱 인용 보존 + 끝에 표지",
+          out.startswith(tick.rstrip("\n")) and MB.parse_node(out) == mk, repr(out))
+    out = MB.put_node(both, mk)
+    check("#1027 put_node 인용 + 진짜 → 진짜만 교체",
+          out == both.replace(f"\n\n{M}\n", "\n\n<!-- ax:node v=1 root=1000 type=검증 -->\n"), repr(out))
+
+
 def main() -> int:
     for fn in (test_roundtrip, test_examples_parse, test_put, test_tag_rejections, test_section_rejections,
-               test_table_rejections, test_render_rejections, test_node_marker):
+               test_table_rejections, test_render_rejections, test_node_marker, test_quoted_marker_1027):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_map_block: {PASS}/{total} 통과")

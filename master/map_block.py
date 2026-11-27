@@ -363,9 +363,65 @@ def put(body: str, block: MapBlock) -> str:
 
 # ── 노드 표지 ─────────────────────────────────────────────────────────────
 
+_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+_TICKS_RE = re.compile(r"`+")
+
+
+def _blank(chars: list[str], start: int, end: int) -> None:
+    for i in range(start, end):
+        if chars[i] not in "\r\n":
+            chars[i] = " "
+
+
+def _mask_quotes(body: str) -> str:
+    """인용 구간(펜스 코드 블록·코드 스팬)을 같은 길이 공백으로 가린 사본 — 줄바꿈과 위치는 원문 그대로 (`#1027`).
+
+    표지는 `put_node` 가 줄 하나를 차지하게 붙이는 기계용 표시다. 사람이 설명하려고 백틱이나 ``` 안에 적은
+    표지 문자열은 표지가 아니다 — 그 밖의 깨진 표지는 지금처럼 거절한다. 펜스는 같은 문자로 같거나 긴 줄에서
+    닫히고, 닫히지 않으면 본문 끝까지다. 코드 스팬은 같은 길이의 백틱 줄이 닫으며, 짝이 없으면 글자 그대로다.
+    """
+    chars = list(body)
+    pos, fence = 0, None
+    lines = body.splitlines(keepends=True)
+    prose: list[tuple[int, int]] = []           # 펜스 밖 구간 — 코드 스팬은 여기서만 찾는다
+    run_start = 0
+    for line in lines:
+        m = _FENCE_RE.match(line)
+        if fence is None and m:
+            prose.append((run_start, pos))
+            fence = m.group(1)
+            _blank(chars, pos, pos + len(line))
+        elif fence is not None:
+            _blank(chars, pos, pos + len(line))
+            if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence) \
+                    and not line[m.end():].strip():
+                fence = None
+                run_start = pos + len(line)
+        pos += len(line)
+    if fence is None:
+        prose.append((run_start, len(body)))
+    for start, end in prose:
+        i = start
+        while True:
+            m = _TICKS_RE.search(body, i, end)
+            if not m:
+                break
+            n = len(m.group(0))
+            close = next((c for c in _TICKS_RE.finditer(body, m.end(), end) if len(c.group(0)) == n), None)
+            if close is None:
+                i = m.end()
+                continue
+            _blank(chars, m.start(), close.end())
+            i = close.end()
+    return "".join(chars)
+
+
 def _marker_span(body: str) -> tuple[int, int, NodeMarker] | None:
-    """(줄 안 표지 시작, 표지 끝, 표지). 없으면 None. 둘 이상이거나 값이 어긋나면 `MapError`."""
-    hits = list(NODE_PREFIX_RE.finditer(body))
+    """(줄 안 표지 시작, 표지 끝, 표지). 없으면 None. 둘 이상이거나 값이 어긋나면 `MapError`.
+
+    인용(코드 스팬·펜스 코드 블록) 안의 표지 문자열은 세지 않는다 (`#1027`) — 가린 사본에서 찾고, 위치가
+    원문과 같으므로 판독·교체는 원문으로 한다."""
+    hits = list(NODE_PREFIX_RE.finditer(_mask_quotes(body)))
     if not hits:
         return None
     if len(hits) != 1:
