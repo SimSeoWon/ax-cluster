@@ -161,9 +161,25 @@ def test_map_block_roundtrip():
         check(f"{name}: 다시 그려도 같다", MD.render(back) == blk.diagram)
 
 
+def test_planned_keys_1036():
+    """`#1036` — 예정 키 P<n> 이 번호 노드와 섞여도 단계·줄을 그린다(번호 먼저 정렬)."""
+    nodes = [MB.MapNode(1032, "현황 실측", "프리필", None, "완료"),
+             MB.MapNode("P2", "일감 발주", "작업", "P1", "차단", ["P1"]),
+             MB.MapNode("P1", "워커 일감 읽기", "작업", 1032, "Frontier", [1032])]
+    blk = MB.MapBlock("목적지", "", nodes, [], [])
+    check("#1036 단계", MD.levels(blk) == [[1032], ["P1"], ["P2"]], str(MD.levels(blk)))
+    out = MD.render(blk)
+    check("#1036 줄 표기", "  P1 워커 일감 읽기 (작업) [Frontier] ← #1032" in out
+          and "  P2 일감 발주 (작업) [차단] ← P1" in out, out)
+    check("#1036 같은 지도면 같은 바이트", MD.render(blk) == out)
+    cyc = [MB.MapNode("P1", "a", "작업", None, "차단", ["P2"]), MB.MapNode("P2", "b", "작업", None, "차단", ["P1"])]
+    check("#1036 예정 키 순환 거절", _raises(lambda: MD.levels(MB.MapBlock("d", "", cyc, [], [])), "순환"))
+
+
 def main() -> int:
     for fn in (test_levels, test_head_state, test_lines, test_width, test_errors,
-               test_empty_and_determinism, test_map_block_roundtrip):
+               test_empty_and_determinism, test_map_block_roundtrip,
+               test_planned_keys_1036):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_map_diagram: {PASS}/{total} 통과")

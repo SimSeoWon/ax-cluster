@@ -275,9 +275,39 @@ def test_quoted_marker_1027():
           out == both.replace(f"\n\n{M}\n", "\n\n<!-- ax:node v=1 root=1000 type=검증 -->\n"), repr(out))
 
 
+def test_planned_keys_1036():
+    """`#1036` — 예정 노드(일감 없음)는 지도 키 P<n> 로 표에 있고 #번호와 섞일 수 있다."""
+    nodes = [
+        MB.MapNode(1032, "현황 실측", "프리필", None, "완료"),
+        MB.MapNode("P1", "워커 일감 읽기", "작업", 1032, "Frontier", [1032]),
+        MB.MapNode("P2", "일감 발주", "작업", "P1", "차단", ["P1", 1032]),
+    ]
+    blk = MB.MapBlock("목적지", "", nodes, [], [])
+    text = MB.render(blk)
+    check("#1036 표에 P 키 그대로", "| P1 | 워커 일감 읽기 |" in text and "| P2 |" in text and "| #1032 |" in text, text)
+    check("#1036 부모·선행 칸에 P 키", "| P1 | 차단 | P1·#1032 |" in text, text)
+    back = MB.parse(text)
+    check("#1036 왕복 — id 형 보존", [n.id for n in back.nodes] == [1032, "P1", "P2"]
+          and back.node("P2").parent == "P1" and back.node("P2").deps == ["P1", 1032], str(back.nodes))
+    check("#1036 is_planned", MB.is_planned("P1") and not MB.is_planned(1) and not MB.is_planned("Q1")
+          and not MB.is_planned("P"))
+    check("#1036 label", MB.label(7) == "#7" and MB.label("P3") == "P3")
+    check("#1036 id_key 섞인 정렬 — 번호 먼저", sorted(["P10", 5, "P2", 1], key=MB.id_key) == [1, 5, "P2", "P10"])
+    bad = text.replace("| P2 |", "| Q2 |")
+    check("#1036 모르는 키 거절", _raises(lambda: MB.parse(bad), "P<숫자>"))
+    check("#1036 render 도 모르는 키 거절", _raises(lambda: MB.render(MB.MapBlock(
+        "목적지", "", [MB.MapNode("X1", "t", "작업", None, "Frontier")], [], [])), "P<숫자>"))
+    check("#1036 표 밖 예정 선행 거절", _raises(lambda: MB.render(MB.MapBlock(
+        "목적지", "", [MB.MapNode("P1", "t", "작업", None, "차단", ["P9"])], [], [])), "P9"))
+    check("#1036 예정 키 중복 거절", _raises(lambda: MB.render(MB.MapBlock(
+        "목적지", "", [MB.MapNode("P1", "a", "작업", None, "Frontier"),
+                       MB.MapNode("P1", "b", "작업", None, "Frontier")], [], [])), "겹친다"))
+
+
 def main() -> int:
     for fn in (test_roundtrip, test_examples_parse, test_put, test_tag_rejections, test_section_rejections,
-               test_table_rejections, test_render_rejections, test_node_marker, test_quoted_marker_1027):
+               test_table_rejections, test_render_rejections, test_node_marker, test_quoted_marker_1027,
+               test_planned_keys_1036):
         fn()
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_map_block: {PASS}/{total} 통과")

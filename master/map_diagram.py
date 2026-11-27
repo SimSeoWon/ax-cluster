@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import unicodedata
 
-from master.map_block import MapBlock, MapNode
+from master.map_block import MapBlock, MapNode, id_key, label
 
 PRE_OPEN = "<pre>"
 PRE_CLOSE = "</pre>"
@@ -52,12 +52,12 @@ def _level_map(nodes: list[MapNode]) -> dict[int, int]:
     by_id: dict[int, MapNode] = {}
     for n in nodes:
         if n.id in by_id:
-            raise DiagramError(f"노드 id 가 겹친다: #{n.id}")
+            raise DiagramError(f"노드 id 가 겹친다: {label(n.id)}")
         by_id[n.id] = n
-    for n in sorted(nodes, key=lambda x: x.id):
-        missing = sorted(d for d in n.deps if d not in by_id)
+    for n in sorted(nodes, key=lambda x: id_key(x.id)):
+        missing = sorted((d for d in n.deps if d not in by_id), key=id_key)
         if missing:
-            raise DiagramError(f"#{n.id}: 표에 없는 선행 " + ", ".join(f"#{d}" for d in missing))
+            raise DiagramError(f"{label(n.id)}: 표에 없는 선행 " + ", ".join(label(d) for d in missing))
 
     level: dict[int, int] = {}
     on_path: list[int] = []
@@ -67,15 +67,15 @@ def _level_map(nodes: list[MapNode]) -> dict[int, int]:
             return level[nid]
         if nid in on_path:
             cyc = on_path[on_path.index(nid):] + [nid]
-            raise DiagramError("선행이 순환한다: " + " → ".join(f"#{x}" for x in cyc))
+            raise DiagramError("선행이 순환한다: " + " → ".join(label(x) for x in cyc))
         on_path.append(nid)
-        deps = sorted(by_id[nid].deps)
+        deps = sorted(by_id[nid].deps, key=id_key)
         lv = 1 + max((visit(d) for d in deps), default=0)
         on_path.pop()
         level[nid] = lv
         return lv
 
-    for nid in sorted(by_id):
+    for nid in sorted(by_id, key=id_key):
         visit(nid)
     return level
 
@@ -86,7 +86,7 @@ def levels(block: MapBlock) -> list[list[int]]:
     if not lv:
         return []
     out: list[list[int]] = [[] for _ in range(max(lv.values()))]
-    for nid in sorted(lv):
+    for nid in sorted(lv, key=id_key):
         out[lv[nid] - 1].append(nid)
     return out
 
@@ -100,9 +100,9 @@ def head_state(states: list[str]) -> str:
 
 
 def _node_line(n: MapNode) -> str:
-    line = f"  #{n.id} {n.title} ({n.type}) [{n.state}]"
+    line = f"  {label(n.id)} {n.title} ({n.type}) [{n.state}]"
     if n.deps:
-        line += DEP_ARROW + DEP_SEP.join(f"#{d}" for d in sorted(n.deps))
+        line += DEP_ARROW + DEP_SEP.join(label(d) for d in sorted(n.deps, key=id_key))
     return line
 
 

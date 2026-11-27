@@ -60,6 +60,28 @@ NODE_PREFIX_RE = re.compile(r"<!-- ax:node\b")
 NODE_RE = re.compile(r"<!-- ax:node v=(\d+) root=(\S+) type=(\S+) -->")
 
 _ID_RE = re.compile(r"#(\d+)")
+# `#1036` — 아직 Redmine 일감이 없는 **예정 노드**의 지도 키. 일감은 선점(`wayfinder.claim`) 때 생기고
+#    그때 키가 `#번호` 로 바뀐다. 노드 id 는 `int`(일감 번호) 또는 `str`(예정 키 "P<n>") 둘 중 하나다.
+PLANNED_RE = re.compile(r"P(\d+)")
+PLANNED_PREFIX = "P"
+
+
+def is_planned(nid) -> bool:
+    """예정 노드 키("P<n>")인가 — 일감이 아직 없다."""
+    return isinstance(nid, str) and PLANNED_RE.fullmatch(nid) is not None
+
+
+def label(nid) -> str:
+    """표·로그에 쓰는 이름 — 일감 번호는 `#123`, 예정 키는 그대로 `P1`."""
+    return nid if isinstance(nid, str) else f"#{nid}"
+
+
+def id_key(nid) -> tuple:
+    """정렬 열쇠 — 번호 노드 먼저(번호순), 그다음 예정 노드(키 숫자순). int·str 이 섞여도 된다."""
+    if isinstance(nid, str):
+        m = PLANNED_RE.fullmatch(nid)
+        return (1, int(m.group(1)) if m else 0, nid)
+    return (0, nid, "")
 
 
 class MapError(ValueError):
@@ -69,12 +91,12 @@ class MapError(ValueError):
 @dataclass
 class MapNode:
     """노드 표 한 줄. `parent` 가 None 이면 Root, `owner` 가 "" 이면 담당 없음(—)."""
-    id: int
+    id: int | str                     # 일감 번호(int) 또는 예정 키("P<n>", `#1036`)
     title: str
     type: str
-    parent: int | None
+    parent: int | str | None
     state: str
-    deps: list[int] = field(default_factory=list)
+    deps: list[int | str] = field(default_factory=list)
     owner: str = ""
     summary: str = ""
 
@@ -88,7 +110,7 @@ class MapBlock:
     fog: list[str] = field(default_factory=list)
     out_of_scope: list[str] = field(default_factory=list)
 
-    def node(self, node_id: int) -> MapNode | None:
+    def node(self, node_id) -> MapNode | None:
         return next((n for n in self.nodes if n.id == node_id), None)
 
 
@@ -126,43 +148,51 @@ def _cells(line: str) -> list[str]:
     return [p.strip() for p in s[1:-1].split("|")]
 
 
-def _node_id(text: str, what: str) -> int:
+def _node_id(text: str, what: str) -> int | str:
     m = _ID_RE.fullmatch(text)
-    if not m:
-        raise MapError(f"{what} 는 #<숫자> 다: {text!r}")
-    return int(m.group(1))
+    if m:
+        return int(m.group(1))
+    if PLANNED_RE.fullmatch(text):
+        return text
+    raise MapError(f"{what} 는 #<숫자> 또는 예정 키 P<숫자> 다: {text!r}")
 
 
-def _deps(text: str, nid: int) -> list[int]:
+def _deps(text: str, nid) -> list:
     if text == NO_DEPS:
         return []
-    out: list[int] = []
+    out: list = []
     for part in text.split(DEP_SEP):
-        d = _node_id(part.strip(), f"#{nid} 선행")
+        d = _node_id(part.strip(), f"{label(nid)} 선행")
         if d == nid:
-            raise MapError(f"#{nid}: 자기 자신을 선행으로 둘 수 없다")
+            raise MapError(f"{label(nid)}: 자기 자신을 선행으로 둘 수 없다")
         if d in out:
-            raise MapError(f"#{nid}: 선행이 겹친다 #{d}")
+            raise MapError(f"{label(nid)}: 선행이 겹친다 {label(d)}")
         out.append(d)
     return out
 
 
 def _check_node(n: MapNode) -> None:
     """한 노드의 값 판정(표 전체를 보는 판정은 `_check_tree`)."""
-    if not isinstance(n.id, int) or isinstance(n.id, bool) or n.id < 0:
-        raise MapError(f"노드 id 는 음이 아닌 정수다: {n.id!r}")
+    if isinstance(n.id, str):
+        if not is_planned(n.id):
+            raise MapError(f"노드 id 는 음이 아닌 정수 또는 예정 키 P<숫자> 다: {n.id!r}")
+    elif not isinstance(n.id, int) or isinstance(n.id, bool) or n.id < 0:
+        raise MapError(f"노드 id 는 음이 아닌 정수 또는 예정 키 P<숫자> 다: {n.id!r}")
+    for ref in ([n.parent] if n.parent is not None else []) + list(n.deps):
+        if not (is_planned(ref) or (isinstance(ref, int) and not isinstance(ref, bool) and ref >= 0)):
+            raise MapError(f"{label(n.id)}: 부모·선행은 #<숫자> 또는 P<숫자> 다: {ref!r}")
     if not n.title.strip():
-        raise MapError(f"#{n.id}: 제목이 비었다")
+        raise MapError(f"{label(n.id)}: 제목이 비었다")
     if n.type not in NODE_TYPES:
-        raise MapError(f"#{n.id}: 모르는 타입 {n.type!r} (허용 {', '.join(NODE_TYPES)})")
+        raise MapError(f"{label(n.id)}: 모르는 타입 {n.type!r} (허용 {', '.join(NODE_TYPES)})")
     if n.state not in STATES:
-        raise MapError(f"#{n.id}: 모르는 상태 {n.state!r} (허용 {', '.join(STATES)})")
+        raise MapError(f"{label(n.id)}: 모르는 상태 {n.state!r} (허용 {', '.join(STATES)})")
     if n.parent is not None and n.parent == n.id:
-        raise MapError(f"#{n.id}: 자기 자신을 부모로 둘 수 없다")
+        raise MapError(f"{label(n.id)}: 자기 자신을 부모로 둘 수 없다")
     if n.id in n.deps:
-        raise MapError(f"#{n.id}: 자기 자신을 선행으로 둘 수 없다")
+        raise MapError(f"{label(n.id)}: 자기 자신을 선행으로 둘 수 없다")
     if len(set(n.deps)) != len(n.deps):
-        raise MapError(f"#{n.id}: 선행이 겹친다")
+        raise MapError(f"{label(n.id)}: 선행이 겹친다")
 
 
 def _check_tree(nodes: list[MapNode]) -> None:
@@ -170,21 +200,21 @@ def _check_tree(nodes: list[MapNode]) -> None:
     seen: set[int] = set()
     for n in nodes:
         if n.id in seen:
-            raise MapError(f"노드 id 가 겹친다: #{n.id}")
+            raise MapError(f"노드 id 가 겹친다: {label(n.id)}")
         seen.add(n.id)
     by_id = {n.id: n for n in nodes}
     for n in nodes:
         if n.parent is not None and n.parent not in by_id:
-            raise MapError(f"#{n.id}: 부모 #{n.parent} 가 표에 없다 (표 밖 부모는 Root 만)")
+            raise MapError(f"{label(n.id)}: 부모 {label(n.parent)} 가 표에 없다 (표 밖 부모는 Root 만)")
         missing = [d for d in n.deps if d not in by_id]
         if missing:
-            raise MapError(f"#{n.id}: 없는 선행 " + ", ".join(f"#{d}" for d in missing))
+            raise MapError(f"{label(n.id)}: 없는 선행 " + ", ".join(label(d) for d in missing))
     for n in nodes:
         walked = {n.id}
         cur = n
         while cur.parent is not None:
             if cur.parent in walked:
-                raise MapError(f"#{n.id}: 부모 사슬이 순환한다 — Root 에 닿지 않는다")
+                raise MapError(f"{label(n.id)}: 부모 사슬이 순환한다 — Root 에 닿지 않는다")
             walked.add(cur.parent)
             cur = by_id[cur.parent]
 
@@ -246,11 +276,11 @@ def _parse_nodes(lines: list[str]) -> list[MapNode]:
             raise MapError(f"칸 수가 {len(c)}개다 (필요 {len(COLUMNS)}): {ln.strip()[:80]!r}")
         nid_s, title, typ, parent_s, state, deps_s, owner, summary = c
         nid = _node_id(nid_s, "노드")
-        parent = None if parent_s == ROOT else _node_id(parent_s, f"#{nid} 부모")
+        parent = None if parent_s == ROOT else _node_id(parent_s, f"{label(nid)} 부모")
         n = MapNode(nid, title, typ, parent, state, _deps(deps_s, nid),
                     "" if owner == NO_DEPS else owner, summary)
         if not owner:
-            raise MapError(f"#{nid}: 담당 칸이 비었다 — 없으면 {NO_DEPS}")
+            raise MapError(f"{label(nid)}: 담당 칸이 비었다 — 없으면 {NO_DEPS}")
         _check_node(n)
         nodes.append(n)
     _check_tree(nodes)
@@ -325,15 +355,15 @@ def render(block: MapBlock) -> str:
     for n in block.nodes:
         _check_node(n)
         if n.owner == NO_DEPS:
-            raise MapError(f"#{n.id}: 담당 {NO_DEPS!r} 는 '담당 없음' 과 겹친다 — 없으면 \"\"")
+            raise MapError(f"{label(n.id)}: 담당 {NO_DEPS!r} 는 '담당 없음' 과 겹친다 — 없으면 \"\"")
     _check_tree(block.nodes)
     rows = ["| " + " | ".join(COLUMNS) + " |", "|" + "---|" * len(COLUMNS)]
     for n in block.nodes:
-        cells = (f"#{n.id}", _cell(n.title, f"#{n.id} 제목"), n.type,
-                 ROOT if n.parent is None else f"#{n.parent}", n.state,
-                 DEP_SEP.join(f"#{d}" for d in n.deps) if n.deps else NO_DEPS,
-                 _cell(n.owner, f"#{n.id} 담당") or NO_DEPS,
-                 _cell(n.summary, f"#{n.id} 요약"))
+        cells = (label(n.id), _cell(n.title, f"{label(n.id)} 제목"), n.type,
+                 ROOT if n.parent is None else label(n.parent), n.state,
+                 DEP_SEP.join(label(d) for d in n.deps) if n.deps else NO_DEPS,
+                 _cell(n.owner, f"{label(n.id)} 담당") or NO_DEPS,
+                 _cell(n.summary, f"{label(n.id)} 요약"))
         rows.append("|" + "".join(f" {x} |" if x else " |" for x in cells))
     fog = ["- " + _item(x, "안개") for x in block.fog]
     oos = ["- " + _item(x, "범위 밖") for x in block.out_of_scope]
