@@ -171,7 +171,7 @@ def is_tracked(root, issue_id) -> bool:
     with _locked(root):
         data = _load(root)
     a = data["active"]
-    return bool(a and a["issue_id"] == n) or str(n) in data["paused"]
+    return bool(a and a["issue_id"] == n) or str(n) in data["paused"] or str(n) in data.get("node_assignments", {})
 
 
 def node_assignments(root) -> dict[int, dict]:

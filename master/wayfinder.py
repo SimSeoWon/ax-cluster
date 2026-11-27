@@ -392,10 +392,34 @@ def check(root_id, *, rm=None, logf=None) -> dict:
     return {"ok": not diffs, "differences": diffs, "log": log.lines}
 
 
-def frontier(root_id, *, rm=None) -> dict:
+def _distributed_nodes(root_id, rm, lock_root) -> dict:
+    if rm is not None and lock_root is None:
+        return {}
+    from . import issue_lock as IL
+
+    root = IL.default_root() if lock_root is None else lock_root
+    return {n: a for n, a in IL.node_assignments(root).items() if a["root_id"] == root_id}
+
+
+def frontier(root_id, *, rm=None, lock_root=None) -> dict:
     """지금 집을 수 있는 노드와 상태별 개수. 상태는 메모리에서 다시 계산한 값이다(쓰지 않는다)."""
-    block = compute_states(load(root_id, rm=rm))
-    return {"frontier": _frontier_list(block), "states": _state_counts(block)}
+    from . import issue_lock as IL
+
+    rid = _issue_id(root_id, "Root")
+    block = compute_states(load(rid, rm=rm))
+    records = _distributed_nodes(rid, rm, lock_root)
+    labels = {IL.NODE_RUNNING: "실행 중", IL.NODE_REVIEW: "검수 대기", IL.NODE_REWORK: "재작업 대기"}
+    view = []
+    for n in block.nodes:
+        rec = records.get(n.id)
+        if rec:
+            view.append({"id": n.id, "title": n.title, "worker": rec["worker"], "state": labels[rec["state"]]})
+            if n.state not in (DONE, REVERIFY):
+                n.state = WORKING
+    out = {"frontier": _frontier_list(block), "states": _state_counts(block)}
+    if view:
+        out["assignments"] = view
+    return out
 
 
 # ── 쓰기 공통 ────────────────────────────────────────────────────────────
@@ -993,7 +1017,7 @@ def propose_edit(root_id, op, *, target=None, text="", reason="", rm=None, logf=
     return {"ok": True, "proposal": proposal, "log": log.lines}
 
 
-def apply_edit(root_id, proposal, *, user_answer, rm=None, logf=None) -> dict:
+def apply_edit(root_id, proposal, *, user_answer, rm=None, logf=None, lock_root=None) -> dict:
     """편집 제안을 적용한다. `user_answer` 가 있어야 돈다. 대조에 차이가 있으면 거절.
 
     제안의 op·target·text·reason 으로 **지금 지도에서 다시 계산한다** — 대상이 사라졌거나 중복·변화
@@ -1004,7 +1028,7 @@ def apply_edit(root_id, proposal, *, user_answer, rm=None, logf=None) -> dict:
     노트. ①②에서 멈추면 `_stopped`(되돌리지 않는다). ③이 실패하면 지도는 이미 범위 밖이라 되돌리지 않고
     `{"ok": False, "step": "노드 닫기", "map_written": True, …}` 로 크게 알린다.
     """
-    log, rm = _log_of(logf), _port(rm)
+    log = _log_of(logf)
     rid = _issue_id(root_id, "Root")
     if not str(user_answer or "").strip():
         return _refuse(log, "사용자 답(user_answer)이 없다 — 지도를 고치지 않는다")
@@ -1013,6 +1037,11 @@ def apply_edit(root_id, proposal, *, user_answer, rm=None, logf=None) -> dict:
     if proposal.get("root") not in (None, rid):
         return _refuse(log, f"제안의 Root #{proposal.get('root')} ≠ #{rid}")
     op = proposal.get("op")
+    if op == NODE_OUT:
+        nid = _node_ref(proposal.get("target"), "노드")
+        if nid in _distributed_nodes(rid, rm, lock_root):
+            return _refuse(log, f"{MB.label(nid)} 는 분산 노드 배정으로 관리 중이다 — 범위 밖으로 돌리지 않는다")
+    rm = _port(rm)
     body, block = _load(rm, rid)
     diffs = _differences(rm, rid, block)
     if diffs:
@@ -1094,7 +1123,7 @@ def _apply_node_out(rm, rid: int, body: str, new: MB.MapBlock, plan: dict, notes
 
 # ── 선점 · 재검증 완료 · Root 마감 ────────────────────────────────────────
 
-def claim(root_id, node_id, owner, *, project="", rm=None, logf=None) -> dict:
+def claim(root_id, node_id, owner, *, project="", rm=None, logf=None, lock_root=None) -> dict:
     """Frontier 노드를 선점한다 — 담당을 적고 작업중으로. Redmine 담당자(assigned_to)는 바꾸지 않는다.
 
     `#1036` — **예정 노드(P<n>)면 이때 Redmine 일감을 만든다.** 순서: 노드 일감(부모 Root · Root 마일스톤 ·
@@ -1102,9 +1131,12 @@ def claim(root_id, node_id, owner, *, project="", rm=None, logf=None) -> dict:
     지도의 키를 #번호로 바꾸고 그 키를 가리키는 부모·선행도 바꾼다 → 작업중 → Root 본문. 응답의 `id` 가
     새 일감 번호, `key` 가 옛 예정 키다. 도중 실패는 되돌리지 않고 이미 만든 번호를 돌려준다.
     이미 번호가 있는 노드는 종전처럼 지도만 바꾼다."""
-    log, rm = _log_of(logf), _port(rm)
     rid = _issue_id(root_id, "Root")
     nid = _node_ref(node_id, "노드")
+    assignments = _distributed_nodes(rid, rm, lock_root)
+    log, rm = _log_of(logf), _port(rm)
+    if nid in assignments:
+        return _refuse(log, f"{MB.label(nid)} 는 분산 노드 배정으로 관리 중이다")
     try:
         owner = _check_text(owner if isinstance(owner, str) else "", "담당", required=True)
     except WayfinderError as e:

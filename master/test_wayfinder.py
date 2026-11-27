@@ -1043,6 +1043,36 @@ def test_node_out_changed_between():
     check("node_out 대조 차이 → 거절 · 쓰기 0건", not out["ok"] and out["differences"] and len(rm.writes()) == n)
 
 
+def test_distributed_node_display_and_guards():
+    from tempfile import TemporaryDirectory
+    from master import issue_infra as INF, issue_lock as IL, plan_tools as PT, redmine
+
+    rm, ids = _made()
+    n = ids["pre"]
+    # 사용자가 범위 밖 편집을 검토한 뒤 노드에 배정이 들어온 경우를 검사한다.
+    edit = WF.propose_edit(ROOT, "node_out", target=ids["ver"], reason="검증 보류", rm=rm, logf=_quiet()[1])
+    before = len(rm.writes())
+    with TemporaryDirectory() as tmp:
+        assigned = IL.reserve_node(tmp, n, root_id=ROOT, worker="worker-a")["record"]
+        view = WF.frontier(ROOT, rm=rm, lock_root=tmp)
+        check("1038 지도에서 서버 워커를 표시하고 Frontier 제외", n not in [x["id"] for x in view["frontier"]]
+              and view["assignments"] == [{"id": n, "title": _map(rm).node(n).title,
+                                           "worker": "worker-a", "state": "실행 중"}], str(view))
+        check("1038 단독 지도 선점 거절", not WF.claim(ROOT, n, "local", rm=rm, lock_root=tmp, logf=_quiet()[1])["ok"])
+        refused, _, _ = INF.lock_gate(tmp, n, log=INF.Log("test", n, logf=_quiet()[1]))
+        check("1038 단독 시작 거절", refused is not None and refused["step"] == "lock", str(refused))
+        check("1038 작업중 전이 잠금 검사에서 거절",
+              _raises(lambda: PT._lock_gate(n, tmp), "분산 노드", cls=PT.PlanToolError))
+        IL.advance_node_assignment(tmp, n, assignment_id=assigned["assignment_id"], to=IL.NODE_REVIEW,
+                                   by="master", why="실행 종료 확인")
+        check("1038 지도 검수 상태 표시", WF.frontier(ROOT, rm=rm, lock_root=tmp)["assignments"][0]["state"] == "검수 대기")
+        gate = redmine.make_completion_gate(root_fn=lambda: tmp, logf=_quiet()[1])
+        check("1038 검수 대기 직접 마감 차단", not gate(n)["ok"] and "분산 노드" in gate(n)["why"])
+        IL.reserve_node(tmp, ids["ver"], root_id=ROOT, worker="worker-a")
+        result = WF.apply_edit(ROOT, edit["proposal"], user_answer="응", rm=rm, lock_root=tmp, logf=_quiet()[1])
+        check("1038 배정 뒤 범위 밖 편집 거절·쓰기 없음", not result["ok"] and len(rm.writes()) == before, str(result))
+
+
 def main() -> int:
     for fn in (test_create_map_preview, test_create_map_confirm, test_create_map_refusals,
                test_first_nodes_only_1028, test_claim_creates_issue_1036,
@@ -1052,7 +1082,8 @@ def main() -> int:
                test_claim, test_mark_verified, test_close_root, test_logs, test_end_to_end_direct,
                test_graduate_propose, test_graduate_register, test_edit_ops, test_edit_refusals,
                test_fog_cleared_close_root, test_fake_refuses_blocked_close, test_node_out_propose,
-               test_node_out_apply, test_node_out_close_fails, test_node_out_changed_between):
+               test_node_out_apply, test_node_out_close_fails, test_node_out_changed_between,
+               test_distributed_node_display_and_guards):
         try:
             fn()
         except Exception as e:                       # noqa: BLE001

@@ -235,11 +235,14 @@ def _lock_gate(issue_id, lock_root, project: str = "") -> str:
             root = lock_root
         else:
             root = IL.default_root(project) if project else IL.default_root()
+        assigned = int(issue_id) in IL.node_assignments(root)
         active = IL.current(root)
         paused = IL.paused(root)
     except Exception as e:                              # noqa: BLE001 — IssueLockError·경로 해석
         raise PlanTransportError(f"일감 잠금 상태를 못 읽었다 — {type(e).__name__}: {e}") from e
     n = int(issue_id)
+    if assigned:
+        raise PlanToolError(f"#{n} 는 분산 노드 배정으로 관리 중이다 — 단독 경로로 작업중 전이하지 않는다")
     if active and active["issue_id"] != n:
         h = active["issue_id"]
         state = "보류 중인 " if n in paused else ""

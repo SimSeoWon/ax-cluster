@@ -388,6 +388,9 @@ def make_completion_gate(*, root_fn=None, roots_fn=None, lock=None, logf=None):
                 return None, None                        # 훑기 모드 — 잠금 파일을 새로 만들지 않는다
             if not lock.is_tracked(root, n):
                 return None, None
+            assignments = getattr(lock, "node_assignments", None)
+            if assignments is not None and n in assignments(root):
+                return "분산 노드 배정", None
             cur = lock.current(root) if hasattr(lock, "current") else None
             return ("활성" if cur and int(cur.get("issue_id") or 0) == n else "보류"), None
         except Exception as e:                           # noqa: BLE001

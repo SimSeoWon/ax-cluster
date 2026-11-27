@@ -1325,6 +1325,7 @@ def wayfinder_status_tool(root_id: int) -> str:
 
     `frontier` 는 메모리에서 다시 계산한 값이고 아무것도 쓰지 않는다. `check.ok` 가 false 면 `differences` 가
     지도와 Redmine 부모·관계·노드 표지의 차이다 — 손으로 맞추지 않고 사용자에게 보고하는 자리다.
+    분산 배정이 있으면 `assignments` 에 서버가 확인한 워커와 실행·검수·재작업 상태를 표시한다.
     """
     from .. import wayfinder
     try:

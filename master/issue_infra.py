@@ -238,6 +238,9 @@ def lock_gate(lroot, n: int, *, log: Log) -> tuple[dict | None, dict | None, dic
             active, prec = None, {}
             log("lock", "[주의] 잠금 미사용 — 대역 주입 실행에 lock_root 가 없다")
         else:
+            from master import issue_lock as IL
+            if n in IL.node_assignments(lroot):
+                return refuse(log, "lock", f"#{n} 는 분산 노드 배정으로 관리 중이다"), None, {}
             active, prec = lock_state(lroot, n)
     except Exception as e:                              # noqa: BLE001 — IssueLockError·경로 해석
         return refuse(log, "lock", f"잠금 상태를 못 읽었다 — {type(e).__name__}: {e}"), None, {}
