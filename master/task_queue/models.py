@@ -1,6 +1,11 @@
 from typing import Optional
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
 
+
+class NodeTicketNoteReq(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    notes: StrictStr = Field(min_length=1)
+
 # ─────────────────────────────────────────
 # 상수
 # ─────────────────────────────────────────

@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import json
 import sys
+import os
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -133,7 +134,7 @@ def queue_url(cfg: dict) -> str:
 # ─────────────────────────────────────────────────────────────
 
 def _call(method: str, url: str, token: str, payload=None, *,
-          root_hint: Path | None = None) -> dict | list:
+          root_hint: Path | None = None, node_ticket: bool = False) -> dict | list:
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None
     req = urllib.request.Request(url, data=data, method=method,
                                  headers={"Authorization": f"Bearer {token}",
@@ -143,6 +144,8 @@ def _call(method: str, url: str, token: str, payload=None, *,
             body = r.read().decode("utf-8", "replace").strip()
             return json.loads(body) if body else {}
     except urllib.error.HTTPError as e:
+        if node_ticket and e.code in (401, 403):
+            raise ClientError(f"[노드 일감] 발주 권한이 거부됐다({e.code}) — 마스터에서 배정을 확인한다") from e
         if e.code == 401:
             raise ClientError(
                 "[자격] 토큰이 거부됐다(401) — .ax/token 이 마스터의 requester 토큰과 다르다. "
@@ -1480,6 +1483,15 @@ TOOLS = [
                     "빈 것을 주지 않는다). 리뷰 지적 상담·검증 전에 이걸로 본문을 확보한다.",
      "inputSchema": {"type": "object", "required": ["issue_id"],
                      "properties": {"issue_id": {"type": "integer"}}}},
+    {"name": "wayfinder_get_node_ticket",
+     "description": "배정받은 웨이파인더 노드 일감의 스펙·플랜·노트 이력을 읽는다.",
+     "inputSchema": {"type": "object", "required": ["issue_id"], "additionalProperties": False,
+                     "properties": {"issue_id": {"type": "integer", "minimum": 1}}}},
+    {"name": "wayfinder_append_node_note",
+     "description": "배정받은 웨이파인더 노드 일감에 처리 결과와 검증 근거를 노트로 추가한다.",
+     "inputSchema": {"type": "object", "required": ["issue_id", "notes"], "additionalProperties": False,
+                     "properties": {"issue_id": {"type": "integer", "minimum": 1},
+                                    "notes": {"type": "string", "minLength": 1}}}},
     {"name": "redmine_meta",
      "description": "이 레드마인의 상태·트래커·우선순위·마일스톤 카탈로그. 상태 이름을 추측하지 "
                     "말고 여기서 확인한다 — 이 환경은 한국어이고 「반려」에 해당하는 상태가 없다. "
@@ -2060,6 +2072,24 @@ def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
                   root: Path | None = None) -> dict:
     """도구 실행. `api`/`papi`/`cache` 주입은 테스트 자리 — 실전은 config·token 에서 만든다."""
     args = args or {}
+    if name in ("wayfinder_get_node_ticket", "wayfinder_append_node_note"):
+        issue_id = args.get("issue_id")
+        append = name == "wayfinder_append_node_note"
+        if (set(args) != ({"issue_id", "notes"} if append else {"issue_id"})
+                or type(issue_id) is not int or issue_id <= 0):
+            raise ClientError("노드 일감 번호와 도구에 정의된 인자만 전달한다")
+        notes = args.get("notes")
+        if append and (not isinstance(notes, str) or not notes.strip()):
+            raise ClientError("검증 노트가 비었다")
+        path = f"/api/v1/wayfinder/issue/{issue_id}" + ("/note" if append else "")
+        method = "POST" if append else "GET"
+        payload = {"notes": notes} if append else None
+        if api is not None:
+            return api(method, path, payload)
+        grant = os.environ.get("AX_NODE_TICKET_GRANT", "").strip()
+        if not grant:
+            raise ClientError("노드 일감 발주 권한이 없다 — 마스터에서 배정을 확인한다")
+        return _call(method, queue_url(load_config(root)) + path, grant, payload, root_hint=root, node_ticket=True)
     if name in MANAGEMENT_ROUTES:
         return tool_manage_project(api or queue_api(root), name, args)
     controls = {"get_orchestration": ("GET", "/control/orchestration"),

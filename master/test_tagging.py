@@ -94,9 +94,8 @@ def test_models_carry_the_tag() -> None:
     need = {n for n in dir(M)
             if n.endswith("Req") and hasattr(getattr(M, n), "model_fields")}
     without = sorted(n for n in need if "project" not in getattr(M, n).model_fields)
-    # OPEN 표면 둘만 예외다 (관리자 리셋 · 워커 지시)
-    check("[중요] 태그 없는 모델은 OPEN 표면 둘뿐이다",
-          without == ["AdminResetReq", "DirectiveReq"], str(without))
+    check("[중요] 태그 없는 모델은 명시된 OPEN 표면에 한한다",
+          without == ["AdminResetReq", "DirectiveReq", "NodeTicketNoteReq"], str(without))
     check("기본값은 빈 문자열이다 (하위 호환 — 안 보내면 마운트로 해석)",
           M.ClaimReq(worker_id="w").project == "")
 
@@ -563,6 +562,62 @@ def test_issue_routes_live() -> None:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_wayfinder_node_ticket_live() -> None:
+    """실제 AX 앱과 워커 호출을 통과시키고 외부 Redmine만 대역으로 둔다."""
+    import tempfile
+    import time
+    from unittest.mock import patch
+
+    from client.runtime import client_mcp
+    from master import redmine
+    from master.auth import auth_headers, issue_node_ticket_grant
+
+    iid = 1037
+    base = f"/api/v1/wayfinder/issue/{iid}"
+    description = "## 스펙\n계약\n## 플랜\n검증\n<!-- ax:node v=1 root=1008 type=작업 -->"
+    notes = []
+
+    def sender(method, url, payload=None):
+        if method == "PUT":
+            assert set(payload["issue"]) == {"notes"}, payload
+            notes.append({"notes": payload["issue"]["notes"]})
+            return {}
+        return {"issue": {"id": iid, "parent": {"id": 1008}, "description": description,
+                          "journals": [{"notes": "비공개", "private_notes": True}, *notes]}}
+
+    with tempfile.TemporaryDirectory(prefix="ax-node-ticket-test-") as tmp:
+        c, master, requester, worker = _live_queue(Path(tmp))
+        H = auth_headers(issue_node_ticket_grant(master, iid, "worker-2", expires_at=int(time.time()) + 60))
+
+        def api(method, path, payload):
+            return c.request(method, path, headers=H, json=payload).json()
+
+        with patch.object(redmine, "api_key", return_value="test-key"), \
+                patch.object(redmine, "_request", side_effect=lambda method, url, _key, payload=None, **kw:
+                             sender(method, url, payload)):
+            r = client_mcp.dispatch_tool("wayfinder_get_node_ticket", {"issue_id": iid}, api=api)
+            check("#1037 배정 노드 티켓의 스펙·플랜 읽기, 비공개 노트 제외",
+                  r.get("description") == description and r.get("journals") == [], str(r))
+            out = client_mcp.dispatch_tool("wayfinder_append_node_note", {"issue_id": iid, "notes": "검증 성공"}, api=api)
+            check("#1037 배정 권한으로 노트 추가", out == {"ok": True, "issue_id": iid, "worker": "worker-2"}, str(out))
+            r = c.get(base, headers=H).json()
+            check("#1037 같은 티켓에서 서명된 워커와 노트 되읽기",
+                  [j["notes"] for j in r.get("journals", [])] == ["[Wayfinder worker: worker-2]\n검증 성공"], str(r))
+            for body in ({"notes": "x", "status_name": "완료"}, {"notes": "x", "description": "교체"},
+                         {"notes": "x", "done_ratio": 100}, {"notes": " "}):
+                res = c.post(base + "/note", headers=H, json=body)
+                check("#1037 허용되지 않은 노트 요청 거절", res.status_code == 422 and len(notes) == 1, str(res.status_code))
+            check("#1037 다른 티켓·공용 워커 토큰·일반 쓰기 경로 거절",
+                  c.get(base.replace("1037", "1038"), headers=H).status_code == 403
+                  and c.get(base, headers=auth_headers(worker)).status_code == 403
+                  and c.post("/api/v1/redmine/note", headers=H, json={}).status_code == 403)
+            res = c.get(f"/api/v1/redmine/issue/{iid}", headers=auth_headers(requester))
+            check("#1037 기존 요청자 조회는 종전대로", res.status_code == 200
+                  and res.json()["journals"][0]["notes"] == "비공개")
+            with patch.object(redmine, "get_issue", return_value={"id": iid, "description": "일반 일감"}):
+                check("#1037 권한이 있어도 노드 표지 없는 일감은 거절", c.get(base, headers=H).status_code == 403)
+
+
 if __name__ == "__main__":
     for fn in (test_server_actually_compiles, test_every_route_declared, test_undeclared_is_an_error,
                test_models_carry_the_tag, test_reject_shape,
@@ -570,7 +625,7 @@ if __name__ == "__main__":
                test_gates_are_actually_wired, test_claim_filters_by_project,
                test_untagged_is_rejected_on_write_surfaces, test_path_normalization,
                test_senders_are_wired, test_usage_route_live, test_issue_routes_declared,
-               test_issue_routes_live):
+               test_issue_routes_live, test_wayfinder_node_ticket_live):
         fn()
     print(f"{'OK' if not FAIL else 'FAIL'} test_tagging: {PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)

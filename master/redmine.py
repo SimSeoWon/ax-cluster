@@ -643,7 +643,7 @@ def list_issues(*, project: str = PROJECT_ID, status: str = "open", tracker: str
     return {"total_count": (got or {}).get("total_count", len(rows)), "issues": rows}
 
 
-def get_issue(issue_id, *, key: str = "", url: str = "", sender=None) -> dict:
+def get_issue(issue_id, *, key: str = "", url: str = "", sender=None, include_private: bool = True) -> dict:
     """이슈 1건 상세 + 노트 이력(원전과 같이 `journals` 중 **본문 있는 것만**)."""
     base = (url or base_url()).rstrip("/")
     k = key or api_key()
@@ -668,7 +668,8 @@ def get_issue(issue_id, *, key: str = "", url: str = "", sender=None) -> dict:
         "journals": [{"user": (j.get("user") or {}).get("name", ""),
                       "notes": j.get("notes"),
                       "created_on": j.get("created_on")}
-                     for j in iss.get("journals") or [] if j.get("notes")],
+                     for j in iss.get("journals") or []
+                     if j.get("notes") and (include_private or not j.get("private_notes"))],
     })
     return out
 

@@ -27,7 +27,7 @@ from .models import (
     ClaimReq, HeartbeatReq, SubmitReq, SubmitFailReq, VerifyReq, CancelReq,
     AdminResetReq,
     WorkerPollReq, DirectiveReq, WorkPatchReq, AntiPatternNotifyReq, RedmineNoteReq,
-    RedmineIssueReq, RedmineLinkCommitReq, RedmineVersionReq, RedmineWikiReq,
+    NodeTicketNoteReq, RedmineIssueReq, RedmineLinkCommitReq, RedmineVersionReq, RedmineWikiReq,
     RedmineVersionPatchReq, RedmineVersionDeleteReq,
     WriterSignalReq, HistoryReq, AliasReq, NotAClassReq, RecipeSearchReq, \
     HistorySearchReq, FixStatusReq, FixCandidatesDismissReq, UsageReq
@@ -146,7 +146,7 @@ class InterviewSpecReq(_IssueReq):
 # ─────────────────────────────────────────
 
 def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200):
-    from fastapi import FastAPI, HTTPException
+    from fastapi import FastAPI, HTTPException, Request
     import uvicorn
 
     # 데몬 부팅 — 기존 동일-날짜 로그가 있으면 _N 접미사로 백업 후 새 파일 생성
@@ -729,6 +729,40 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         """이슈 1건 + 노트 이력 (원전 `get_issue`). 없는 번호는 `error` 로 **말한다**."""
         from ..redmine import get_issue
         return get_issue(issue_id)
+
+    def node_ticket(request: Request, issue_id: int):
+        from .. import map_block, redmine
+
+        grant = getattr(request.state, "node_ticket_grant", None)
+        if grant is None or grant.issue_id != issue_id:
+            raise HTTPException(403, "node ticket assignment required")
+        issue = redmine.get_issue(issue_id, include_private=False)
+        if "error" in issue:
+            raise HTTPException(502, "node ticket lookup failed")
+        try:
+            marker = map_block.parse_node(issue.get("description") or "")
+        except map_block.MapError:
+            marker = None
+        if marker is None or issue.get("id") != issue_id or issue.get("parent") != marker.root:
+            raise HTTPException(403, "assigned issue is not a Wayfinder node ticket")
+        return grant, issue
+
+    @app.get("/api/v1/wayfinder/issue/{issue_id}")
+    def node_ticket_get_ep(request: Request, issue_id: int):
+        return node_ticket(request, issue_id)[1]
+
+    @app.post("/api/v1/wayfinder/issue/{issue_id}/note")
+    def node_ticket_note_ep(request: Request, issue_id: int, req: NodeTicketNoteReq):
+        from ..redmine import update_issue
+
+        notes = req.notes.strip()
+        if not notes:
+            raise HTTPException(422, "notes must not be blank")
+        grant, _ = node_ticket(request, issue_id)
+        result = update_issue(issue_id, notes=f"[Wayfinder worker: {grant.worker}]\n{notes}")
+        if result.startswith("[주의]"):
+            raise HTTPException(502, "node ticket note update failed")
+        return {"ok": True, "issue_id": issue_id, "worker": grant.worker}
 
     @app.post("/api/v1/redmine/issue")
     def redmine_create_issue_ep(req: RedmineIssueReq):
@@ -1448,7 +1482,7 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
             _tok = load_role_token(_role)
             if _tok:
                 _scoped.append((_tok, _scope))
-        uvicorn.run(BearerAuthMiddleware(app, _auth_token, scoped=tuple(_scoped)),
+        uvicorn.run(BearerAuthMiddleware(app, _auth_token, scoped=tuple(_scoped), node_ticket_grants=True),
                     host=host, port=port, log_level="info")
     finally:
         stop_event.set()
