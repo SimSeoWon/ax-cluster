@@ -26,12 +26,14 @@ import os
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
 
 SCHEMA = 1
 STATE_NAME = "issue_lock.json"
 LOCK_NAME = ".issue_lock.lock"
 HISTORY_CAP = 50
 RELEASE_OPS = ("complete", "cancel", "finish")
+NODE_RUNNING, NODE_REVIEW, NODE_REWORK = "running", "review", "rework"
 
 
 class IssueLockError(RuntimeError):
@@ -87,6 +89,25 @@ def _load(root) -> dict:
         raise _bad(p, "history 가 목록이 아니다")
     if active is not None and str(active["issue_id"]) in paused:
         raise _bad(p, f"#{active['issue_id']} 가 활성과 보류에 동시에 있다")
+    nodes = data.get("node_assignments", {})
+    if not isinstance(nodes, dict):
+        raise _bad(p, "node_assignments 가 사전이 아니다")
+    running = set()
+    for k, rec in nodes.items():
+        _check_rec(p, rec, f"node_assignments[{k}]")
+        worker = rec.get("worker")
+        if (str(rec["issue_id"]) != k or rec["issue_id"] <= 0
+                or type(rec.get("root_id")) is not int or rec["root_id"] <= 0
+                or not isinstance(worker, str) or not worker.strip()
+                or not isinstance(rec.get("assignment_id"), str) or not rec["assignment_id"]
+                or rec.get("state") not in (NODE_RUNNING, NODE_REVIEW, NODE_REWORK)
+                or k in paused or (active and rec["issue_id"] == active["issue_id"])):
+            raise _bad(p, f"node_assignments[{k}] 기록이 잘못됐거나 단독 잠금과 겹친다")
+        if rec["state"] == NODE_RUNNING:
+            key = worker.casefold()
+            if key in running:
+                raise _bad(p, f"워커 {worker} 에 실행 중인 노드가 둘 이상이다")
+            running.add(key)
     return data
 
 
@@ -153,6 +174,14 @@ def is_tracked(root, issue_id) -> bool:
     return bool(a and a["issue_id"] == n) or str(n) in data["paused"]
 
 
+def node_assignments(root) -> dict[int, dict]:
+    """분산 배정 상태의 스냅샷. 단독 잠금과 같은 파일을 대조한다."""
+    if not state_path(root).exists():
+        return {}
+    with _locked(root):
+        return {int(k): dict(v) for k, v in _load(root).get("node_assignments", {}).items()}
+
+
 # ── 변경 ────────────────────────────────────────────────────────────────────
 
 def acquire(root, issue_id, *, branch: str, start_rev: str, by: str = "", why: str = "",
@@ -164,6 +193,8 @@ def acquire(root, issue_id, *, branch: str, start_rev: str, by: str = "", why: s
     n = int(issue_id)
     with _locked(root):
         data = _load(root)
+        if str(n) in data.get("node_assignments", {}):
+            return _refuse(logf, n, "acquire", "node_assigned", f"#{n} 는 분산 노드 배정으로 관리 중이다")
         a = data["active"]
         if a and a["issue_id"] == n:
             line = _emit(logf, n, "acquire", f"이미 활성 — {a.get('branch')} · 시작 {str(a.get('start_rev'))[:12]}")
@@ -259,3 +290,56 @@ def release(root, issue_id, *, op: str, by: str = "", why: str = "", logf=None) 
         _save(root, data)
         line = _emit(logf, n, op, f"해제({was}→없음) — 브랜치 {rec.get('branch')}")
     return {"ok": True, "issue_id": n, "op": op, "was": was, "record": dict(rec), "log": [line]}
+
+
+def reserve_node(root, issue_id: int, *, root_id: int, worker: str, logf=None) -> dict:
+    """마스터가 발주 조건을 확인한 노드를 예약한다. 발주·SSH 호출은 이 함수 밖에서 한다."""
+    if (type(issue_id) is not int or type(root_id) is not int or min(issue_id, root_id) <= 0
+            or issue_id == root_id or not isinstance(worker, str) or not worker.strip()):
+        return _refuse(logf, issue_id, "reserve_node", "invalid", "노드 번호·Root 번호·워커가 필요하다")
+    worker = worker.strip()
+    with _locked(root):
+        data = _load(root)
+        active = data["active"]
+        key = str(issue_id)
+        nodes = data.setdefault("node_assignments", {})
+        if (active and active["issue_id"] == issue_id) or key in data["paused"]:
+            return _refuse(logf, issue_id, "reserve_node", "local_tracked", "단독 잠금에 이미 등록됐다")
+        prev = nodes.get(key)
+        if prev and (prev["state"] != NODE_REWORK or prev["root_id"] != root_id):
+            return _refuse(logf, issue_id, "reserve_node", "node_busy", "이미 배정됐거나 검수 대기 중이다")
+        for rec in nodes.values():
+            if rec["state"] == NODE_RUNNING and rec["worker"].casefold() == worker.casefold():
+                return _refuse(logf, issue_id, "reserve_node", "worker_busy", f"{worker} 는 이미 실행 중이다",
+                               holder=rec["issue_id"])
+        rec = {"issue_id": issue_id, "root_id": root_id, "worker": worker, "assignment_id": uuid4().hex,
+               "state": NODE_RUNNING, "updated": _now()}
+        nodes[key] = rec
+        _record(data, "reserve_node", issue_id, worker, rec["assignment_id"])
+        _save(root, data)
+    return {"ok": True, "record": dict(rec), "log": [_emit(logf, issue_id, "reserve_node", worker)]}
+
+
+def advance_node_assignment(root, issue_id: int, *, assignment_id: str, to: str, by: str, why: str,
+                            logf=None) -> dict:
+    """마스터가 확인한 종료 → 검수, 또는 승인된 재작업·마감 결과를 기록한다."""
+    required = {NODE_REVIEW: NODE_RUNNING, NODE_REWORK: NODE_REVIEW, "finished": NODE_REVIEW}
+    if to not in required or not assignment_id or not by.strip() or not why.strip():
+        return _refuse(logf, issue_id, "advance_node", "invalid", "배정 번호·허용 전이·주체·근거가 필요하다")
+    with _locked(root):
+        data = _load(root)
+        nodes = data.get("node_assignments", {})
+        key = str(issue_id)
+        rec = nodes.get(key)
+        if rec is None or rec["assignment_id"] != assignment_id:
+            return _refuse(logf, issue_id, "advance_node", "stale_assignment", "현재 배정 번호와 다르다")
+        if rec["state"] != required[to]:
+            return _refuse(logf, issue_id, "advance_node", "invalid_state", f"현재 상태 {rec['state']}")
+        updated = {**rec, "state": to, "updated": _now()}
+        if to == "finished":
+            del nodes[key]
+        else:
+            nodes[key] = updated
+        _record(data, f"node_{to}", issue_id, by, why)
+        _save(root, data)
+    return {"ok": True, "record": updated, "log": [_emit(logf, issue_id, "advance_node", to)]}

@@ -194,10 +194,52 @@ def t_history_cap(tmp):
     check("최근 것이 남음", data["history"][-1]["op"] == "pause")
 
 
+def t_node_assignments(tmp):
+    def reserve(n, worker):
+        return IL.reserve_node(tmp, n, root_id=1008, worker=worker)
+
+    def move(n, rec, to, why="종료·검수 확인"):
+        return IL.advance_node_assignment(tmp, n, assignment_id=rec["assignment_id"],
+                                          to=to, by="master", why=why)
+
+    check("단독과 다른 노드는 공존", acq(tmp, 2000)["ok"])
+    first = reserve(1037, "worker-a")["record"]
+    check("독립 노드·워커는 동시에 배정", reserve(1038, "worker-b")["ok"])
+    check("같은 워커는 대소문자와 무관하게 중복 배정 거절", reserve(1040, "Worker-A")["reason"] == "worker_busy")
+    check("같은 노드 다른 워커도 거절", reserve(1037, "worker-c")["reason"] == "node_busy")
+    check("분산과 단독 중복 방지", acq(tmp, 1037)["reason"] == "node_assigned"
+          and reserve(2000, "worker-c")["reason"] == "local_tracked")
+    check("확인 근거 없으면 워커 슬롯 유지", not move(1037, first, IL.NODE_REVIEW, "")["ok"]
+          and reserve(1040, "worker-a")["reason"] == "worker_busy")
+    check("종료 뒤 워커만 재사용", move(1037, first, IL.NODE_REVIEW)["ok"]
+          and reserve(1040, "worker-a")["ok"] and reserve(1037, "worker-c")["reason"] == "node_busy")
+    check("검수에서 재작업 승인", move(1037, first, IL.NODE_REWORK)["ok"])
+    current = reserve(1037, "worker-c")["record"]
+    check("같은 티켓 재배정 뒤 늦은 종료 거절", not move(1037, first, IL.NODE_REVIEW)["ok"]
+          and IL.node_assignments(tmp)[1037] == current)
+    check("검수 뒤 마감은 보호 기록 해제", move(1037, current, IL.NODE_REVIEW)["ok"]
+          and move(1037, current, "finished")["ok"] and 1037 not in IL.node_assignments(tmp))
+
+
+def t_node_assignment_races(tmp):
+    from concurrent.futures import ThreadPoolExecutor
+
+    def race(pairs):
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            return list(pool.map(lambda p: IL.reserve_node(tmp, p[0], root_id=1008, worker=p[1]), pairs))
+
+    for pairs, reason in (([(1037, "a"), (1037, "b")], "node_busy"),
+                          ([(1038, "c"), (1039, "c")], "worker_busy")):
+        results = race(pairs)
+        check(f"동시 배정 경쟁 {reason}", sum(r["ok"] for r in results) == 1
+              and any(r.get("reason") == reason for r in results), str(results))
+
+
 def main() -> int:
     for fn in (t_acquire_free, t_same_issue_already, t_busy_names_holder, t_pause_cycle,
                t_pause_refusals, t_release, t_corrupt_not_overwritten,
-               t_concurrent_processes, t_concurrent_threads, t_history_cap, t_note_author):
+               t_concurrent_processes, t_concurrent_threads, t_history_cap, t_note_author,
+               t_node_assignments, t_node_assignment_races):
         run(fn)
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_issue_lock: {PASS}/{total} 통과")
