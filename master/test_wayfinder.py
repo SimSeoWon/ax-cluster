@@ -164,13 +164,38 @@ def _fresh(body="## 요청\n\n원문\n"):
     return rm
 
 
-def _made(rm=None):
-    rm = rm or _fresh()
-    lines, logf = _quiet()
-    out = WF.create_map(ROOT, "HUD 를 붙인다", SPECS, fog=["저장 형식"], confirm=True,
+def _build(rm, destination, specs, *, fog=(), out_of_scope=(), logf=None):
+    """`#1028` — 맵은 선행 없는 첫 노드로 만들고, 나머지는 제안·등록으로 키운다(실제 사용 순서).
+
+    `specs` 의 선행 없는 노드가 첫 노드다. 나머지는 적힌 순서대로 `propose_node → register_node` —
+    선행·파생 부모는 그때까지 생긴 번호로 바꾼다. 돌려주는 `created` 는 key → 번호(종전 모양 그대로).
+    """
+    logf = logf or _quiet()[1]
+    first = [x for x in specs if not x.get("deps")]
+    out = WF.create_map(ROOT, destination, first, fog=list(fog), out_of_scope=list(out_of_scope), confirm=True,
                         user_answer="좋아 등록해", rm=rm, logf=logf)
     assert out["ok"], out
-    return rm, out["created"]
+    c = dict(out["created"])
+    for x in specs:
+        if not x.get("deps"):
+            continue
+        parent = MB.ROOT if x.get("parent", MB.ROOT) == MB.ROOT else c[x["parent"]]
+        pr = WF.propose_node(ROOT, x["title"], x["type"], parent, deps=[c[d] for d in x["deps"]],
+                             summary=x.get("summary", ""), rm=rm, logf=logf)
+        reg = WF.register_node(ROOT, pr["proposal"], user_answer="응", rm=rm, logf=logf)
+        assert reg["ok"], reg
+        c[x["key"]] = reg["id"]
+    return c
+
+
+FIRST = [x for x in SPECS if not x["deps"]]                       # 첫 노드(선행 없음) — pre 하나
+FIRST2 = FIRST + [{"key": "sav", "title": "저장 형식 조사", "type": "프리필", "parent": "Root", "deps": [],
+                   "summary": "저장 범위"}]                        # 서로 의존 없는 첫 노드 둘
+
+
+def _made(rm=None):
+    rm = rm or _fresh()
+    return rm, _build(rm, "HUD 를 붙인다", SPECS, fog=["저장 형식"])
 
 
 # ── create_map ─────────────────────────────────────────────────────────────
@@ -178,28 +203,35 @@ def _made(rm=None):
 def test_create_map_preview():
     rm = _fresh()
     lines, logf = _quiet()
-    out = WF.create_map(ROOT, "HUD 를 붙인다", SPECS, rm=rm, logf=logf)
+    out = WF.create_map(ROOT, "HUD 를 붙인다", FIRST2, rm=rm, logf=logf)
     check("미리보기 ok", out["ok"] and out["confirmed"] is False)
     check("미리보기 쓰기 0건", rm.writes() == [], str(rm.writes()))
     check("미리보기 영역 글", out["preview"].startswith("<!-- ax:map:begin v=1 -->")
           and "<pre>" in out["preview"])
-    check("임시 번호 1..n", sorted(out["temp_ids"].values()) == [1, 2, 3, 4])
-    check("예정 쓰기 목록", sum(w.startswith("create_issue") for w in out["writes"]) == 4
-          and sum(w.startswith("create_relation") for w in out["writes"]) == 4
+    check("임시 번호 1..n", sorted(out["temp_ids"].values()) == [1, 2])
+    check("예정 쓰기 목록", sum(w.startswith("create_issue") for w in out["writes"]) == 2
+          and not any(w.startswith("create_relation") for w in out["writes"])
           and all("Redmine 부모 Root" in w for w in out["writes"] if w.startswith("create_issue"))
           and out["writes"][-1].startswith("update_issue"), str(out["writes"]))
     check("미리보기 로그", any("쓰기 0건" in x for x in lines))
     parsed = MB.parse(out["preview"])
-    check("미리보기 왕복", parsed is not None and len(parsed.nodes) == 4)
+    check("미리보기 왕복", parsed is not None and len(parsed.nodes) == 2)
 
 
 def test_create_map_confirm():
     rm = _fresh()
     lines, logf = _quiet()
-    out = WF.create_map(ROOT, "HUD 를 붙인다", SPECS, fog=["저장 형식"], confirm=True,
+    out = WF.create_map(ROOT, "HUD 를 붙인다", FIRST2, fog=["저장 형식"], confirm=True,
                         user_answer="좋아", rm=rm, logf=logf)
     check("등록 ok", out["ok"] and out["confirmed"], str(out))
-    c = out["created"]
+    first = out["created"]
+    check("첫 노드 둘 다 Frontier", sorted(f["id"] for f in out["frontier"]) == sorted(first.values()),
+          str(out["frontier"]))
+    check("첫 노드는 관계 없음", rm.relations == [], str(rm.relations))
+    check("첫 노드 쓰기 로그", sum(x.startswith("쓰기 —") for x in lines) == 2 + 1)
+    # 나머지는 제안·등록으로 자란다 — 종전 「한 번에 등록」 검사를 이 경로로 옮겼다
+    rm = _fresh()
+    c = _build(rm, "HUD 를 붙인다", SPECS, fog=["저장 형식"])
     creates = [x for x in rm.calls if x[0] == "create_issue"]
     order = [x[1] for x in creates]
     check("부모 먼저", order.index("사전조사 HUD") < order.index("HUD 위젯")
@@ -215,9 +247,10 @@ def test_create_map_confirm():
                                                                  (c["hud"], c["ver"]), (c["inv"], c["ver"])}, str(rels))
     hb = MB.parse(rm.issues[ROOT]["description"]).node(c["hud"])
     check("파생 부모는 지도 표에", hb is not None and hb.parent == c["pre"] and hb.deps == [c["pre"]])
-    first_rel = next(i for i, x in enumerate(rm.calls) if x[0] == "create_relation")
-    last_create = max(i for i, x in enumerate(rm.calls) if x[0] == "create_issue")
-    check("관계는 노드 뒤", first_rel > last_create)
+    # 관계는 이제 등록마다 생긴다(`#1028`) — 각 관계는 그 두 노드가 생긴 뒤에 건다(가짜 Redmine 번호는 1001 부터 차례)
+    made_at = {1001 + k: i for k, i in enumerate(i for i, x in enumerate(rm.calls) if x[0] == "create_issue")}
+    rel_at = [(i, x[1], x[2]) for i, x in enumerate(rm.calls) if x[0] == "create_relation"]
+    check("관계는 두 노드 뒤", rel_at and all(made_at[a] < i and made_at[b] < i for i, a, b in rel_at), str(rel_at))
     body = rm.issues[ROOT]["description"]
     check("영역 밖 보존", body.startswith("## 요청\n\n원문\n"))
     block = MB.parse(body)
@@ -225,22 +258,21 @@ def test_create_map_confirm():
     check("다이어그램", block.diagram.startswith("<pre>") and block.diagram.endswith("</pre>"))
     st = {n.id: n.state for n in block.nodes}
     check("초기 상태", st[c["pre"]] == "Frontier" and st[c["hud"]] == "차단" and st[c["ver"]] == "차단")
-    check("Frontier 결과", [f["id"] for f in out["frontier"]] == [c["pre"]])
-    check("쓰기 로그", sum(x.startswith("쓰기 —") for x in lines) == 4 + 4 + 1)
+    check("Frontier 결과", [f["id"] for f in WF.frontier(ROOT, rm=rm)["frontier"]] == [c["pre"]])
     check("등록 직후 대조 통과", WF.check(ROOT, rm=rm, logf=_quiet()[1])["ok"])
 
 
 def test_create_map_refusals():
     rm = _fresh()
     lines, logf = _quiet()
-    out = WF.create_map(ROOT, "목적", SPECS, confirm=True, user_answer="  ", rm=rm, logf=logf)
+    out = WF.create_map(ROOT, "목적", FIRST, confirm=True, user_answer="  ", rm=rm, logf=logf)
     check("답 없으면 거절", not out["ok"] and out["refused"] and rm.writes() == [])
     check("거절 로그", any(x.startswith("거절") for x in lines))
     rm2, _ = _made()
     n = len(rm2.writes())
-    out = WF.create_map(ROOT, "목적", SPECS, confirm=True, user_answer="응", rm=rm2, logf=_quiet()[1])
+    out = WF.create_map(ROOT, "목적", FIRST, confirm=True, user_answer="응", rm=rm2, logf=_quiet()[1])
     check("두 번째 지도 거절", not out["ok"] and "이미" in out["why"] and len(rm2.writes()) == n)
-    out = WF.create_map(ROOT, "목적", SPECS, rm=rm2, logf=_quiet()[1])
+    out = WF.create_map(ROOT, "목적", FIRST, rm=rm2, logf=_quiet()[1])
     check("두 번째 지도는 미리보기도 거절", not out["ok"])
     bad = [dict(SPECS[0], key="a", deps=["b"]), dict(SPECS[1], key="b", parent="Root", deps=["a"])]
     check("선행 순환", _raises(lambda: WF.create_map(ROOT, "목적", bad, rm=_fresh(), logf=_quiet()[1]),
@@ -256,15 +288,42 @@ def test_create_map_refusals():
         ROOT, "목적", [dict(SPECS[0], type="설계")], rm=_fresh(), logf=_quiet()[1]), "타입"))
     # 도중 실패 — 되돌리지 않고 보고
     rm3 = _fresh()
-    rm3.fail["create_issue"] = 3
-    out = WF.create_map(ROOT, "목적", SPECS, confirm=True, user_answer="응", rm=rm3, logf=_quiet()[1])
-    check("도중 실패 보고", not out["ok"] and out["created"] == [1001, 1002] and "노드 생성" in out["step"],
+    rm3.fail["create_issue"] = 2
+    out = WF.create_map(ROOT, "목적", FIRST2, confirm=True, user_answer="응", rm=rm3, logf=_quiet()[1])
+    check("도중 실패 보고", not out["ok"] and out["created"] == [1001] and "노드 생성" in out["step"],
           str(out))
     check("도중 실패 뒤 Root 안 씀", not any(x[0] == "update_issue" for x in rm3.calls))
-    rm4 = _fresh()
-    rm4.fail["create_relation"] = 2
-    out = WF.create_map(ROOT, "목적", SPECS, confirm=True, user_answer="응", rm=rm4, logf=_quiet()[1])
-    check("관계 실패 보고", not out["ok"] and len(out["created"]) == 4 and out["step"].startswith("관계"))
+    # 관계는 이제 등록(register_node)에서만 생긴다 — 그 자리의 관계 실패도 되돌리지 않고 보고한다
+    rm4, c4 = _fresh(), None
+    c4 = WF.create_map(ROOT, "목적", FIRST, confirm=True, user_answer="응", rm=rm4, logf=_quiet()[1])["created"]
+    pr = WF.propose_node(ROOT, "HUD 위젯", "작업", c4["pre"], deps=[c4["pre"]], rm=rm4, logf=_quiet()[1])
+    rm4.fail["create_relation"] = 1
+    out = WF.register_node(ROOT, pr["proposal"], user_answer="응", rm=rm4, logf=_quiet()[1])
+    check("등록 관계 실패 보고", not out["ok"] and len(out["created"]) == 1 and out["step"].startswith("관계"),
+          str(out))
+
+
+def test_first_nodes_only_1028():
+    """`#1028` 재현 — 맵은 목적지 + 지금 집을 수 있는 첫 노드로 시작한다. 선행 사슬·빈 맵은 처음에 거절."""
+    for name, nodes in (("① 선행 사슬 4노드(#741·#1008 꼴)", SPECS), ("② 노드 0개", [])):
+        for confirm in (False, True):
+            rm = _fresh()
+            out = WF.create_map(ROOT, "목적", nodes, confirm=confirm, user_answer="응", rm=rm, logf=_quiet()[1])
+            check(f"#1028 {name} 거절(confirm={confirm})", not out["ok"] and out.get("refused")
+                  and rm.writes() == [], str(out))
+    rm = _fresh()
+    out = WF.create_map(ROOT, "목적", SPECS, rm=rm, logf=_quiet()[1])
+    check("#1028 거절 사유가 걸린 노드·다음 길을 말한다", all(k in out["why"] for k in ("hud", "inv", "ver"))
+          and "register_node" in out["why"], out["why"])
+    out = WF.create_map(ROOT, "목적", [], rm=_fresh(), logf=_quiet()[1])
+    check("#1028 빈 맵 사유", "첫 노드" in out["why"], out["why"])
+    for name, nodes in (("③ 선행 없는 1노드", FIRST), ("④ 선행 없는 2노드", FIRST2)):
+        rm = _fresh()
+        out = WF.create_map(ROOT, "목적", nodes, confirm=True, user_answer="응", rm=rm, logf=_quiet()[1])
+        check(f"#1028 {name} 통과·전부 Frontier", out["ok"] and len(out["frontier"]) == len(nodes), str(out))
+    # 형식 오류는 규칙 판정보다 먼저 — 순환·모르는 선행은 종전처럼 WayfinderError
+    check("#1028 형식 오류가 먼저", _raises(lambda: WF.create_map(
+        ROOT, "목적", [dict(SPECS[0], deps=["x"])], rm=_fresh(), logf=_quiet()[1]), "선행"))
 
 
 def test_title_validation():
@@ -405,8 +464,7 @@ def _tree():
         {"key": "Bx", "title": "체력 저장", "type": "작업", "parent": "B", "deps": ["B"]},
     ]
     rm = _fresh()
-    out = WF.create_map(ROOT, "전투", specs, confirm=True, user_answer="응", rm=rm, logf=_quiet()[1])
-    c = out["created"]
+    c = _build(rm, "전투", specs)
     blk = MB.parse(rm.issues[ROOT]["description"])
     for k in ("A", "B", "A1", "A2", "A1a", "A2x", "Bx"):
         blk.node(c[k]).state = "완료"
@@ -531,14 +589,14 @@ def test_close_root():
 def test_logs():
     rm = _fresh()
     seen = []
-    WF.create_map(ROOT, "HUD", SPECS, confirm=True, user_answer="응", rm=rm, logf=seen.append)
+    WF.create_map(ROOT, "HUD", FIRST2, confirm=True, user_answer="응", rm=rm, logf=seen.append)
     writes = len(rm.writes())
     check("쓰기마다 로그", sum(x.startswith("쓰기 —") for x in seen) == writes, f"{seen}")
     import io
     import contextlib
     buf = io.StringIO()
     with contextlib.redirect_stderr(buf):
-        WF.claim(ROOT, 1002, "x", rm=rm)
+        WF.claim(ROOT, 1999, "x", rm=rm)
     check("기본 로그는 stderr [wayfinder]", buf.getvalue().startswith("[wayfinder] 거절"))
 
 
@@ -546,10 +604,9 @@ def test_end_to_end_direct():
     """MCP 없이 모듈 함수만으로 한 바퀴 — C8 근거."""
     rm = _fresh()
     log = []
-    pv = WF.create_map(ROOT, "HUD", SPECS, rm=rm, logf=log.append)
+    pv = WF.create_map(ROOT, "HUD", FIRST, rm=rm, logf=log.append)
     ok = pv["ok"] and not rm.writes()
-    c = WF.create_map(ROOT, "HUD", SPECS, fog=["저장 형식"], confirm=True, user_answer="응", rm=rm,
-                      logf=log.append)["created"]
+    c = _build(rm, "HUD", SPECS, fog=["저장 형식"], logf=log.append)
     ok &= WF.claim(ROOT, c["pre"], "claude", rm=rm, logf=log.append)["ok"]
     rm.issues[c["pre"]]["status"] = "완료"
     ok &= WF.on_node_closed(c["pre"], rm=rm, logf=log.append)["changed"]
@@ -582,10 +639,7 @@ def test_end_to_end_direct():
 def _fogged(fog=("저장 형식", "네트워크 동기화", "로컬라이즈"), oos=("멀티플레이 — 이번 범위 아님",)):
     """노드 4개 지도 + 안개 셋 · 범위 밖 하나."""
     rm = _fresh()
-    out = WF.create_map(ROOT, "HUD 를 붙인다", SPECS, fog=list(fog), out_of_scope=list(oos), confirm=True,
-                        user_answer="응", rm=rm, logf=_quiet()[1])
-    assert out["ok"], out
-    return rm, out["created"]
+    return rm, _build(rm, "HUD 를 붙인다", SPECS, fog=fog, out_of_scope=oos)
 
 
 def _map(rm):
@@ -905,6 +959,7 @@ def test_node_out_changed_between():
 
 def main() -> int:
     for fn in (test_create_map_preview, test_create_map_confirm, test_create_map_refusals,
+               test_first_nodes_only_1028,
                test_title_validation, test_compute_states, test_check, test_sync,
                test_sync_keeps_reverify, test_on_node_closed, test_propose_node, test_register_node,
                test_claim, test_mark_verified, test_close_root, test_logs, test_end_to_end_direct,

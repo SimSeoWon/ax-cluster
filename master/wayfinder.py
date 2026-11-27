@@ -523,6 +523,14 @@ def create_map(root_id, destination, nodes, *, fog=(), out_of_scope=(), confirm=
     log, rm = _log_of(logf), _port(rm)
     rid = _issue_id(root_id, "Root")
     order = _validate_specs(nodes, log)
+    # `#1028` — 맵은 목적지 + 지금 집을 수 있는 첫 노드에서 시작해 자란다(#982 조사·리포트 206 §2).
+    #    처음부터 선행 사슬을 깔면 설계서를 먼저 다 만드는 분산 작업(work) 방식으로 되돌아간다.
+    if not order:
+        return _refuse(log, "첫 노드가 없다 — 맵은 목적지와 지금 집을 수 있는 노드 하나 이상으로 시작한다")
+    chained = [s["key"] for s in order if s["deps"]]
+    if chained:
+        return _refuse(log, f"선행이 걸린 노드는 처음에 만들지 않는다: {', '.join(chained)} — 처음 노드는 지금 집을 수 "
+                            "있어야 하고, 나머지는 앞 노드가 끝난 뒤 제안·등록(propose_node → register_node)으로 붙인다")
     if confirm and not str(user_answer or "").strip():
         return _refuse(log, "confirm=True 인데 사용자 답(user_answer)이 없다 — 등록하지 않는다")
     root = _get(rm, rid)
