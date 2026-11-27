@@ -1304,6 +1304,8 @@ def wayfinder_create_tool(root_id: int, destination: str, nodes: list[dict], fog
     """Root 일감에 웨이파인더 맵(목적지·노드·안개·비범위)을 만든다 (`#982`).
 
     `nodes` 항목은 `{"key", "title", "type"(프리필·작업·검증), "parent": "Root"|<key>, "deps": [keys], "summary"}`.
+    `#1028` — 맵은 목적지 + **지금 집을 수 있는 첫 노드**(선행 없음, 하나 이상)로 시작한다. 노드 0개나 선행이 걸린
+    노드는 거절된다 — 나머지 노드는 앞 노드가 끝난 뒤 `wayfinder_propose_tool` → `wayfinder_register_tool` 로 붙인다.
     `confirm=False`(기본)는 **미리보기뿐** — Redmine 쓰기 0건이고 노드 번호는 임시 번호다. 미리보기를 사용자에게
     보이고 동의를 받은 뒤 같은 입력으로 `confirm=True` + `user_answer`(사용자 동의 원문)를 주면 노드 일감·선행 관계·
     Root 본문의 지도를 등록한다. `user_answer` 가 비면 거절한다. 도중 실패는 되돌리지 않고 이미 만든 번호를 돌려준다.
