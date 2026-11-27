@@ -1306,9 +1306,9 @@ def wayfinder_create_tool(root_id: int, destination: str, nodes: list[dict], fog
     `nodes` 항목은 `{"key", "title", "type"(프리필·작업·검증), "parent": "Root"|<key>, "deps": [keys], "summary"}`.
     `#1028` — 맵은 목적지 + **지금 집을 수 있는 첫 노드**(선행 없음, 하나 이상)로 시작한다. 노드 0개나 선행이 걸린
     노드는 거절된다 — 나머지 노드는 앞 노드가 끝난 뒤 `wayfinder_propose_tool` → `wayfinder_register_tool` 로 붙인다.
-    `confirm=False`(기본)는 **미리보기뿐** — Redmine 쓰기 0건이고 노드 번호는 임시 번호다. 미리보기를 사용자에게
-    보이고 동의를 받은 뒤 같은 입력으로 `confirm=True` + `user_answer`(사용자 동의 원문)를 주면 노드 일감·선행 관계·
-    Root 본문의 지도를 등록한다. `user_answer` 가 비면 거절한다. 도중 실패는 되돌리지 않고 이미 만든 번호를 돌려준다.
+    `confirm=False`(기본)는 **미리보기뿐** — Redmine 쓰기 0건. 노드는 예정 키 P1·P2…로 표시한다(`#1036`).
+    동의 뒤 같은 입력으로 `confirm=True` + `user_answer`(동의 원문)를 주면 Root 본문에만 등록한다.
+    응답의 `created` 는 입력 key → 예정 키다. 일감·blocks는 선점 때 생긴다. 빈 동의는 거절한다.
     """
     from .. import wayfinder
     try:
@@ -1350,12 +1350,13 @@ def wayfinder_sync_tool(root_id: int) -> str:
 
 @mcp.tool()
 def wayfinder_propose_tool(root_id: int, title: str, type: str, parent: str,  # noqa: A002
-                           deps: list[int] | None = None, summary: str = "", graduates: str = "") -> str:
+                           deps: list[int | str] | None = None, summary: str = "", graduates: str = "") -> str:
     """새 노드 제안 (`#982`) — **Redmine 쓰기 0건.**
 
     `graduates`(`#1000`) — 이 노드가 졸업시킬 안개 줄(글 그대로 또는 1부터 센 번호). 등록 때 노드와 함께 안개에서 걷힌다.
 
-    `type` 은 프리필·작업·검증, `parent` 는 "Root" 또는 노드 번호. 응답의 `duplicates` 는 붙는 자리에서 Root 까지
+    `type` 은 프리필·작업·검증, `parent` 는 "Root" 또는 노드 번호·예정 키 P<n>. `deps`도 번호·예정 키를 받는다.
+    응답의 `duplicates` 는 붙는 자리에서 Root 까지
     모든 단계의 형제와 비교한 중복 후보 점수(판정 아님), `reverify` 는 추가로 재검증 대상이 될 완료 노드다.
     제안을 사용자에게 보이고, 동의를 받으면 응답의 `proposal` 로 `wayfinder_register_tool` 을 부른다.
     """
@@ -1373,8 +1374,8 @@ def wayfinder_edit_propose_tool(root_id: int, op: str, target: str = "", text: s
     """맵 편집 제안 (`#1000`) — **Redmine 쓰기 0건.** 노드 없이 안개·범위 밖·목적지를 바꾸거나 노드를 범위 밖으로 돌린다.
 
     `op`: fog_add(text) · fog_resolve(target, reason=결정 근거 — Root 노트에만 남는다) · fog_to_out(target, reason) ·
-    destination(text) · out_edit(target, text) · out_to_fog(target, text 선택) · node_out(target=노드 번호, reason).
-    `target` 은 줄 글 그대로 또는 1부터 센 번호(node_out 은 노드 번호). 응답의 `before`·`after` 를 사용자에게 보이고,
+    destination(text) · out_edit(target, text) · out_to_fog(target, text 선택) · node_out(target=노드 번호 또는 P<n>, reason).
+    `target` 은 줄 글 그대로 또는 1부터 센 번호(node_out 은 노드 번호·예정 키). 응답의 `before`·`after` 를 사용자에게 보이고,
     동의를 받으면 `proposal` 로 `wayfinder_edit_apply_tool` 을 부른다. node_out 은 파생 자식이 있으면 자식 목록과 함께
     거절된다(`refused`).
     """
@@ -1393,6 +1394,7 @@ def wayfinder_edit_apply_tool(root_id: int, proposal: dict, user_answer: str) ->
     `proposal` 은 `wayfinder_edit_propose_tool` 응답의 `proposal`, `user_answer` 는 사용자 동의 원문(필수, 비면 거절).
     지금 지도로 다시 계산하고 대조에 차이가 있으면 거절한다. 전·후·근거는 Root 노트에 남는다. node_out 은 관계 삭제 →
     Root → 노드 닫기 순서이고, 닫기만 실패하면 `step: 노드 닫기`·`map_written: true` 로 보고된다(되돌리지 않음).
+    예정 노드의 node_out은 지도만 쓴다(관계 삭제·일감 닫기 없음).
     """
     from .. import wayfinder
     try:
@@ -1407,6 +1409,7 @@ def wayfinder_register_tool(root_id: int, proposal: dict, user_answer: str) -> s
 
     `proposal` 은 `wayfinder_propose_tool` 응답의 `proposal`, `user_answer` 는 제안을 보인 뒤 받은 사용자 동의
     원문(필수, 비면 거절). 중복 후보·재검증 대상은 지금 지도로 다시 계산하고, 대조에 차이가 있으면 거절한다.
+    지도에만 예정 키 P<n>으로 등록한다. 응답 `id`는 예정 키이며 Redmine 일감은 선점 때 만든다(`#1036`).
     """
     from .. import wayfinder
     try:
@@ -1416,11 +1419,12 @@ def wayfinder_register_tool(root_id: int, proposal: dict, user_answer: str) -> s
 
 
 @mcp.tool()
-def wayfinder_claim_tool(root_id: int, node_id: int, owner: str) -> str:
+def wayfinder_claim_tool(root_id: int, node_id: int | str, owner: str) -> str:
     """Frontier 노드를 선점한다 (`#982`) — 지도에 담당을 적고 작업중으로 옮긴다.
 
-    지도만 바꾸고 Redmine 담당자는 바꾸지 않는다. Frontier 가 아닌 노드는 거절한다. 노드 일감 자체는 보통의
-    일감 흐름(플랜·`issue_start`)으로 처리한다.
+    `node_id`는 일감 번호 또는 예정 키 P<n>. 예정 노드는 이때 일감·선행 blocks를 만들고 지도 키와 참조를
+    새 번호로 바꾼다(`#1036`). 응답 `id`가 일감 번호, `key`가 옛 예정 키다. 기존 번호 노드는 지도만 바꾼다.
+    Redmine 담당자는 바꾸지 않는다. Frontier 아닌 노드는 거절한다. 응답의 `id`로 보통의 일감 흐름을 시작한다.
     """
     from .. import wayfinder
     try:
