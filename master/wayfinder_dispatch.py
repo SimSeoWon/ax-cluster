@@ -1,7 +1,9 @@
 """웨이파인더에서 이번 사이클에 발주할 노드와 워커를 고른다."""
 from __future__ import annotations
 
-from . import issue_lock, map_block, plan_block, plan_start, spec_block, wayfinder
+import time
+
+from . import auth, issue_lock, map_block, plan_block, plan_start, spec_block, wayfinder
 from .work import runner
 
 
@@ -23,7 +25,7 @@ def _plan_problem(issue: dict, *, rework: bool) -> str:
     return ""
 
 
-def candidates(root_id: int, node_ids, *, rm=None, lock_root=None) -> dict:
+def candidates(root_id: int, node_ids, *, rm=None, lock_root=None, registered_workers=None) -> dict:
     """요청 대상만 대조하고 발주 가능 여부와 대기 사유를 돌려준다."""
     root_id = wayfinder._issue_id(root_id, "Root")
     node_ids = list(dict.fromkeys(wayfinder._node_ref(node, "노드") for node in node_ids))
@@ -37,9 +39,7 @@ def candidates(root_id: int, node_ids, *, rm=None, lock_root=None) -> dict:
         return {"ok": False, "root_id": root_id, "why": "지도와 Redmine 대조 결과에 차이가 있다",
                 "differences": differences}
 
-    assignments = issue_lock.node_assignments(lock_root)
-    active = issue_lock.current(lock_root) or {}
-    paused = issue_lock.paused(lock_root)
+    active, paused, assignments = issue_lock.snapshot(lock_root)
     ready, waiting = [], []
     for node_id in node_ids:
         node = block.node(node_id)
@@ -52,7 +52,7 @@ def candidates(root_id: int, node_ids, *, rm=None, lock_root=None) -> dict:
             why = "티켓을 준비하고 착수 전 인터뷰를 진행해야 한다"
         elif assignment and not rework:
             why = "실행 중이거나 검수 대기인 배정이 있다"
-        elif active.get("issue_id") == node_id or node_id in paused:
+        elif (active and active["issue_id"] == node_id) or node_id in paused:
             why = "단독 일감 잠금으로 관리 중이다"
         elif node.state != wayfinder.FRONTIER and not (rework and node.state == wayfinder.WORKING):
             why = f"발주 가능한 지도 상태가 아니다 ({node.state})"
@@ -72,7 +72,39 @@ def candidates(root_id: int, node_ids, *, rm=None, lock_root=None) -> dict:
             waiting.append({"id": node_id, "why": why})
         else:
             ready.append({"id": node_id, "title": node.title})
-    return {"ok": True, "root_id": root_id, "ready": ready, "waiting": waiting}
+    result = {"ok": True, "root_id": root_id, "ready": ready, "waiting": waiting}
+    if registered_workers is not None:
+        busy = {rec["worker"].casefold() for rec in assignments.values()
+                if rec["state"] == issue_lock.NODE_RUNNING}
+        available = []
+        for host in registered_workers:
+            key = host.casefold()
+            if key not in busy:
+                available.append(host)
+                busy.add(key)
+        result["worker_candidates"] = [
+            {"id": node["id"], "worker": host} for node, host in zip(ready, available)
+        ]
+        result["awaiting_worker"] = [
+            {"id": node["id"], "why": "현재 배정 기록상 비어 있는 등록 워커가 없다"}
+            for node in ready[len(available):]
+        ]
+    return result
+
+
+def preview(root_id: int, node_ids) -> dict:
+    """레지스트리와 잠금 장부로 예상 배정을 계산한다. 워커 연결 상태는 발주 시 확인한다."""
+    from .projects.config import Registry
+    from .work import mode
+
+    config = Registry.load().config_of(runner.SELF_PROJECT)
+    selected, _ = mode.current()
+    registered = [shop.host for shop in config.workshops.values() if shop.drivable and shop.user and shop.path]
+    result = candidates(root_id, node_ids, registered_workers=registered if selected in runner.SESSION1_MODES else ())
+    result.update(dry_run=True, worker_mode=selected)
+    if selected not in runner.SESSION1_MODES:
+        result["worker_reason"] = f"티켓 발주를 지원하는 워커 지휘자 모드가 아니다 ({selected})"
+    return result
 
 
 def reserve_worker(lock_root, root_id: int, issue_id: int, facts, *, mode: str, clean=None) -> dict:
@@ -95,3 +127,32 @@ def reserve_worker(lock_root, root_id: int, issue_id: int, facts, *, mode: str, 
             return result
         pool = [other for other in pool if other.host.casefold() != worker.host.casefold()]
     return {"ok": False, "why": "배정 가능한 등록 워커가 없다"}
+
+
+def run_assignment(lock_root, record: dict, worker, *, mode: str) -> dict:
+    """현재 예약에만 티켓 권한을 발급하고 배정된 워커를 실행한다."""
+    issue_id = record["issue_id"]
+    current = issue_lock.node_assignments(lock_root).get(issue_id)
+    if current != record or record["state"] != issue_lock.NODE_RUNNING or worker.host != record["worker"]:
+        return {"rc": 1, "termination_confirmed": False, "why": "현재 배정과 실행 요청이 일치하지 않는다"}
+    try:
+        grant = auth.issue_node_ticket_grant(auth.load_token(), issue_id, worker.host,
+                                            expires_at=int(time.time()) + runner.DEFAULT_TIMEOUT)
+    except (auth.AuthError, ValueError, OSError) as error:
+        return {"rc": 1, "termination_confirmed": True,
+                "why": f"권한 발급 실패로 워커를 실행하지 않았다 ({type(error).__name__})"}
+
+    termination_confirmed = False
+
+    def confirm_exit():
+        nonlocal termination_confirmed
+        termination_confirmed = True
+
+    try:
+        rc, _ = runner.run_node_ticket(worker, issue_id, assignment_id=record["assignment_id"],
+                                       grant=grant, mode=mode, on_exit=confirm_exit)
+    except Exception as error:  # 실행을 시작했을 수 있으므로 종료 근거를 확인한다.
+        return {"rc": 1, "termination_confirmed": termination_confirmed,
+                "why": f"워커 실행 경로 오류 ({type(error).__name__})"}
+    return {"rc": rc, "termination_confirmed": termination_confirmed,
+            "why": f"워커 실행 종료 확인 (rc={rc})" if termination_confirmed else "원격 종료 미확인"}

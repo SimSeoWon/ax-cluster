@@ -62,6 +62,15 @@ LEASE_SEC = 1200
 HEARTBEAT_SEC = 240
 DEFAULT_TIMEOUT = 3600          # claude -p 한 번의 상한. 넘으면 BLOCKED (fail-closed)
 
+NODE_TICKET_INSTRUCTION = (
+    "Read Wayfinder ticket {issue_id} using ax-client wayfinder_get_node_ticket. "
+    "Use its approved specification, tasks, and verification checklist as the work instructions. "
+    "Make code changes only in the assigned issue worktree. If a required worktree or permission "
+    "is missing, record the blocker. Use wayfinder_append_node_note on the same ticket to record "
+    "what you did, each verification result, and any remaining problems and changes needed. "
+    "Keep the ticket open for review. Keep the ticket grant out of notes and output."
+)
+
 DONE = "DONE"
 BLOCKED = "BLOCKED"
 
@@ -848,7 +857,8 @@ def stop_command(run_id: str) -> str:
 
 def _ssh_stoppable(host: str, user: str, cmd: str, *, timeout: int = DEFAULT_TIMEOUT,
                    task_id: str = "", stop=None, poll: int = SSH_STOP_POLL_SEC,
-                   popen=None, logf=None, cleanup_timeout: int = SSH_STOP_CLEANUP_SEC) -> tuple:
+                   popen=None, logf=None, cleanup_timeout: int = SSH_STOP_CLEANUP_SEC,
+                   node_ticket_grant: str = "", on_exit=None) -> tuple:
     """리눅스 워커에서 지휘자를 SSH 로 돌리되 **실행 중에 끊을 수 있게** 한다. `(rc, stdout)`.
 
     `bundle._ssh` 와 같은 계약이다 — **예외를 던지지 않고**, 정상 종료면 원격 rc 와 stdout,
@@ -863,12 +873,17 @@ def _ssh_stoppable(host: str, user: str, cmd: str, *, timeout: int = DEFAULT_TIM
     who = f"{task_id or '?'} @{host}"
     run_id = _uuid.uuid4().hex
     ask = stop if stop is not None else (lambda: stop_requested(task_id, host) if task_id else False)
+    if node_ticket_grant:
+        cmd = "IFS= read -r AX_NODE_TICKET_GRANT && export AX_NODE_TICKET_GRANT && " + cmd
     argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", *bundle._mux_opts(),
             f"{user}@{host}", stoppable_command(cmd, run_id)]
     try:
+        input_pipe = {"stdin": subprocess.PIPE} if node_ticket_grant else {}
         p = (popen or _POPEN)(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                        text=True, encoding="utf-8", errors="replace")
+                              text=True, encoding="utf-8", errors="replace", **input_pipe)
     except (subprocess.SubprocessError, OSError) as e:
+        if on_exit is not None:
+            on_exit()
         return 255, f"{type(e).__name__}: {e}"
 
     def kill_remote(reason: str) -> str:
@@ -886,6 +901,8 @@ def _ssh_stoppable(host: str, user: str, cmd: str, *, timeout: int = DEFAULT_TIM
             pass
         if rc == 0 and word == "GONE":
             log(f"{who} 원격 종료 확인 — 그 실행의 세션에 남은 프로세스 없음")
+            if on_exit is not None:
+                on_exit()
             return "원격 종료 확인"
         if rc == 0 and word == "NOSID":
             log(f"{who} 원격 실행 흔적 없음 — 이미 끝났거나 시작 전이다")
@@ -894,11 +911,19 @@ def _ssh_stoppable(host: str, user: str, cmd: str, *, timeout: int = DEFAULT_TIM
         return "원격 종료 미확인"
 
     deadline = _t.monotonic() + timeout
+    send_grant = bool(node_ticket_grant)
     try:
         while True:
             remaining = deadline - _t.monotonic()
             try:
-                out, err = p.communicate(timeout=max(0.1, min(poll, remaining)))
+                send = {"input": node_ticket_grant + "\n"} if send_grant else {}
+                send_grant = False
+                out, err = p.communicate(timeout=max(0.1, min(poll, remaining)), **send)
+                if node_ticket_grant:
+                    out = (out or "").replace(node_ticket_grant, "[ticket grant]")
+                    err = (err or "").replace(node_ticket_grant, "[ticket grant]")
+                if on_exit is not None and 0 <= p.returncode < 255:
+                    on_exit()
                 if p.returncode != 0 and (err or "").strip():
                     # `#969` 18 (R346-3·R348-3) — 접속 실패(호스트 키·인증·거부)의 원인은 stderr 에만 있다.
                     #    반환 계약((rc, stdout))은 그대로 두고 로그에 남긴다.
@@ -1000,7 +1025,8 @@ def _session1_after(facts, task_id: str, base: str, sep: str, since: str, out: s
 
 def run_worker_session1(facts, task_id: str, *, files=(), timeout: int = DEFAULT_TIMEOUT,
                         sleeper=None, logf=None, now=None, popup=None, cancelled=None,
-                        cleanup_timeout=15, mode: str = "codex") -> tuple:
+                        cleanup_timeout=15, mode: str = "codex",
+                        node_issue_id: int | None = None, node_ticket_grant: str = "", on_exit=None) -> tuple:
     """세션 1 런처를 거쳐 지휘자를 돌린다. `(rc, stdout)` (`#401` codex · `#832` claude).
 
     🔴 [중요] **마스터가 보내는 것은 데이터뿐이다** — `job.json` 의 `task_id`·`files`·`mode`.
@@ -1052,6 +1078,10 @@ def run_worker_session1(facts, task_id: str, *, files=(), timeout: int = DEFAULT
                 if rc == 0 and (result or "").strip() == request_id:
                     stopped_confirmed = True
                     log(f"{who} 런처 종료 확인 — 해당 시도의 done.flag")
+                    if on_exit is not None:
+                        termination = f"{facts.path}{sep}{rel.replace('/', sep)}{sep}terminated.flag"
+                        if (_b._remote_read(facts, termination) or "").strip() == request_id:
+                            on_exit()
                     break
                 remaining = deadline - _t.monotonic()
                 if remaining > 0:
@@ -1072,13 +1102,15 @@ def run_worker_session1(facts, task_id: str, *, files=(), timeout: int = DEFAULT
         # 런처도 거절하지만, 모르는 이름을 워커까지 보낼 이유가 없다
         log(f"{who} 🔴 세션 1 모드 거절 — {mode!r} (허용 {list(SESSION1_MODES)})")
         return 1, f"[세션1] 모르는 지휘자 모드 {mode!r} — 보내지 않았다\nRESULT: BLOCKED"
-    job = _json.dumps({"task_id": task_id, "files": [str(f) for f in (files or [])],
-                       "mode": mode, "request_id": request_id, "self_repo": self_repo_mounted(),
-                       "approvals": _approval_overrides(), "timeout": timeout,
-                       "expires_at": t0 + timeout},
-                      ensure_ascii=False)
+    job = {"task_id": task_id, "files": [str(f) for f in (files or [])],
+           "mode": mode, "request_id": request_id, "self_repo": self_repo_mounted(),
+           "approvals": _approval_overrides(), "timeout": timeout, "expires_at": t0 + timeout}
+    if node_issue_id is not None:
+        job["node_issue_id"] = node_issue_id
     try:
-        _b._remote_write(facts, f"{rel}/job.json", job + "\n", base="checkout")
+        if node_issue_id is not None:
+            _b._remote_write(facts, f"{rel}/node-ticket.grant", node_ticket_grant + "\n", base="checkout")
+        _b._remote_write(facts, f"{rel}/job.json", _json.dumps(job, ensure_ascii=False) + "\n", base="checkout")
     except Exception as e:                                   # noqa: BLE001
         stop("job 전송 실패")
         log(f"{who} 🔴 job 전송 실패 — {type(e).__name__}: {e}")
@@ -1128,6 +1160,12 @@ def run_worker_session1(facts, task_id: str, *, files=(), timeout: int = DEFAULT
                     log(f"{who} 🔴 결과 시도 불일치 — 현재 job 의 결과가 아니다")
                     return 1, "[세션1] 결과 request_id가 현재 job과 다르다 — 옛 결과 회수 거부"
                 out = _b._remote_read(facts, f"{base}{sep}out.txt") or ""
+                if node_ticket_grant:
+                    out = out.replace(node_ticket_grant, "[ticket grant]")
+                if on_exit is not None:
+                    marker = (_b._remote_read(facts, f"{base}{sep}terminated.flag") or "").strip()
+                    if marker == request_id:
+                        on_exit()
                 rct = (_b._remote_read(facts, f"{base}{sep}rc.txt") or "1").strip()
                 try:
                     rc_i = int(rct)
@@ -1154,6 +1192,29 @@ def run_worker_session1(facts, task_id: str, *, files=(), timeout: int = DEFAULT
     finally:
         if not completed:
             stop("결과 회수 전 요청자 종료")
+
+
+def run_node_ticket(facts, issue_id: int, *, assignment_id: str, grant: str, mode: str,
+                    timeout: int = DEFAULT_TIMEOUT, on_exit=None) -> tuple:
+    """배정된 티켓으로 워커를 시작하고 확인된 프로세스 종료만 호출자에 알린다."""
+    if type(issue_id) is not int or issue_id < 1 or not re.fullmatch(r"[a-f0-9]{32}", assignment_id):
+        raise ValueError("노드 일감 번호와 배정 번호가 필요하다")
+    if not grant or "\n" in grant or "\r" in grant or mode not in SESSION1_MODES:
+        raise ValueError("노드 티켓 권한과 지원하는 지휘자 모드가 필요하다")
+    if mode == "claude":
+        from .conductor_auth import check_claude_auth
+        checked = check_claude_auth(facts)
+        if not checked["ok"]:
+            if on_exit is not None:
+                on_exit()
+            return 1, "워커 Claude 인증 준비 실패"
+    task_id = f"node-{issue_id}-{assignment_id}"
+    if facts.windows:
+        return run_worker_session1(facts, task_id, mode=mode, timeout=timeout, cancelled=lambda: False,
+                                   node_issue_id=issue_id, node_ticket_grant=grant, on_exit=on_exit)
+    cmd = agent_command(facts, facts.path, NODE_TICKET_INSTRUCTION.format(issue_id=issue_id), mode=mode)
+    return _ssh_stoppable(facts.host, facts.user, cmd, task_id=task_id, timeout=timeout, stop=lambda: False,
+                          node_ticket_grant=grant, on_exit=on_exit)
 
 
 def _project_of(facts) -> str:

@@ -97,7 +97,9 @@ description: AX 마스터에서 탐색이 필요한 큰 일감을 웨이파인�
      `ax-projects:wayfinder_claim_tool(root_id, node_id, prepare_only=True)` 로 한 건씩 티켓을 준비한다.
      번호가 있는 Frontier는 그 티켓을 재사용한다. 준비한 노드는 담당 없이 Frontier에 남는다.
    - 각 티켓에서 `plan_start_tool`로 착수 전 인터뷰를 열고 사용자와 명세·태스크·개발 완료 체크리스트를 확정한다.
-   - 사용자가 발주를 요청하면 준비된 티켓을 가용 워커에 배정한다. 미준비 노드와 대기 사유를 보여 준다.
+   - `ax-projects:wayfinder_dispatch_preview_tool(root_id, node_ids)` 로 드라이런한다.
+     준비된 티켓, 대기 사유, 잠금 장부와 레지스트리 기준 예상 워커를 보여 준다.
+     드라이런이 끝나면 사용자의 실제 발주 요청을 기다린다.
    - 이번 묶음의 결과를 티켓에서 모아 검수한다. 선행이 끝나거나 안개가 걷힌 노드는 다음 사이클에서 준비한다.
      수정이 필요한 노드는 같은 티켓에 근거와 수정 요구를 남긴다.
 7. 지도가 실제와 다르게 보이면 `ax-projects:wayfinder_sync_tool(root_id)` 로 다시 계산한다. 바뀐 것이 없으면 쓰지 않는다.

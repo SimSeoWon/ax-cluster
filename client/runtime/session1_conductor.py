@@ -84,6 +84,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -101,6 +102,8 @@ DEFAULT_MODE = "codex"
 MODE_REFUSE_RC = 2                   # 모드 거절 — 지휘자를 돌리지 않았다
 SESSION0_REFUSE_RC = 3               # 세션 0 거절 — 지휘자를 돌리지 않았다 (`#832`)
 JOB, OUT, RC, DONE = "job.json", "out.txt", "rc.txt", "done.flag"
+TICKET_GRANT = "node-ticket.grant"
+TERMINATED = "terminated.flag"
 CANCEL = "cancel.flag"
 LOG = "launcher.log"
 
@@ -171,6 +174,15 @@ SELF_REPO_NOTE = (
     "A search that finds no matches is not a failure."
 )
 
+NODE_TICKET_INSTRUCTION = (
+    "Read Wayfinder ticket {issue_id} using ax-client wayfinder_get_node_ticket. "
+    "Use its approved specification, tasks, and verification checklist as the work instructions. "
+    "Make code changes only in the assigned issue worktree. If a required worktree or permission "
+    "is missing, record the blocker. Use wayfinder_append_node_note on the same ticket to record "
+    "what you did, each verification result, and any remaining problems and changes needed. "
+    "Keep the ticket open for review. Keep the ticket grant out of notes and output."
+)
+
 def instruction(files, self_repo: bool = False) -> str:
     """지휘자 지시문 — 마스터 `runner.worker_command` 와 같은 조립(지시문 + 자기 저장소 문장)."""
     return (INSTRUCTION.format(files=", ".join(str(f) for f in files) or "(none given)")
@@ -178,7 +190,7 @@ def instruction(files, self_repo: bool = False) -> str:
 
 
 def build_argv(root: Path, files, approvals=(), self_repo: bool = False,
-               mode: str = DEFAULT_MODE) -> list:
+               mode: str = DEFAULT_MODE, node_issue_id: int | None = None) -> list:
     """지휘자 인자. 🔴 **여기가 플래그의 주인이다** — 마스터가 주지 않는다.
 
     codex: `agent_command` 의 codex 절과 같은 값을 쓴다: 쓰기는 작업공간으로 묶고 네트워크만 연다
@@ -188,7 +200,8 @@ def build_argv(root: Path, files, approvals=(), self_repo: bool = False,
     `-C` 가 아니라 `run_job` 의 `cwd` 로 준다(마스터 쪽 `cd /d` 와 같은 뜻). `approvals` 는 codex 전용이다.
     목록 밖 모드는 `ValueError` — 호출부(`run_job`)가 먼저 거르므로 여기 오면 계약 위반이다.
     """
-    text = instruction(files, self_repo)
+    text = (instruction(files, self_repo) if node_issue_id is None else
+            NODE_TICKET_INSTRUCTION.format(issue_id=node_issue_id))
     if mode == "claude":
         return [_claude_exe(), "-p", "--output-format", "json",
                 "--dangerously-skip-permissions", text]
@@ -539,6 +552,10 @@ def run_job(root: Path, d: Path) -> int:
         _log(d, f"🔴 job.json 을 못 읽었다 — {type(e).__name__}: {e}")
         job = {}
     files = job.get("files") or []
+    node_ticket = "node_issue_id" in job
+    node_issue_id = job.get("node_issue_id")
+    grant = ""
+    exit_confirmed = True
     limit = int(job.get("timeout") or 3600)
     def stopped():
         if (d / CANCEL).exists():
@@ -547,11 +564,25 @@ def run_job(root: Path, d: Path) -> int:
             return "요청 기한 만료"
         return ""
     def finish():
-        (d / OUT).write_text(out, encoding="utf-8")
+        safe_output = out.replace(grant, "[ticket grant]") if grant else out
+        (d / OUT).write_text(safe_output, encoding="utf-8")
         (d / RC).write_text(str(rc), encoding="utf-8")
+        if node_ticket and exit_confirmed:
+            (d / TERMINATED).write_text(str(job.get("request_id") or ""), encoding="utf-8")
         _log(d, f"결과 기록 — rc={rc} · 전체 {int(time.monotonic() - t0)}초 · done.flag 를 쓴다")
         (d / DONE).write_text(str(job.get("request_id") or "done"), encoding="utf-8")
         return rc
+    if node_ticket:
+        try:
+            grant_path = d / TICKET_GRANT
+            grant = grant_path.read_text(encoding="ascii").strip()
+            grant_path.unlink()
+        except (OSError, UnicodeError):
+            out = "[런처] 노드 티켓 권한 파일을 읽고 정리하지 못했다"
+            return finish()
+        if type(node_issue_id) is not int or node_issue_id < 1 or not grant or "\n" in grant or "\r" in grant:
+            out = "[런처] 노드 티켓 번호 또는 권한이 유효하지 않다"
+            return finish()
     reason = stopped()
     if reason:
         out = f"[런처] {reason} — 실행하지 않았다"
@@ -571,8 +602,9 @@ def run_job(root: Path, d: Path) -> int:
         rc, out = SESSION0_REFUSE_RC, f"ERROR [런처] {s0}\nRESULT: BLOCKED"
         _log(d, f"🔴 세션 0 거절 — SessionId={sid} · {s0}")
         return finish()
+    ticket_args = {"node_issue_id": node_issue_id} if node_ticket else {}
     argv = build_argv(root, files, job.get("approvals") or (), self_repo=job.get("self_repo") is True,
-                      mode=mode)
+                      mode=mode, **ticket_args)
     _log(d, f"argv 준비 — 모드 {mode} · 실행 파일 {argv[0]}")
     # 🔴 [중요] **자식까지 죽여야 한다** (실측 2026-09-12). 세션 1 은 데스크톱이 있어서
     #    크래시가 **모달 대화상자**로 뜨고, 그러면 프로세스가 무한 대기한다 — 세션 0 에서는
@@ -585,12 +617,15 @@ def run_job(root: Path, d: Path) -> int:
         kw["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     else:
         kw["start_new_session"] = True
-    relay = _start_relay(root, d)                           # `#764` — 지휘자보다 먼저 (codex·claude 둘 다)
+    if node_ticket:
+        kw["env"] = {**os.environ, "AX_NODE_TICKET_GRANT": grant}
+    relay = None if node_ticket else _start_relay(root, d)
     proc = None
     try:
         proc = subprocess.Popen(argv, cwd=str(root), stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                                 text=True, encoding="utf-8", errors="replace", **kw)
+        exit_confirmed = False
         _log(d, f"{mode} 시작 — pid={proc.pid} · 실행 파일 {argv[0]}")
         deadline = time.monotonic() + limit
         completed = False
@@ -607,6 +642,7 @@ def run_job(root: Path, d: Path) -> int:
                 out = proc.communicate(timeout=min(1, remaining))[0] or ""
                 rc = proc.returncode
                 completed = True
+                exit_confirmed = True
                 break
             except subprocess.TimeoutExpired:
                 continue
@@ -624,7 +660,7 @@ def run_job(root: Path, d: Path) -> int:
                 _log(d, "🔴 종료 뒤 프로세스 회수 실패")
                 out += "\n[런처] 프로세스 종료 미확인"
                 rc = 1
-        if not _stop_relay(root, d, relay):
+        if not node_ticket and not _stop_relay(root, d, relay):
             out += "\n[런처] agy 중계 종료 미확인"
             rc = 1
     return finish()

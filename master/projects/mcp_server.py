@@ -1337,13 +1337,14 @@ def wayfinder_status_tool(root_id: int) -> str:
 
 @mcp.tool()
 def wayfinder_dispatch_preview_tool(root_id: int, node_ids: list[int | str]) -> str:
-    """분산 사이클 발주 미리보기 (#1039). 준비된 티켓과 대기 사유를 보여 준다.
+    """분산 사이클 발주 드라이런 (#1039). 준비된 티켓, 대기 사유, 예상 워커 배정을 보여 준다.
 
-    지도 소속, 선행 완료, 스펙·플랜·체크리스트 및 현재 배정을 대조한다. 쓰기·실행은 0건이다.
+    지도 소속, 선행 완료, 스펙·플랜·체크리스트 및 현재 배정을 대조한다.
+    예상 배정은 레지스트리와 잠금 장부 기준이다. 워커 연결, 예약, 권한 발급, Redmine 쓰기는 0건이다.
     """
     from .. import wayfinder_dispatch
     try:
-        return json.dumps(wayfinder_dispatch.candidates(root_id, node_ids), ensure_ascii=False)
+        return json.dumps(wayfinder_dispatch.preview(root_id, node_ids), ensure_ascii=False)
     except Exception as e:                               # noqa: BLE001
         return _fail(e)
 

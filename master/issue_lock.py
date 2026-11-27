@@ -182,6 +182,13 @@ def node_assignments(root) -> dict[int, dict]:
         return {int(k): dict(v) for k, v in _load(root).get("node_assignments", {}).items()}
 
 
+def snapshot(root) -> tuple[dict | None, dict[int, dict], dict[int, dict]]:
+    """원자 교체되는 잠금 장부를 한 번 읽는다. 드라이런에서는 파일과 flock을 만들지 않는다."""
+    data = _load(root)
+    return (data["active"], {int(k): rec for k, rec in data["paused"].items()},
+            {int(k): rec for k, rec in data.get("node_assignments", {}).items()})
+
+
 # ── 변경 ────────────────────────────────────────────────────────────────────
 
 def acquire(root, issue_id, *, branch: str, start_rev: str, by: str = "", why: str = "",

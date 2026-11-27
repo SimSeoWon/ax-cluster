@@ -1966,6 +1966,58 @@ def test_master_windows_direct_refused() -> None:
         R.bundle._ssh = keep
 
 
+def test_wayfinder_ticket_transport_dry_run() -> None:
+    from tempfile import TemporaryDirectory
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    synthetic_grant = "test-node-ticket-grant"
+    exits, calls = [], []
+
+    def ssh_popen(argv, **kwargs):
+        def communicate(**kw):
+            calls.append(kw.get("input"))
+            return synthetic_grant, ""
+
+        calls.append(argv)
+        return SimpleNamespace(returncode=0, communicate=communicate)
+
+    with patch.object(R, "_POPEN", ssh_popen):
+        result = R.run_node_ticket(_facts(), 1039, assignment_id="a" * 32, grant=synthetic_grant,
+                                   mode="codex", on_exit=lambda: exits.append("linux"))
+    check("Wayfinder Linux: 티켓 번호는 명령으로, 권한은 SSH stdin으로 전달",
+          "Wayfinder ticket 1039" in calls[0][-1] and all(synthetic_grant not in arg for arg in calls[0])
+          and calls[1] == synthetic_grant + "\n")
+    check("Wayfinder Linux: 종료 근거와 출력의 권한값 제거", result == (0, "[ticket grant]") and exits == ["linux"])
+
+    launcher = _load_launcher()
+    with TemporaryDirectory() as name:
+        root = Path(name)
+        job = root / "job"
+        job.mkdir()
+        (job / launcher.JOB).write_text(json.dumps({"node_issue_id": 1039, "request_id": "preview"}), encoding="utf-8")
+        grant_file = job / launcher.TICKET_GRANT
+        grant_file.write_text(synthetic_grant, encoding="ascii")
+        observed = {}
+
+        def launcher_popen(argv, **kwargs):
+            observed.update(argv=argv, grant=kwargs["env"]["AX_NODE_TICKET_GRANT"], on_disk=grant_file.exists())
+            return SimpleNamespace(pid=1, returncode=0, poll=lambda: 0,
+                                   communicate=lambda **kw: (synthetic_grant, ""))
+
+        with patch.object(launcher, "session_check", return_value=(1, "")), \
+                patch.object(launcher.subprocess, "Popen", launcher_popen):
+            rc = launcher.run_job(root, job)
+        check("Wayfinder Windows: 티켓 번호는 지시문으로, 권한은 환경으로 전달하고 임시 파일 정리",
+              rc == 0 and "Wayfinder ticket 1039" in observed["argv"][-1]
+              and synthetic_grant not in observed["argv"][-1]
+              and observed["grant"] == synthetic_grant and not observed["on_disk"])
+        check("Wayfinder Windows: 해당 실행의 종료 근거와 출력 비밀값 제거",
+              R.NODE_TICKET_INSTRUCTION == launcher.NODE_TICKET_INSTRUCTION
+              and (job / launcher.TERMINATED).read_text() == "preview"
+              and (job / launcher.OUT).read_text() == "[ticket grant]")
+
+
 def main() -> int:
     for fn in (test_master_windows_direct_refused, test_parse, test_pick, test_command, test_codex_windows_sandbox,
                test_codex_linux_agy_writable_root,
@@ -1982,7 +2034,7 @@ def main() -> int:
                test_session1_attempt_isolation,
                test_session1_cancellation,
                test_directives_followed,
-               test_linux_ssh_is_stoppable,
+               test_linux_ssh_is_stoppable, test_wayfinder_ticket_transport_dry_run,
                test_worker_does_not_build, test_claude_auth_runtime,
                test_delegation_calls, test_instruction_asks_delegation,
                test_delegation_failure_blocks,

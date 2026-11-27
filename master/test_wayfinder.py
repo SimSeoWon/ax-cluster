@@ -1098,12 +1098,18 @@ def test_distributed_node_display_and_guards():
 
 
 def test_distributed_dispatch_preflight():
+    from pathlib import Path
     from tempfile import TemporaryDirectory
-    from master import plan_block, spec_block, wayfinder_dispatch as dispatch
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    from master import auth, issue_infra, issue_lock, plan_block, plan_tools, spec_block
+    from master import wayfinder_dispatch as dispatch
     from master.client.bundle import HostFacts
+    from master.projects.config import Registry, Workshop
+    from master.work import mode
 
     rm = _fresh()
-    _build(rm, "목적", SPECS)
+    keys = _build(rm, "목적", SPECS + FIRST2[-1:])
     _, logf = _quiet()
     issue_id = WF.claim(ROOT, "P1", prepare_only=True, rm=rm, logf=logf)["id"]
     issue = rm.issues[issue_id]
@@ -1126,14 +1132,74 @@ def test_distributed_dispatch_preflight():
         preview = dispatch.candidates(ROOT, [issue_id, issue_id], rm=rm, lock_root=tmp)
         check("발주 미리보기: 승인된 플랜 한 건, 중복 입력 제거",
               [row["id"] for row in preview["ready"]] == [issue_id], str(preview))
+        workshops = {"a": Workshop("worker-a", driven="ssh", user="sim", path="/repo"),
+                     "b": Workshop("requester", driven="ssh", role="requester", user="sim", path="/repo"),
+                     "c": Workshop("worker-c", driven="ssh", user="sim", path="/repo")}
+        config = SimpleNamespace(workshops=workshops)
+        registry = SimpleNamespace(config_of=lambda _: config)
+        with patch.object(Registry, "load", return_value=registry), \
+                patch.object(mode, "current", return_value=("codex", "test")), \
+                patch.object(issue_lock, "default_root", return_value=tmp), \
+                patch.object(WF, "_port", return_value=rm):
+            dry_run = dispatch.preview(ROOT, [issue_id, "P2"])
+            check("드라이런: 대기 사유와 예상 워커를 표시하며 티켓·잠금 파일에 쓰지 않는다",
+                  dry_run["dry_run"] and dry_run["worker_candidates"] == [{"id": issue_id, "worker": "worker-a"}]
+                  and len(dry_run["waiting"]) == 1 and len(rm.writes()) == before and not list(Path(tmp).iterdir()),
+                  str(dry_run))
+            second_id = WF.claim(ROOT, keys["sav"], prepare_only=True, rm=rm, logf=logf)["id"]
+            second_issue = rm.issues[second_id]
+            second_issue["description"] = plan_block.append(
+                spec_block.put(second_issue["description"], spec), tasks,
+                checklist=[plan_block.IssuePlanCheck("C1", "미확인", "검사")])
+            issue_lock.acquire(tmp, 1039, branch="issue/1039", start_rev="a" * 40, logf=logf)
+            blocked, _, _ = issue_infra.lock_gate(
+                tmp, issue_id, log=issue_infra.Log("dry-run", issue_id, logf=logf))
+            check("#1039 활성일 때 다른 노드의 단독 착수·태스크 작업중 전이는 거절",
+                  blocked is not None and blocked["holder"] == 1039
+                  and _raises(lambda: plan_tools._lock_gate(second_id, tmp), "#1039 작업이 진행 중",
+                              cls=plan_tools.PlanToolError))
+            old_lock = issue_lock.state_path(tmp).read_bytes()
+            writes = len(rm.writes())
+            with patch.object(dispatch, "reserve_worker", side_effect=AssertionError("드라이런에서 예약")):
+                dry_run = dispatch.preview(ROOT, [issue_id, second_id])
+            check("#1039 활성 중 분산 후보 두 건과 예상 워커 두 대, 실제 쓰기 0건",
+                  dry_run["worker_candidates"] == [{"id": issue_id, "worker": "worker-a"},
+                                                  {"id": second_id, "worker": "worker-c"}]
+                  and issue_lock.state_path(tmp).read_bytes() == old_lock and len(rm.writes()) == writes,
+                  str(dry_run))
+            issue_lock.reserve_node(tmp, 99998, root_id=ROOT, worker="WORKER-A", logf=logf)
+            old_lock = issue_lock.state_path(tmp).read_bytes()
+            dry_run = dispatch.preview(ROOT, [issue_id])
+            check("드라이런: 점유된 등록 워커와 요청자 제외, 배정 장부 그대로",
+                  dry_run["worker_candidates"] == [{"id": issue_id, "worker": "worker-c"}]
+                  and issue_lock.state_path(tmp).read_bytes() == old_lock, str(dry_run))
+            issue_lock.advance_node_assignment(tmp, 99998, assignment_id=issue_lock.node_assignments(tmp)[99998]["assignment_id"],
+                                               to=issue_lock.NODE_REVIEW, by="master", why="종료 확인", logf=logf)
         facts = [HostFacts("worker-a", "sim", "/repo", "ssh", codex="codex 1", checkout_ok=True),
                  HostFacts("worker-b", "sim", "/repo", "ssh", codex="codex 1", checkout_ok=True)]
         first = dispatch.reserve_worker(tmp, ROOT, issue_id, facts, mode="codex")
-        second = dispatch.reserve_worker(tmp, ROOT, issue_id + 1, facts, mode="codex")
+        second = dispatch.reserve_worker(tmp, ROOT, second_id, facts, mode="codex")
         duplicate = dispatch.reserve_worker(tmp, ROOT, issue_id, facts, mode="codex")
         check("발주 예약: 점유 중인 워커를 빼고 두 번째 등록 워커 선택",
               first["ok"] and second["ok"] and first["worker"].host != second["worker"].host)
         check("발주 예약: 같은 노드를 거듭 발주할 수 없다", not duplicate["ok"], str(duplicate))
+        test_master_token = "test-master-" + "a" * auth.MIN_TOKEN_LEN
+
+        def run_ticket(worker, ticket, *, assignment_id, grant, mode, on_exit):
+            scoped = auth._read_node_ticket_grant(grant, test_master_token)
+            check("배정 일감·워커로 서명한 기간 제한 권한을 실행에 전달",
+                  scoped is not None and scoped.issue_id == issue_id and scoped.worker == worker.host
+                  and ticket == issue_id and assignment_id == first["record"]["assignment_id"] and mode == "codex")
+            on_exit()
+            return 0, grant
+
+        with patch.object(auth, "load_token", return_value=test_master_token), \
+                patch.object(dispatch.runner, "run_node_ticket", side_effect=run_ticket) as launch:
+            result = dispatch.run_assignment(tmp, first["record"], first["worker"], mode="codex")
+            wrong = dispatch.run_assignment(tmp, first["record"], second["worker"], mode="codex")
+        check("현재 배정만 실행, 실행 결과에 권한값·워커 출력 없음",
+              result == {"rc": 0, "termination_confirmed": True, "why": "워커 실행 종료 확인 (rc=0)"}
+              and not wrong["termination_confirmed"] and launch.call_count == 1, str(result))
 
 
 def main() -> int:
