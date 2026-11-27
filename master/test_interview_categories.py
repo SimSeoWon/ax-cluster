@@ -38,11 +38,17 @@ def _rejects(root: Path, needle: str) -> bool:
 
 def test_real_docs():
     cats = IC.load()
-    check("실제 분류 3종", sorted(cats) == ["bug", "feature", "modify"], str(sorted(cats)))
+    check("실제 분류 4종", sorted(cats) == ["bug", "feature", "modify", "verify"], str(sorted(cats)))
     check("버그는 재현 포함", cats["bug"].applies("reproduce"))
     check("신규·수정은 재현 없음", not cats["feature"].applies("reproduce") and not cats["modify"].applies("reproduce"))
     check("as_dict 의 skipped", cats["feature"].as_dict()["skipped"] == ["reproduce"], str(cats["feature"].as_dict()))
     check("label 이 있다", all(c.label for c in cats.values()))
+    # `#1025` — 검증(코드 무변경 · 실물 측정 판정): 재현 없음 · 웨이파인더 질문 없음 · 명세는 있음
+    v = cats["verify"]
+    check("#1025 검증 단계 = 조사·명세·파급", v.steps == ("investigate", "specify", "impact"), str(v.steps))
+    check("#1025 검증은 재현 건너뜀", v.as_dict()["skipped"] == ["reproduce"], str(v.as_dict()))
+    check("#1025 검증은 웨이파인더를 묻지 않는다", v.wayfinder_ask is False)
+    check("#1025 검증 label", v.label.startswith("검증"), v.label)
 
 
 def test_order_is_fixed_not_doc_order():

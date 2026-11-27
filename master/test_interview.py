@@ -50,7 +50,7 @@ def test_feature_full_flow_with_skip():
     fi = FakeIssue()
     st = IV.status(1, getter=fi.get, cats=CATS)
     check("처음엔 분류", st["next"] == "classify" and not st["category"], str(st))
-    check("분류 목록이 문서에서", {c["name"] for c in st["categories"]} == {"bug", "modify", "feature"})
+    check("분류 목록이 문서에서", {c["name"] for c in st["categories"]} == {"bug", "modify", "feature", "verify"})
     out = _rec(fi, "classify", "feature")
     check("분류 뒤 조사", out["next"] == "investigate", str(out))
     _rec(fi, "investigate")
@@ -170,7 +170,7 @@ def test_wayfinder_ask_on_feature_classify_982():
     check("#982 노트에는 싣지 않는다(질문은 응답 몫)", "웨이파인더" not in fi.journals[-1]["notes"])
     out = _rec(fi, "investigate")
     check("#982 뒤 단계 응답엔 없다", "wayfinder_ask" not in out, str(out))
-    for cat in ("bug", "modify"):
+    for cat in ("bug", "modify", "verify"):            # `#1025` 검증도 묻지 않는다
         out = _rec(FakeIssue(), "classify", cat)
         check(f"#982 {cat} 분류 → 묻지 않는다", "wayfinder_ask" not in out
               and not any("wayfinder_ask" in ln for ln in out["log"]), str(out))
