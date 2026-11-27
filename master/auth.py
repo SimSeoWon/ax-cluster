@@ -24,8 +24,11 @@ from __future__ import annotations
 
 import hmac
 import os
+import re
 import secrets
 import stat
+import time
+from dataclasses import dataclass
 from pathlib import Path
 
 # 토큰 파일. [중요] `~/ax-state` 에 두지 않는다 — 그쪽은 감사 커밋이 도는 git 저장소다.
@@ -35,6 +38,45 @@ MIN_TOKEN_LEN = 32
 HEADER = "authorization"
 SCHEME = "Bearer"
 BASIC = "Basic"
+
+NODE_TICKET_PATH = "/api/v1/wayfinder/issue"
+_NODE_TICKET_PREFIX = "ax-node-v1~"
+_NODE_WORKER = re.compile(r"[A-Za-z0-9_.:@-]{1,128}")
+
+
+@dataclass(frozen=True)
+class NodeTicketGrant:
+    issue_id: int
+    worker: str
+    expires_at: int
+
+
+def _node_ticket_signature(master_token: str, payload: str) -> str:
+    return hmac.digest(master_token.encode(), payload.encode("ascii"), "sha256").hex()
+
+
+def issue_node_ticket_grant(master_token: str, issue_id: int, worker: str, *, expires_at: int) -> str:
+    """마스터 내부 발급 계약. 승인된 배정에 한해 호출하고 워커에는 발급 결과만 전달한다."""
+    if (len(master_token) < MIN_TOKEN_LEN or type(issue_id) is not int or not 0 < issue_id < 10**18
+            or not _NODE_WORKER.fullmatch(worker) or type(expires_at) is not int
+            or not time.time() < expires_at < 10**12):
+        raise ValueError("invalid node ticket grant")
+    payload = f"{_NODE_TICKET_PREFIX}{issue_id}~{worker}~{expires_at}"
+    return f"{payload}~{_node_ticket_signature(master_token, payload)}"
+
+
+def _read_node_ticket_grant(token: str, master_token: str) -> NodeTicketGrant | None:
+    fields = token.removeprefix(_NODE_TICKET_PREFIX).split("~")
+    if len(fields) != 4 or len(master_token) < MIN_TOKEN_LEN:
+        return None
+    issue, worker, expires, signature = fields
+    if not (re.fullmatch(r"[1-9][0-9]{0,17}", issue) and _NODE_WORKER.fullmatch(worker)
+            and re.fullmatch(r"[1-9][0-9]{0,11}", expires) and re.fullmatch(r"[0-9a-f]{64}", signature)):
+        return None
+    payload = token.rsplit("~", 1)[0]
+    if int(expires) <= time.time() or not hmac.compare_digest(signature, _node_ticket_signature(master_token, payload)):
+        return None
+    return NodeTicketGrant(int(issue), worker, int(expires))
 
 # [중요] **뷰 토큰은 API 토큰과 다르다** (2026-08-13).
 #
@@ -370,7 +412,7 @@ class BearerAuthMiddleware:
     def __init__(self, app, token: str, open_paths=OPEN_PATHS, *,
                  view_prefix: str = "", view_token: str | None = None,
                  view_public: bool = False, public_prefixes: tuple = (),
-                 scoped: tuple = ()):
+                 scoped: tuple = (), node_ticket_grants: bool = False):
         self.app = app
         self._token = token
         self.open_paths = frozenset(open_paths)
@@ -393,6 +435,7 @@ class BearerAuthMiddleware:
         # 역할 스코프 토큰 (소 3.8.2) — ((토큰, ((METHOD, 경로접두어), …)), …).
         # [중요] 토큰이 None 인 항목은 버린다 — 파일이 없으면 그 역할은 닫힌 것이다(fail-closed).
         self._scoped = tuple((t, tuple(rules)) for t, rules in (scoped or ()) if t)
+        self._node_ticket_grants = node_ticket_grants
 
     async def __call__(self, scope, receive, send):
         typ = scope.get("type")
@@ -437,6 +480,16 @@ class BearerAuthMiddleware:
         #    경로 중간에 끼는 자리를 가른다. 4번째 "exact"는 경로 완전 일치(#769).
         #    기존 2/3원소 규칙은 접두·접미 일치를 그대로 유지한다.
         method = (scope.get("method") or "").upper()
+        if self._node_ticket_grants and provided and provided.startswith(_NODE_TICKET_PREFIX):
+            grant = _read_node_ticket_grant(provided, self._token)
+            if grant is None:
+                return await self._deny(send, challenge=b'Bearer realm="ax-cluster"')
+            base = f"{NODE_TICKET_PATH}/{grant.issue_id}"
+            if (method, path) not in (("GET", base), ("POST", f"{base}/note")):
+                return await self._deny(send, status=403, why=b"forbidden (scope)",
+                                        challenge=b'Bearer realm="ax-cluster"')
+            scope.setdefault("state", {})["node_ticket_grant"] = grant
+            return await self.app(scope, receive, send)
         for stok, rules in self._scoped:
             if not verify(provided, stok):
                 continue

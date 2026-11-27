@@ -27,8 +27,10 @@ from master.auth import (  # noqa: E402
     MIN_TOKEN_LEN,
     AuthError,
     BearerAuthMiddleware,
+    NODE_TICKET_PATH,
     auth_headers,
     generate_token,
+    issue_node_ticket_grant,
     load_token,
     parse_bearer,
     verify,
@@ -89,6 +91,40 @@ def make_app(token, reached):
 
 
 def main() -> int:
+    print("[노드 일감] 발주 근거 · 티켓 한 건 · 허용 동작")
+    from unittest.mock import patch
+
+    master_token, worker_token = generate_token(), generate_token()
+    seen = []
+
+    async def record(scope, receive, send):
+        seen.append(scope["state"]["node_ticket_grant"].worker)
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    app = BearerAuthMiddleware(record, master_token, scoped=((worker_token, ()),), node_ticket_grants=True)
+    base = f"{NODE_TICKET_PATH}/1037"
+    with patch("master.auth.time.time", return_value=100):
+        grant = issue_node_ticket_grant(master_token, 1037, "worker-2", expires_at=200)
+        forged = issue_node_ticket_grant(worker_token, 1037, "worker-2", expires_at=200)
+        for method, path, credential, expected in (
+            ("GET", base, grant, 200),
+            ("POST", base + "/note", grant, 200),
+            ("GET", f"{NODE_TICKET_PATH}/1038", grant, 403),
+            ("PATCH", base, grant, 403),
+            ("POST", "/api/v1/redmine/note", grant, 403),
+            ("GET", base + "/", grant, 403),
+            ("GET", base, worker_token, 403),
+            ("GET", base, forged, 401),
+            ("GET", base, grant.replace("worker-2", "worker-3"), 401),
+        ):
+            status, _, _ = asyncio.run(call(app, path, method=method, headers=auth_headers(credential)))
+            check(f"노드 권한 {method} {path} → {expected}", status == expected, str(status))
+    with patch("master.auth.time.time", return_value=200):
+        status, _, _ = asyncio.run(call(app, base, headers=auth_headers(grant)))
+        check("만료된 발주 권한 거절", status == 401, str(status))
+    check("발급 때 서명된 워커가 앱에 전달된다", seen == ["worker-2", "worker-2"])
+
     print("[1] 토큰 생성·적재")
     p = _TMP / "cfg" / "token"
     path, tok = write_token(p)
