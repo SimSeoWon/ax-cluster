@@ -165,10 +165,10 @@ def _fresh(body="## 요청\n\n원문\n"):
 
 
 def _build(rm, destination, specs, *, fog=(), out_of_scope=(), logf=None):
-    """`#1028` — 맵은 선행 없는 첫 노드로 만들고, 나머지는 제안·등록으로 키운다(실제 사용 순서).
+    """`#1028`·`#1036` — 실제 사용 순서: 선행 없는 첫 노드로 맵을 만들고, 나머지는 제안·등록으로 키운다.
 
-    `specs` 의 선행 없는 노드가 첫 노드다. 나머지는 적힌 순서대로 `propose_node → register_node` —
-    선행·파생 부모는 그때까지 생긴 번호로 바꾼다. 돌려주는 `created` 는 key → 번호(종전 모양 그대로).
+    `#1036` 부터 노드는 **예정 키(P<n>)로 지도에만** 오른다 — 돌려주는 `created` 는 key → 예정 키다.
+    Redmine 일감은 선점(`claim`) 때 생긴다.
     """
     logf = logf or _quiet()[1]
     first = [x for x in specs if not x.get("deps")]
@@ -188,14 +188,38 @@ def _build(rm, destination, specs, *, fog=(), out_of_scope=(), logf=None):
     return c
 
 
+def _legacy(rm, destination, specs, *, fog=(), out_of_scope=()):
+    """`#1036` 이전 모양의 지도 — 모든 노드가 처음부터 Redmine 일감(번호)이다(#741·#1008 같은 기존 맵).
+
+    도구가 더는 이렇게 만들지 않으므로 검사가 직접 깐다 — 이 지도에 기대는 검사들이 곧 **하위 호환 검사**다.
+    Root 본문은 대역에 직접 적는다(쓰기 계수에 들어가지 않는다 — 종전 `_made` 뒤 계수와 같은 기준).
+    """
+    lg = WF._log_of(lambda *_: None)
+    order = WF._validate_specs(specs, lg)
+    version = rm.issues[ROOT]["fixed_version"]
+    ids = {}
+    for x in order:
+        nid, why = WF._create_node_issue(rm, root_id=ROOT, title=x["title"], type_=x["type"], summary=x["summary"],
+                                         parent_id=ROOT, version=version, project="", log=lg)
+        assert nid and not why, why
+        ids[x["key"]] = nid
+    for x in order:
+        for d in x["deps"]:
+            assert not WF._relate(rm, ids[d], ids[x["key"]], lg)
+    block = WF.compute_states(WF._block_from(destination, order, ids, fog, out_of_scope))
+    rm.issues[ROOT]["description"] = MB.put(rm.issues[ROOT]["description"], block)
+    return ids
+
+
 FIRST = [x for x in SPECS if not x["deps"]]                       # 첫 노드(선행 없음) — pre 하나
 FIRST2 = FIRST + [{"key": "sav", "title": "저장 형식 조사", "type": "프리필", "parent": "Root", "deps": [],
                    "summary": "저장 범위"}]                        # 서로 의존 없는 첫 노드 둘
 
 
 def _made(rm=None):
+    """번호만 있는 기존 모양의 지도(하위 호환) — 노드 4개 · blocks 4개 · 안개 하나."""
     rm = rm or _fresh()
-    return rm, _build(rm, "HUD 를 붙인다", SPECS, fog=["저장 형식"])
+    return rm, _legacy(rm, "HUD 를 붙인다", SPECS, fog=["저장 형식"])
 
 
 # ── create_map ─────────────────────────────────────────────────────────────
@@ -208,58 +232,47 @@ def test_create_map_preview():
     check("미리보기 쓰기 0건", rm.writes() == [], str(rm.writes()))
     check("미리보기 영역 글", out["preview"].startswith("<!-- ax:map:begin v=1 -->")
           and "<pre>" in out["preview"])
-    check("임시 번호 1..n", sorted(out["temp_ids"].values()) == [1, 2])
-    check("예정 쓰기 목록", sum(w.startswith("create_issue") for w in out["writes"]) == 2
-          and not any(w.startswith("create_relation") for w in out["writes"])
-          and all("Redmine 부모 Root" in w for w in out["writes"] if w.startswith("create_issue"))
-          and out["writes"][-1].startswith("update_issue"), str(out["writes"]))
+    check("#1036 예정 키 P1..Pn", out["temp_ids"] == {"pre": "P1", "sav": "P2"}, str(out["temp_ids"]))
+    check("#1036 예정 쓰기 = Root 본문 하나(일감 0)", len(out["writes"]) == 1
+          and out["writes"][0].startswith("update_issue") and "P1, P2" in out["writes"][0], str(out["writes"]))
     check("미리보기 로그", any("쓰기 0건" in x for x in lines))
     parsed = MB.parse(out["preview"])
-    check("미리보기 왕복", parsed is not None and len(parsed.nodes) == 2)
+    check("미리보기 왕복", parsed is not None and [n.id for n in parsed.nodes] == ["P1", "P2"])
 
 
 def test_create_map_confirm():
+    """`#1036` — 맵 등록은 Root 본문만 쓴다: 첫 노드는 예정 키로 지도에만, Redmine 일감 0."""
     rm = _fresh()
     lines, logf = _quiet()
     out = WF.create_map(ROOT, "HUD 를 붙인다", FIRST2, fog=["저장 형식"], confirm=True,
                         user_answer="좋아", rm=rm, logf=logf)
     check("등록 ok", out["ok"] and out["confirmed"], str(out))
-    first = out["created"]
-    check("첫 노드 둘 다 Frontier", sorted(f["id"] for f in out["frontier"]) == sorted(first.values()),
-          str(out["frontier"]))
-    check("첫 노드는 관계 없음", rm.relations == [], str(rm.relations))
-    check("첫 노드 쓰기 로그", sum(x.startswith("쓰기 —") for x in lines) == 2 + 1)
-    # 나머지는 제안·등록으로 자란다 — 종전 「한 번에 등록」 검사를 이 경로로 옮겼다
-    rm = _fresh()
-    c = _build(rm, "HUD 를 붙인다", SPECS, fog=["저장 형식"])
-    creates = [x for x in rm.calls if x[0] == "create_issue"]
-    order = [x[1] for x in creates]
-    check("부모 먼저", order.index("사전조사 HUD") < order.index("HUD 위젯")
-          and order.index("사전조사 HUD") < order.index("인벤토리 연결"))
-    # `#982` T7 — Redmine 에서는 모두 Root 직속(열린 자식이 있으면 부모가 안 닫힌다 · 조상-후손 관계 422)
-    check("Redmine 부모 = Root (모든 노드)", all(rm.issues[c[k]]["parent"] == ROOT for k in c))
-    check("마일스톤 = Root", all(x[2]["fixed_version"] == "마일스톤 7" for x in creates))
-    mk = MB.parse_node(rm.issues[c["hud"]]["description"])
-    check("노드 표지", mk is not None and mk.root == ROOT and mk.type == "작업")
-    check("요약 + 표지", rm.issues[c["pre"]]["description"].startswith("HUD 기능 범위"))
-    rels = {(r["issue_id"], r["issue_to_id"]) for r in rm.relations}
-    check("관계 방향 (선행 blocks 노드) · 선행 전부 Redmine 에", rels == {(c["pre"], c["hud"]), (c["pre"], c["inv"]),
-                                                                 (c["hud"], c["ver"]), (c["inv"], c["ver"])}, str(rels))
-    hb = MB.parse(rm.issues[ROOT]["description"]).node(c["hud"])
-    check("파생 부모는 지도 표에", hb is not None and hb.parent == c["pre"] and hb.deps == [c["pre"]])
-    # 관계는 이제 등록마다 생긴다(`#1028`) — 각 관계는 그 두 노드가 생긴 뒤에 건다(가짜 Redmine 번호는 1001 부터 차례)
-    made_at = {1001 + k: i for k, i in enumerate(i for i, x in enumerate(rm.calls) if x[0] == "create_issue")}
-    rel_at = [(i, x[1], x[2]) for i, x in enumerate(rm.calls) if x[0] == "create_relation"]
-    check("관계는 두 노드 뒤", rel_at and all(made_at[a] < i and made_at[b] < i for i, a, b in rel_at), str(rel_at))
+    check("#1036 created = 예정 키", out["created"] == {"pre": "P1", "sav": "P2"}, str(out["created"]))
+    check("#1036 일감 0 · 관계 0", not any(x[0] in ("create_issue", "create_relation") for x in rm.calls)
+          and out["relations"] == [], str(rm.calls))
+    check("#1036 쓰기는 Root 하나", [x[0] for x in rm.writes()] == ["update_issue"] and rm.writes()[0][1] == ROOT,
+          str(rm.writes()))
+    check("첫 노드 둘 다 Frontier", sorted(f["id"] for f in out["frontier"]) == ["P1", "P2"], str(out["frontier"]))
     body = rm.issues[ROOT]["description"]
     check("영역 밖 보존", body.startswith("## 요청\n\n원문\n"))
     block = MB.parse(body)
-    check("지도 기록", block is not None and len(block.nodes) == 4 and block.fog == ["저장 형식"])
-    check("다이어그램", block.diagram.startswith("<pre>") and block.diagram.endswith("</pre>"))
+    check("지도 기록", block is not None and [n.id for n in block.nodes] == ["P1", "P2"] and block.fog == ["저장 형식"])
+    check("다이어그램", block.diagram.startswith("<pre>") and "P1 사전조사 HUD" in block.diagram)
+    check("등록 노트", "Redmine 일감은 선점 때" in rm.issues[ROOT]["journals"][-1]["notes"])
+    check("#1036 등록 직후 대조 통과(예정 노드는 일감 대조 안 함)", WF.check(ROOT, rm=rm, logf=_quiet()[1])["ok"])
+    # 나머지는 제안·등록으로 자란다 — 역시 일감 0
+    rm = _fresh()
+    c = _build(rm, "HUD 를 붙인다", SPECS, fog=["저장 형식"])
+    check("#1036 키우기도 일감 0", not any(x[0] in ("create_issue", "create_relation") for x in rm.calls))
+    check("#1036 등록 키 차례", c == {"pre": "P1", "hud": "P2", "inv": "P3", "ver": "P4"}, str(c))
+    block = MB.parse(rm.issues[ROOT]["description"])
+    hb = block.node("P2")
+    check("파생 부모·선행은 지도 표에(예정 키)", hb.parent == "P1" and hb.deps == ["P1"]
+          and block.node("P4").deps == ["P2", "P3"])
     st = {n.id: n.state for n in block.nodes}
-    check("초기 상태", st[c["pre"]] == "Frontier" and st[c["hud"]] == "차단" and st[c["ver"]] == "차단")
-    check("Frontier 결과", [f["id"] for f in WF.frontier(ROOT, rm=rm)["frontier"]] == [c["pre"]])
-    check("등록 직후 대조 통과", WF.check(ROOT, rm=rm, logf=_quiet()[1])["ok"])
+    check("초기 상태", st["P1"] == "Frontier" and st["P2"] == "차단" and st["P4"] == "차단", str(st))
+    check("Frontier 결과", [f["id"] for f in WF.frontier(ROOT, rm=rm)["frontier"]] == ["P1"])
+    check("대조 통과", WF.check(ROOT, rm=rm, logf=_quiet()[1])["ok"])
 
 
 def test_create_map_refusals():
@@ -286,21 +299,92 @@ def test_create_map_refusals():
         ROOT, "목적", [SPECS[0], SPECS[0]], rm=_fresh(), logf=_quiet()[1]), "겹친다"))
     check("모르는 타입", _raises(lambda: WF.create_map(
         ROOT, "목적", [dict(SPECS[0], type="설계")], rm=_fresh(), logf=_quiet()[1]), "타입"))
-    # 도중 실패 — 되돌리지 않고 보고
+    # Root 쓰기 실패 — 일감이 없으니 남는 것도 없다
     rm3 = _fresh()
-    rm3.fail["create_issue"] = 2
+    rm3.fail["update_issue"] = 1
     out = WF.create_map(ROOT, "목적", FIRST2, confirm=True, user_answer="응", rm=rm3, logf=_quiet()[1])
-    check("도중 실패 보고", not out["ok"] and out["created"] == [1001] and "노드 생성" in out["step"],
-          str(out))
-    check("도중 실패 뒤 Root 안 씀", not any(x[0] == "update_issue" for x in rm3.calls))
-    # 관계는 이제 등록(register_node)에서만 생긴다 — 그 자리의 관계 실패도 되돌리지 않고 보고한다
-    rm4, c4 = _fresh(), None
-    c4 = WF.create_map(ROOT, "목적", FIRST, confirm=True, user_answer="응", rm=rm4, logf=_quiet()[1])["created"]
-    pr = WF.propose_node(ROOT, "HUD 위젯", "작업", c4["pre"], deps=[c4["pre"]], rm=rm4, logf=_quiet()[1])
-    rm4.fail["create_relation"] = 1
-    out = WF.register_node(ROOT, pr["proposal"], user_answer="응", rm=rm4, logf=_quiet()[1])
-    check("등록 관계 실패 보고", not out["ok"] and len(out["created"]) == 1 and out["step"].startswith("관계"),
-          str(out))
+    check("#1036 Root 쓰기 실패 보고 · 일감 0", not out["ok"] and out["step"] == "Root 본문" and out["created"] == []
+          and not any(x[0] == "create_issue" for x in rm3.calls), str(out))
+
+
+def test_claim_creates_issue_1036():
+    """`#1036` — 예정 노드는 선점 때 일감이 된다: 일감 → 선행 blocks → 키→번호(부모·선행) → 작업중."""
+    rm = _fresh()
+    c = _build(rm, "HUD 를 붙인다", SPECS, fog=["저장 형식"])
+    lines, logf = _quiet()
+    before = len(rm.writes())
+    out = WF.claim(ROOT, "P2", "codex", rm=rm, logf=logf)
+    check("#1036 Frontier 아닌 예정 노드 선점 거절 · 쓰기 0", not out["ok"] and "Frontier 가 아니다" in out["why"]
+          and len(rm.writes()) == before, str(out))
+    n0 = len(rm.writes())
+    out = WF.claim(ROOT, "P1", "codex", rm=rm, logf=logf)
+    pre = out["id"]
+    check("#1036 선점 → 새 일감 번호 · 옛 키", out["ok"] and isinstance(pre, int) and out["key"] == "P1"
+          and out["created"] == [pre], str(out))
+    iss = rm.issues[pre]
+    mk = MB.parse_node(iss["description"])
+    check("#1036 일감: Redmine 부모 Root · 표지 · 요약 · 마일스톤", iss["parent"] == ROOT and mk.root == ROOT
+          and mk.type == "프리필" and iss["description"].startswith("HUD 기능 범위")
+          and iss["fixed_version"] == "마일스톤 7", str(iss))
+    blk = MB.parse(rm.issues[ROOT]["description"])
+    check("#1036 지도: 키→번호 · 자식의 부모·선행도", blk.node("P1") is None and blk.node(pre).state == "작업중"
+          and blk.node(pre).owner == "codex" and blk.node("P2").parent == pre and blk.node("P2").deps == [pre]
+          and blk.node("P3").deps == [pre], str(blk.nodes))
+    check("#1036 첫 노드는 관계 0", rm.relations == [])
+    check("#1036 선점 노트", "예정 노드 P1 → 일감" in rm.issues[ROOT]["journals"][-1]["notes"])
+    check("#1036 선점 뒤 대조 통과", WF.check(ROOT, rm=rm, logf=_quiet()[1])["ok"])
+    check("#1036 쓰기 = 일감 생성 + Root", [x[0] for x in rm.writes()[n0:]] == ["create_issue", "update_issue"],
+          str(rm.writes()[n0:]))
+    # 선행이 끝나면 자식이 Frontier → 선점 때 선행 blocks
+    rm.issues[pre]["status"] = "완료"
+    check("마감 동기화", WF.on_node_closed(pre, rm=rm, logf=logf)["changed"])
+    out = WF.claim(ROOT, "P2", "claude", rm=rm, logf=logf)
+    hud = out["id"]
+    check("#1036 선행 blocks 를 선점 때 건다", out["ok"] and (pre, hud) in
+          {(r["issue_id"], r["issue_to_id"]) for r in rm.relations}, str(rm.relations))
+    blk = MB.parse(rm.issues[ROOT]["description"])
+    check("#1036 검증 노드 선행 칸이 번호·키 섞임", blk.node("P4").deps == [hud, "P3"], str(blk.node("P4").deps))
+    check("#1036 섞인 지도 대조 통과", WF.check(ROOT, rm=rm, logf=_quiet()[1])["ok"])
+    check("#1036 번호 노드 선점은 종전대로(일감 안 만듦)",
+          WF.claim(ROOT, hud, "x", rm=rm, logf=logf)["ok"] is False)       # 이미 작업중 — Frontier 아님
+    # 실패 — 일감 생성 실패면 지도 무변경
+    rm2 = _fresh()
+    _build(rm2, "목적", FIRST)
+    before = rm2.issues[ROOT]["description"]
+    rm2.fail["create_issue"] = 1
+    out = WF.claim(ROOT, "P1", "codex", rm=rm2, logf=_quiet()[1])
+    check("#1036 일감 생성 실패 → 보고 · 지도 무변경", not out["ok"] and "노드 생성" in out["step"]
+          and rm2.issues[ROOT]["description"] == before, str(out))
+    # 실패 — 관계 실패면 만든 번호를 돌려주고 지도는 그대로
+    rm3 = _fresh()
+    c3 = _build(rm3, "목적", SPECS)
+    p1 = WF.claim(ROOT, "P1", "a", rm=rm3, logf=_quiet()[1])["id"]
+    rm3.issues[p1]["status"] = "완료"
+    WF.on_node_closed(p1, rm=rm3, logf=_quiet()[1])
+    rm3.fail["create_relation"] = 1
+    before = rm3.issues[ROOT]["description"]
+    out = WF.claim(ROOT, "P2", "b", rm=rm3, logf=_quiet()[1])
+    check("#1036 관계 실패 → 만든 번호 보고 · 지도 무변경", not out["ok"] and out["step"].startswith("관계")
+          and len(out["created"]) == 1 and rm3.issues[ROOT]["description"] == before, str(out))
+
+
+def test_planned_node_out_and_drift_1036():
+    """`#1036` — 예정 노드를 범위 밖으로 돌리면 지도만 쓴다 · 예정 노드가 착수 뒤 상태면 대조 차이."""
+    rm = _fresh()
+    _build(rm, "HUD 를 붙인다", SPECS)
+    n0 = len(rm.writes())
+    p = WF.propose_edit(ROOT, "node_out", target="P4", reason="이번엔 검증 생략", rm=rm, logf=_quiet()[1])
+    out = WF.apply_edit(ROOT, p["proposal"], user_answer="응", rm=rm, logf=_quiet()[1])
+    check("#1036 예정 node_out ok · 쓰기는 Root 하나", out["ok"] and out["deleted_relations"] == []
+          and [x[0] for x in rm.writes()[n0:]] == ["update_issue"] and rm.writes()[n0][1] == ROOT, str(out))
+    blk = MB.parse(rm.issues[ROOT]["description"])
+    check("#1036 표에서 빠지고 범위 밖에", blk.node("P4") is None
+          and any(x.startswith("P4 HUD 인벤토리 결합 검증") for x in blk.out_of_scope), str(blk.out_of_scope))
+    blk.node("P2").state = "작업중"                    # 사람이 손으로 고친 흔적 — 일감 없는 작업중
+    rm.issues[ROOT]["description"] = MB.put(rm.issues[ROOT]["description"], blk)
+    out = WF.check(ROOT, rm=rm, logf=_quiet()[1])
+    check("#1036 일감 없는 작업중 → 대조 차이", not out["ok"]
+          and any("P2: 예정 노드" in d for d in out["differences"]), str(out))
 
 
 def test_first_nodes_only_1028():
@@ -464,7 +548,7 @@ def _tree():
         {"key": "Bx", "title": "체력 저장", "type": "작업", "parent": "B", "deps": ["B"]},
     ]
     rm = _fresh()
-    c = _build(rm, "전투", specs)
+    c = _legacy(rm, "전투", specs)
     blk = MB.parse(rm.issues[ROOT]["description"])
     for k in ("A", "B", "A1", "A2", "A1a", "A2x", "Bx"):
         blk.node(c[k]).state = "완료"
@@ -513,10 +597,8 @@ def test_register_node():
     out = WF.register_node(ROOT, p["proposal"], user_answer="등록해", rm=rm, logf=logf)
     check("등록 ok", out["ok"], str(out))
     new = out["id"]
-    check("부모·표지", rm.issues[new]["parent"] == ROOT
-          and MB.parse_node(rm.issues[new]["description"]).root == ROOT)
-    check("선행 관계(파생 부모여도 Redmine 에)", any(r["issue_id"] == c["A1a"] and r["issue_to_id"] == new
-                                              for r in rm.relations), str(rm.relations))
+    check("예정 키 · 등록 시 일감 없음", MB.is_planned(new) and new not in rm.issues)
+    check("등록 시 선행 관계 없음", not any(r["issue_to_id"] == new for r in rm.relations))
     nb = MB.parse(rm.issues[ROOT]["description"]).node(new)
     check("파생 부모·선행은 지도 표에", nb.parent == c["A1a"] and nb.deps == [c["A1a"]])
     st = {x.id: x.state for x in MB.parse(rm.issues[ROOT]["description"]).nodes}
@@ -524,7 +606,7 @@ def test_register_node():
     check("하위 나무 유지", st[c["A2x"]] == "완료" and st[c["Bx"]] == "완료")
     check("새 노드 차단(선행 재검증)", st[new] == "차단")
     notes = {i: [j["notes"] for j in rm.issues[i]["journals"]] for i in p["reverify"]}
-    check("재검증 노트", all(f"#{new} 추가로 재검증 대상 — 맵 Root #{ROOT}" in v for v in notes.values()))
+    check("재검증 노트", all(f"{new} 추가로 재검증 대상 — 맵 Root #{ROOT}" in v for v in notes.values()))
     check("등록 뒤 대조 통과", WF.check(ROOT, rm=rm, logf=_quiet()[1])["ok"])
     rm.issues[c["A3"]]["parent"] = None
     n = len(rm.writes())
@@ -606,7 +688,7 @@ def test_end_to_end_direct():
     log = []
     pv = WF.create_map(ROOT, "HUD", FIRST, rm=rm, logf=log.append)
     ok = pv["ok"] and not rm.writes()
-    c = _build(rm, "HUD", SPECS, fog=["저장 형식"], logf=log.append)
+    c = _legacy(rm, "HUD", SPECS, fog=["저장 형식"])
     ok &= WF.claim(ROOT, c["pre"], "claude", rm=rm, logf=log.append)["ok"]
     rm.issues[c["pre"]]["status"] = "완료"
     ok &= WF.on_node_closed(c["pre"], rm=rm, logf=log.append)["changed"]
@@ -622,8 +704,10 @@ def test_end_to_end_direct():
     for k in ("ver",):
         rm.issues[c[k]]["status"] = "완료"
         ok &= WF.sync(ROOT, closed_node=c[k], rm=rm, logf=log.append)["ok"]
-    rm.issues[reg["id"]]["status"] = "완료"
-    ok &= WF.on_node_closed(reg["id"], rm=rm, logf=log.append)["ok"]
+    claimed = WF.claim(ROOT, reg["id"], "claude", rm=rm, logf=log.append)
+    ok &= claimed["ok"]
+    rm.issues[claimed["id"]]["status"] = "완료"
+    ok &= WF.on_node_closed(claimed["id"], rm=rm, logf=log.append)["ok"]
     ok &= not WF.close_root(ROOT, confirm=True, user_answer="응", rm=rm, logf=log.append)["ok"]  # 안개
     blk = MB.parse(rm.issues[ROOT]["description"])            # 사람이 안개를 걷었다
     blk.fog = []
@@ -639,7 +723,7 @@ def test_end_to_end_direct():
 def _fogged(fog=("저장 형식", "네트워크 동기화", "로컬라이즈"), oos=("멀티플레이 — 이번 범위 아님",)):
     """노드 4개 지도 + 안개 셋 · 범위 밖 하나."""
     rm = _fresh()
-    return rm, _build(rm, "HUD 를 붙인다", SPECS, fog=fog, out_of_scope=oos)
+    return rm, _legacy(rm, "HUD 를 붙인다", SPECS, fog=fog, out_of_scope=oos)
 
 
 def _map(rm):
@@ -681,7 +765,7 @@ def test_graduate_register():
     blk = _map(rm)
     check("안개에서 걷힘 + 노드 추가", blk.fog == ["네트워크 동기화", "로컬라이즈"]
           and blk.node(out["id"]) is not None, str(blk.fog))
-    check("졸업 노트", f"안개 졸업: 저장 형식 → #{out['id']}" in _last_note(rm), _last_note(rm))
+    check("졸업 노트", f"안개 졸업: 저장 형식 → {MB.label(out['id'])}" in _last_note(rm), _last_note(rm))
     # 제안 뒤 그 줄이 사라졌다 → 쓰기 0건 거절
     rm, c = _fogged()
     p = WF.propose_node(ROOT, "동기화", "프리필", "Root", graduates="네트워크 동기화", rm=rm, logf=_quiet()[1])
@@ -816,8 +900,10 @@ def test_fog_cleared_close_root():
     for k in ("pre", "hud", "inv", "ver"):
         rm.issues[c[k]]["status"] = "완료"
         ok &= WF.sync(ROOT, closed_node=c[k], rm=rm, logf=lg)["ok"]
-    rm.issues[reg["id"]]["status"] = "완료"
-    ok &= WF.on_node_closed(reg["id"], rm=rm, logf=lg)["ok"]
+    claimed = WF.claim(ROOT, reg["id"], "claude", rm=rm, logf=lg)
+    ok &= claimed["ok"]
+    rm.issues[claimed["id"]]["status"] = "완료"
+    ok &= WF.on_node_closed(claimed["id"], rm=rm, logf=lg)["ok"]
     for n in _map(rm).nodes:                      # 졸업 노드가 Root 직속이라 재검증된 완료 노드를 되돌린다
         if n.state == "재검증":
             ok &= WF.mark_verified(ROOT, n.id, "재확인", rm=rm, logf=lg)["ok"]
@@ -947,7 +1033,7 @@ def test_node_out_changed_between():
     n = len(rm.writes())
     out = WF.apply_edit(ROOT, p, user_answer="응", rm=rm, logf=_quiet()[1])
     check("그 사이 자식 생김 → 거절 · 쓰기 0건", not out["ok"] and out["refused"] and len(rm.writes()) == n
-          and f"#{reg['id']} 결합 검증 보조" in out["why"] and out["children"], str(out))
+          and f"{reg['id']} 결합 검증 보조" in out["why"] and out["children"], str(out))
     # 대조 차이 → 거절
     rm, c = _out_ready()
     p = WF.propose_edit(ROOT, "node_out", target=c["hud"], reason="x", rm=rm, logf=_quiet()[1])["proposal"]
@@ -959,7 +1045,8 @@ def test_node_out_changed_between():
 
 def main() -> int:
     for fn in (test_create_map_preview, test_create_map_confirm, test_create_map_refusals,
-               test_first_nodes_only_1028,
+               test_first_nodes_only_1028, test_claim_creates_issue_1036,
+               test_planned_node_out_and_drift_1036,
                test_title_validation, test_compute_states, test_check, test_sync,
                test_sync_keeps_reverify, test_on_node_closed, test_propose_node, test_register_node,
                test_claim, test_mark_verified, test_close_root, test_logs, test_end_to_end_direct,

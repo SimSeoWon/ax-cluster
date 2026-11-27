@@ -163,6 +163,19 @@ def _issue_id(value, what: str) -> int:
     raise WayfinderError(f"{what} 는 양의 이슈 번호다: {value!r}")
 
 
+def _node_ref(value, what: str):
+    """노드 참조 — 일감 번호(int, 「#12」·「12」도) 또는 예정 키 「P<n>」(`#1036`)."""
+    if isinstance(value, str) and MB.is_planned(value.strip()):
+        return value.strip()
+    return _issue_id(value, what)
+
+
+def _next_key(block: MB.MapBlock) -> str:
+    """새 예정 노드 키 — 지금 지도의 가장 큰 P<n> 다음(`#1036`)."""
+    nums = [int(MB.PLANNED_RE.fullmatch(n.id).group(1)) for n in block.nodes if MB.is_planned(n.id)]
+    return f"{MB.PLANNED_PREFIX}{max(nums, default=0) + 1}"
+
+
 def _check_text(text, what: str, *, required: bool) -> str:
     """제목·요약 한 줄 판정 — 표 칸·다이어그램·본문 표지를 깨는 글을 막는다."""
     if not isinstance(text, str):
@@ -219,7 +232,7 @@ def _check_line(text, what: str) -> str:
 
 def _validate_titles(block: MB.MapBlock) -> None:
     for n in block.nodes:
-        _check_text(n.title, f"#{n.id} 제목", required=True)
+        _check_text(n.title, f"{MB.label(n.id)} 제목", required=True)
 
 
 def _map_call(fn, *args):
@@ -245,7 +258,7 @@ def compute_states(block: MB.MapBlock) -> MB.MapBlock:
     for n in out.nodes:
         missing = [d for d in n.deps if d not in by_id]
         if missing:
-            raise WayfinderError(f"#{n.id}: 표에 없는 선행 " + ", ".join(f"#{d}" for d in missing))
+            raise WayfinderError(f"{MB.label(n.id)}: 표에 없는 선행 " + ", ".join(f"#{d}" for d in missing))
     for n in out.nodes:
         if n.state not in RECOMPUTED:
             continue
@@ -261,7 +274,7 @@ def compute_states(block: MB.MapBlock) -> MB.MapBlock:
 
 def _frontier_list(block: MB.MapBlock) -> list[dict]:
     return [{"id": n.id, "title": n.title, "type": n.type}
-            for n in sorted(block.nodes, key=lambda x: x.id) if n.state == FRONTIER]
+            for n in sorted(block.nodes, key=lambda x: MB.id_key(x.id)) if n.state == FRONTIER]
 
 
 def _state_counts(block: MB.MapBlock) -> dict:
@@ -331,33 +344,41 @@ def _relations_of(rm, issue_id: int) -> list[dict]:
 def _differences(rm, root_id: int, block: MB.MapBlock) -> list[str]:
     """지도(기록)와 Redmine(사본)의 차이 — 부모 · 선행 관계 · 노드 표지."""
     diffs: list[str] = []
-    for n in sorted(block.nodes, key=lambda x: x.id):
+    for n in sorted(block.nodes, key=lambda x: MB.id_key(x.id)):
+        if MB.is_planned(n.id):                       # `#1036` — 예정 노드는 일감이 없다: 착수 전 상태만 허용
+            if n.state not in RECOMPUTED:
+                diffs.append(f"{n.id}: 예정 노드(일감 없음)인데 상태가 {n.state} — 착수 전 상태"
+                             f"({'·'.join(RECOMPUTED)})여야 한다")
+            continue
+        planned_deps = [d for d in n.deps if MB.is_planned(d)]
+        if planned_deps:
+            diffs.append(f"{MB.label(n.id)}: 일감 있는 노드의 선행에 예정 노드 " + ", ".join(planned_deps))
         iss = _get(rm, n.id)
         want_parent = root_id          # #982 T7 — Redmine 에서는 모든 노드가 Root 직속(파생 트리는 지도에만)
         got_parent = iss.get("parent")
         if got_parent != want_parent:
-            diffs.append(f"#{n.id}: Redmine 부모 {('#' + str(got_parent)) if got_parent else '없음'}"
+            diffs.append(f"{MB.label(n.id)}: Redmine 부모 {('#' + str(got_parent)) if got_parent else '없음'}"
                          f" ≠ Root #{want_parent}")
         try:
             marker = MB.parse_node(iss.get("description") or "")
         except MB.MapError as e:
-            diffs.append(f"#{n.id}: 노드 표지가 깨졌다 — {e}")
+            diffs.append(f"{MB.label(n.id)}: 노드 표지가 깨졌다 — {e}")
             marker = False
         if marker is None:
-            diffs.append(f"#{n.id}: 노드 표지가 없다")
+            diffs.append(f"{MB.label(n.id)}: 노드 표지가 없다")
         elif marker:
             if marker.root != root_id:
-                diffs.append(f"#{n.id}: 표지 root={marker.root} ≠ 지도 Root #{root_id}")
+                diffs.append(f"{MB.label(n.id)}: 표지 root={marker.root} ≠ 지도 Root #{root_id}")
             if marker.type != n.type:
-                diffs.append(f"#{n.id}: 표지 type={marker.type} ≠ 지도 타입 {n.type}")
+                diffs.append(f"{MB.label(n.id)}: 표지 type={marker.type} ≠ 지도 타입 {n.type}")
         got = _blocked_by(_relations_of(rm, n.id), n.id)
-        want = sorted(n.deps)
+        want = sorted(d for d in n.deps if not MB.is_planned(d))
         missing = [d for d in want if d not in got]
         extra = [d for d in got if d not in want]
         if missing:
-            diffs.append(f"#{n.id}: Redmine 에 없는 선행 관계 " + ", ".join(f"#{d}→#{n.id}" for d in missing))
+            diffs.append(f"{MB.label(n.id)}: Redmine 에 없는 선행 관계 " + ", ".join(f"#{d}→#{n.id}" for d in missing))
         if extra:
-            diffs.append(f"#{n.id}: 지도에 없는 선행 관계 " + ", ".join(f"#{d}→#{n.id}" for d in extra))
+            diffs.append(f"{MB.label(n.id)}: 지도에 없는 선행 관계 " + ", ".join(f"#{d}→#{n.id}" for d in extra))
     return diffs
 
 
@@ -514,11 +535,9 @@ def create_map(root_id, destination, nodes, *, fog=(), out_of_scope=(), confirm=
     """Root 에 지도를 만든다. `confirm=False` 는 미리보기뿐 — Redmine 쓰기 0건.
 
     `nodes` = `[{"key", "title", "type", "parent": "Root"|<key>, "deps": [keys], "summary"}]`.
-    미리보기의 노드 번호는 **임시 번호 1..n**(부모 먼저 순서)이다 — 실제 번호는 등록 때 정해진다.
-    `confirm=True` 는 `user_answer` 가 있어야 돈다. 순서: 노드 일감(부모 먼저, Root 와 같은 마일스톤,
-    본문 = 요약 + 노드 표지) → 선행 관계(`create_relation(선행, 노드)`) → 상태 계산 → Root 본문.
-    `project` 는 노드 일감의 Redmine 프로젝트다 — 비우면 `redmine.create_issue` 기본값.
-    도중 실패는 되돌리지 않고 이미 만든 번호를 돌려준다.
+    `#1036` — **Redmine 일감은 만들지 않는다.** 노드는 지도에만 예정 노드(키 P1·P2…, 부모 먼저 순서)로
+    올라가고, 일감은 선점(`claim`) 때 생긴다. `confirm=True` 는 `user_answer` 가 있어야 돈다 — 쓰기는
+    Root 본문 하나다. `project` 는 받기만 한다(일감은 `claim(project=…)` 이 만든다).
     """
     log, rm = _log_of(logf), _port(rm)
     rid = _issue_id(root_id, "Root")
@@ -541,57 +560,29 @@ def create_map(root_id, destination, nodes, *, fog=(), out_of_scope=(), confirm=
         return _refuse(log, f"Root #{rid} 에 깨진 지도 영역이 이미 있다 — {e}")
     if existing is not None:
         return _refuse(log, f"Root #{rid} 에 지도 영역이 이미 있다 — 두 번째 지도는 만들지 않는다")
-    version = root.get("fixed_version") or ""
-
-    tmp = {s["key"]: i for i, s in enumerate(order, start=1)}
+    tmp = {s["key"]: f"{MB.PLANNED_PREFIX}{i}" for i, s in enumerate(order, start=1)}
     try:
         preview_block = compute_states(_block_from(destination, order, tmp, fog, out_of_scope))
         preview = _map_call(MB.render, preview_block)
     except WayfinderError as e:
         _fail(log, str(e))
     if not confirm:
-        writes = []
-        for s in order:
-            parent = f"Root #{rid}" if s["parent"] == MB.ROOT else \
-                f"Root #{rid} (지도 파생 부모 {s['parent']} 임시 #{tmp[s['parent']]})"
-            writes.append(f"create_issue 「{s['title']}」 타입 {s['type']} · Redmine 부모 {parent} · "
-                          f"마일스톤 {version or '없음'} · 본문 = 요약 + 노드 표지")
-        for s in order:
-            for d in s["deps"]:
-                writes.append(f"create_relation {d}(임시 #{tmp[d]}) blocks {s['key']}(임시 #{tmp[s['key']]})")
-        writes.append(f"update_issue Root #{rid} — 본문에 지도 영역 + 노트")
-        log(f"미리보기 Root #{rid} — 노드 {len(order)}개 · 예정 쓰기 {len(writes)}건 · 실제 쓰기 0건")
+        writes = [f"update_issue Root #{rid} — 본문에 지도 영역(예정 노드 {', '.join(tmp.values())}) + 노트"]
+        log(f"미리보기 Root #{rid} — 예정 노드 {len(order)}개 · 일감 0(선점 때 생긴다) · 실제 쓰기 0건")
         return {"ok": True, "confirmed": False, "preview": preview, "temp_ids": tmp,
-                "note": "미리보기의 노드 번호는 임시 번호 1..n 이다", "writes": writes,
-                "log": log.lines}
+                "note": "노드는 예정 키(P<n>)로 지도에만 오른다 — Redmine 일감은 선점(claim) 때 생긴다(#1036)",
+                "writes": writes, "log": log.lines}
 
     log(f"등록 시작 Root #{rid} — 사용자 답: {user_answer}")
-    created: dict[str, int] = {}
-    for s in order:
-        parent_id = rid                # #982 T7 — Redmine 부모는 늘 Root, 파생 부모는 지도 「부모」 칸
-        nid, why = _create_node_issue(rm, root_id=rid, title=s["title"], type_=s["type"],
-                                      summary=s["summary"], parent_id=parent_id, version=version,
-                                      project=project, log=log)
-        if nid is not None:
-            created[s["key"]] = nid
-        if why:
-            return _stopped(log, f"노드 생성 {s['key']}", why, list(created.values()))
-    relations = []
-    for s in order:
-        for d in s["deps"]:
-            why = _relate(rm, created[d], created[s["key"]], log)
-            if why:
-                return _stopped(log, f"관계 {d}→{s['key']}", why, list(created.values()),
-                                relations=relations)
-            relations.append([created[d], created[s["key"]]])
-    block = compute_states(_block_from(destination, order, created, fog, out_of_scope))
-    notes = (f"Wayfinder 지도 등록 — 노드 {len(created)}개 · 관계 {len(relations)}개\n"
-             f"사용자 답: {user_answer}")
+    created: dict[str, str] = dict(tmp)
+    block = preview_block
+    notes = (f"Wayfinder 지도 등록 — 예정 노드 {len(created)}개({', '.join(created.values())}) · "
+             f"Redmine 일감은 선점 때 만든다\n사용자 답: {user_answer}")
     try:
         _write_root(rm, rid, body, block, notes, log)
     except WayfinderTransportError as e:
-        return _stopped(log, "Root 본문", str(e), list(created.values()), relations=relations)
-    return {"ok": True, "confirmed": True, "created": created, "relations": relations,
+        return _stopped(log, "Root 본문", str(e), [])
+    return {"ok": True, "confirmed": True, "created": created, "relations": [],
             "frontier": _frontier_list(block), "log": log.lines}
 
 
@@ -664,20 +655,20 @@ def _proposal(block: MB.MapBlock, rid: int, title, type_, parent, deps, summary,
     if parent in (None, MB.ROOT):
         parent_id = None
     else:
-        parent_id = _issue_id(parent, "부모")
+        parent_id = _node_ref(parent, "부모")
         if parent_id == rid:
             parent_id = None
         elif block.node(parent_id) is None:
-            raise WayfinderError(f"부모 #{parent_id} 가 지도에 없다")
+            raise WayfinderError(f"부모 {MB.label(parent_id)} 가 지도에 없다")
     dep_ids = []
     for d in deps or ():
-        did = _issue_id(d, "선행")
+        did = _node_ref(d, "선행")
         if block.node(did) is None:
-            raise WayfinderError(f"선행 #{did} 가 지도에 없다")
+            raise WayfinderError(f"선행 {MB.label(did)} 가 지도에 없다")
         if did in dep_ids:
-            raise WayfinderError(f"선행이 겹친다 #{did}")
+            raise WayfinderError(f"선행이 겹친다 {MB.label(did)}")
         dep_ids.append(did)
-    path: list[int] = []                              # 붙는 자리 → Root
+    path: list = []                              # 붙는 자리 → Root
     cur = parent_id
     while cur is not None:
         path.append(cur)
@@ -694,10 +685,10 @@ def _proposal(block: MB.MapBlock, rid: int, title, type_, parent, deps, summary,
                 duplicates.append({"id": n.id, "title": n.title, "level": level, "score": score})
             if n.state == DONE:
                 reverify.add(n.id)
-    duplicates.sort(key=lambda x: (-x["score"], x["level"], x["id"]))
+    duplicates.sort(key=lambda x: (-x["score"], x["level"], MB.id_key(x["id"])))
     return {"proposal": {"root": rid, "title": title, "type": type_, "parent": parent_id,
                          "deps": dep_ids, "summary": summary, "graduates": grad},
-            "duplicates": duplicates, "reverify": sorted(reverify), "path": [*path, rid]}
+            "duplicates": duplicates, "reverify": sorted(reverify, key=MB.id_key), "path": [*path, rid]}
 
 
 def propose_node(root_id, title, type, parent, *, deps=(), summary="", graduates=None,  # noqa: A002
@@ -729,7 +720,8 @@ def propose_node(root_id, title, type, parent, *, deps=(), summary="", graduates
 def register_node(root_id, proposal, *, user_answer, project="", rm=None, logf=None) -> dict:
     """제안을 등록한다. `user_answer` 가 있어야 돈다. 대조에 차이가 있으면 거절.
 
-    순서: 노드 일감(부모·Root 의 마일스톤·표지) → 선행 관계 → 재검증 표시 + 상태 재계산 → Root 본문
+    `#1036` — **Redmine 일감은 만들지 않는다.** 새 노드는 예정 키(P<n>)로 지도에만 오르고, 선행도 지도에만
+    적힌다(일감·blocks 는 선점 `claim` 때). 순서: 재검증 표시 + 상태 재계산 → Root 본문
     → 재검증 대상 노드마다 노트 「#<새> 추가로 재검증 대상 — 맵 Root #<root>」.
     중복 후보·재검증 대상은 **지금 지도로 다시 계산한다**(제안 뒤 지도가 바뀌었을 수 있다).
     `proposal["graduates"]` 가 있으면 지금 안개에서 **글 그대로** 다시 찾는다 — 사라졌으면 쓰기 0건으로
@@ -759,37 +751,31 @@ def register_node(root_id, proposal, *, user_answer, project="", rm=None, logf=N
     except WayfinderError as e:
         _fail(log, str(e))
     pr = p["proposal"]
-    nid, why = _create_node_issue(rm, root_id=rid, title=pr["title"], type_=pr["type"],
-                                  summary=pr["summary"], parent_id=rid,
-                                  version=root.get("fixed_version") or "", project=project, log=log)
-    if why:
-        return _stopped(log, "노드 생성", why, [nid] if nid else [])
-    for d in pr["deps"]:
-        why = _relate(rm, d, nid, log)
-        if why:
-            return _stopped(log, f"관계 #{d}→#{nid}", why, [nid])
+    nid = _next_key(block)
+    log(f"예정 노드 {nid} 「{pr['title']}」 — 일감은 선점 때 만든다(#1036)")
     for n in block.nodes:
         if n.id in p["reverify"]:
-            log(f"#{n.id} 상태 {n.state} → {REVERIFY} (#{nid} 추가)")
+            log(f"{MB.label(n.id)} 상태 {n.state} → {REVERIFY} ({MB.label(nid)} 추가)")
             n.state = REVERIFY
     block.nodes.append(MB.MapNode(nid, pr["title"], pr["type"], pr["parent"], WAITING,
                                   list(pr["deps"]), "", pr["summary"]))
     if pr["graduates"] is not None:
         block.fog = [x for x in block.fog if x != pr["graduates"]]
-        log(f"안개 졸업 「{pr['graduates']}」 → #{nid}")
+        log(f"안개 졸업 「{pr['graduates']}」 → {MB.label(nid)}")
     try:
         new = compute_states(block)
     except WayfinderError as e:
         return _stopped(log, "상태 계산", str(e), [nid])
     rv = "·".join(f"#{i}" for i in p["reverify"]) or "없음"
-    grad_note = f"\n안개 졸업: {pr['graduates']} → #{nid}" if pr["graduates"] is not None else ""
-    notes = f"노드 #{nid} 「{pr['title']}」 추가 — 재검증 대상 {rv}{grad_note}\n사용자 답: {user_answer}"
+    grad_note = f"\n안개 졸업: {pr['graduates']} → {MB.label(nid)}" if pr["graduates"] is not None else ""
+    notes = (f"예정 노드 {nid} 「{pr['title']}」 추가(일감은 선점 때) — 재검증 대상 {rv}{grad_note}\n"
+             f"사용자 답: {user_answer}")
     try:
         _write_root(rm, rid, body, new, notes, log)
     except WayfinderTransportError as e:
         return _stopped(log, "Root 본문", str(e), [nid])
     for i in p["reverify"]:
-        out = rm.update_issue(i, notes=f"#{nid} 추가로 재검증 대상 — 맵 Root #{rid}")
+        out = rm.update_issue(i, notes=f"{MB.label(nid)} 추가로 재검증 대상 — 맵 Root #{rid}")
         if str(out).startswith("[주의]"):
             return _stopped(log, f"재검증 노트 #{i}", str(out), [nid])
         log(f"쓰기 — #{i} 재검증 노트")
@@ -879,8 +865,8 @@ def _plan_out_to_fog(b, target, text, reason, exact) -> dict:
 
 def _node_row(n: MB.MapNode) -> str:
     """노드 표 한 줄의 요지 — 노트·미리보기용(`#번호 제목 — 상태 (선행 …)`)."""
-    deps = f" (선행 {'·'.join(f'#{d}' for d in n.deps)})" if n.deps else ""
-    return f"#{n.id} {n.title} — {n.state}{deps}"
+    deps = f" (선행 {'·'.join(MB.label(d) for d in n.deps)})" if n.deps else ""
+    return f"{MB.label(n.id)} {n.title} — {n.state}{deps}"
 
 
 def _plan_node_out(b, target, text, reason, exact) -> dict:
@@ -891,23 +877,23 @@ def _plan_node_out(b, target, text, reason, exact) -> dict:
     """
     _no_text(NODE_OUT, text)
     _need_reason(NODE_OUT, reason)
-    nid = _issue_id(target, "노드")
+    nid = _node_ref(target, "노드")
     n = b.node(nid)
     if n is None:
-        now = " · ".join(f"#{x.id} {x.title}" for x in sorted(b.nodes, key=lambda x: x.id)) or "없음"
-        raise _Conflict(f"#{nid} 는 지도의 노드가 아니다 (지금 노드: {now})")
+        now = " · ".join(f"{MB.label(x.id)} {x.title}" for x in sorted(b.nodes, key=lambda x: MB.id_key(x.id))) or "없음"
+        raise _Conflict(f"{MB.label(nid)} 는 지도의 노드가 아니다 (지금 노드: {now})")
     node = {"id": n.id, "title": n.title, "state": n.state}
     if n.state == DONE:
-        raise _RuleRefusal(f"#{nid} — 이미 완료된 노드는 범위 밖으로 돌리지 않는다 — 결과가 이미 적용됐다",
+        raise _RuleRefusal(f"{MB.label(nid)} — 이미 완료된 노드는 범위 밖으로 돌리지 않는다 — 결과가 이미 적용됐다",
                            node=node)
-    children = sorted((x for x in b.nodes if x.parent == nid), key=lambda x: x.id)
+    children = sorted((x for x in b.nodes if x.parent == nid), key=lambda x: MB.id_key(x.id))
     if children:
-        listed = " · ".join(f"#{x.id} {x.title}" for x in children)
-        raise _RuleRefusal(f"#{nid} 에 파생 자식이 있다 — 자식부터 정리해야 범위 밖으로 돌린다: {listed}",
+        listed = " · ".join(f"{MB.label(x.id)} {x.title}" for x in children)
+        raise _RuleRefusal(f"{MB.label(nid)} 에 파생 자식이 있다 — 자식부터 정리해야 범위 밖으로 돌린다: {listed}",
                            node=node, children=[{"id": x.id, "title": x.title} for x in children])
-    line = _check_line(f"#{nid} {n.title}{OUT_SEP}{reason}", "범위 밖")
+    line = _check_line(f"{MB.label(nid)} {n.title}{OUT_SEP}{reason}", "범위 밖")
     _no_dup(b.out_of_scope, line, "범위 밖")
-    dependents = sorted(x.id for x in b.nodes if nid in x.deps)
+    dependents = sorted((x.id for x in b.nodes if nid in x.deps), key=MB.id_key)
     b.nodes = [x for x in b.nodes if x.id != nid]
     for x in b.nodes:
         if nid in x.deps:
@@ -934,7 +920,7 @@ def _sections_of(b: MB.MapBlock, keys) -> dict:
     out = {}
     for k in keys:
         if k == "nodes":                              # 표는 줄 요지 글로 — 노트·제안에 그대로 싣는다
-            out[k] = [_node_row(n) for n in sorted(b.nodes, key=lambda x: x.id)]
+            out[k] = [_node_row(n) for n in sorted(b.nodes, key=lambda x: MB.id_key(x.id))]
         else:
             out[k] = copy.deepcopy(getattr(b, k))
     return out
@@ -1069,6 +1055,13 @@ def _apply_node_out(rm, rid: int, body: str, new: MB.MapBlock, plan: dict, notes
     result = {"op": NODE_OUT, "node": ex["node"], "dependents": ex["dependents"],
               "before": plan["before"], "after": plan["after"]}
     deleted: list[int] = []
+    if MB.is_planned(nid):                            # `#1036` — 예정 노드는 일감·관계가 없다: 지도만 쓴다
+        result["deleted_relations"] = deleted
+        try:
+            _write_root(rm, rid, body, new, notes + "\n예정 노드(일감 없음) — 관계 삭제·노드 닫기 없음", log)
+        except WayfinderTransportError as e:
+            return _stopped(log, "Root 본문", str(e), [], **result)
+        return {"ok": True, **result, "log": log.lines}
     # ① 관계 — 열린 선행에 막힌 일감은 Redmine 이 닫지 않는다(#982 실측), 선행을 잃는 노드의 관계도 지도와 맞춘다
     for r in sorted(_relations_of(rm, nid), key=lambda x: x["id"]):
         got = rm.delete_relation(r["id"])
@@ -1101,12 +1094,17 @@ def _apply_node_out(rm, rid: int, body: str, new: MB.MapBlock, plan: dict, notes
 
 # ── 선점 · 재검증 완료 · Root 마감 ────────────────────────────────────────
 
-def claim(root_id, node_id, owner, *, rm=None, logf=None) -> dict:
-    """Frontier 노드를 선점한다 — 담당을 적고 작업중으로. **지도만 바꾼다**: Redmine 담당자
-    (assigned_to)는 바꾸지 않는다."""
+def claim(root_id, node_id, owner, *, project="", rm=None, logf=None) -> dict:
+    """Frontier 노드를 선점한다 — 담당을 적고 작업중으로. Redmine 담당자(assigned_to)는 바꾸지 않는다.
+
+    `#1036` — **예정 노드(P<n>)면 이때 Redmine 일감을 만든다.** 순서: 노드 일감(부모 Root · Root 마일스톤 ·
+    본문 = 요약 + 노드 표지) → 선행마다 blocks(선점은 Frontier 만 받으므로 선행은 모두 완료 = 일감 있음) →
+    지도의 키를 #번호로 바꾸고 그 키를 가리키는 부모·선행도 바꾼다 → 작업중 → Root 본문. 응답의 `id` 가
+    새 일감 번호, `key` 가 옛 예정 키다. 도중 실패는 되돌리지 않고 이미 만든 번호를 돌려준다.
+    이미 번호가 있는 노드는 종전처럼 지도만 바꾼다."""
     log, rm = _log_of(logf), _port(rm)
     rid = _issue_id(root_id, "Root")
-    nid = _issue_id(node_id, "노드")
+    nid = _node_ref(node_id, "노드")
     try:
         owner = _check_text(owner if isinstance(owner, str) else "", "담당", required=True)
     except WayfinderError as e:
@@ -1117,36 +1115,64 @@ def claim(root_id, node_id, owner, *, rm=None, logf=None) -> dict:
     block = compute_states(block)
     n = block.node(nid)
     if n is None:
-        return _refuse(log, f"#{nid} 는 Root #{rid} 지도의 노드가 아니다")
+        return _refuse(log, f"{MB.label(nid)} 는 Root #{rid} 지도의 노드가 아니다")
     if n.state != FRONTIER:
-        return _refuse(log, f"#{nid} 는 Frontier 가 아니다 (지금 {n.state}) — 선점하지 않는다")
+        return _refuse(log, f"{MB.label(nid)} 는 Frontier 가 아니다 (지금 {n.state}) — 선점하지 않는다")
+    key, created = None, []
+    if MB.is_planned(nid):
+        planned_deps = [d for d in n.deps if MB.is_planned(d)]
+        if planned_deps:                              # Frontier 면 선행은 완료 — 예정 노드는 완료일 수 없다
+            return _refuse(log, f"{nid} 의 선행에 아직 일감이 없는 예정 노드가 있다: {', '.join(planned_deps)}")
+        root = _get(rm, rid)
+        new_id, why = _create_node_issue(rm, root_id=rid, title=n.title, type_=n.type, summary=n.summary,
+                                         parent_id=rid, version=root.get("fixed_version") or "",
+                                         project=project, log=log)
+        if new_id is not None:
+            created.append(new_id)
+        if why:
+            return _stopped(log, f"노드 생성 {nid}", why, created)
+        for d in n.deps:
+            why = _relate(rm, d, new_id, log)
+            if why:
+                return _stopped(log, f"관계 #{d}→#{new_id}", why, created)
+        key = nid
+        for x in block.nodes:                         # 키 → 번호 (자기 자신 · 부모 · 선행)
+            if x.id == key:
+                x.id = new_id
+            if x.parent == key:
+                x.parent = new_id
+            x.deps = [new_id if d == key else d for d in x.deps]
+        n, nid = block.node(new_id), new_id
+        log(f"예정 노드 {key} → 일감 #{new_id}")
     n.owner, n.state = owner, WORKING
     new = compute_states(block)
+    made = f"예정 노드 {key} → 일감 #{nid} 생성 · " if key else ""
     try:
         _write_root(rm, rid, body, new,
-                    f"#{nid} 선점 — 담당 {owner} (지도만, Redmine 담당자는 바꾸지 않음)", log)
+                    f"#{nid} 선점 — {made}담당 {owner} (Redmine 담당자는 바꾸지 않음)", log)
     except WayfinderTransportError as e:
-        return _stopped(log, "Root 본문", str(e), [])
-    return {"ok": True, "id": nid, "owner": owner, "state": WORKING, "log": log.lines}
+        return _stopped(log, "Root 본문", str(e), created)
+    return {"ok": True, "id": nid, "key": key, "created": created, "owner": owner, "state": WORKING,
+            "log": log.lines}
 
 
 def mark_verified(root_id, node_id, evidence, *, rm=None, logf=None) -> dict:
     """재검증 노드를 근거와 함께 완료로 되돌린다. 근거가 없으면 거절."""
     log, rm = _log_of(logf), _port(rm)
     rid = _issue_id(root_id, "Root")
-    nid = _issue_id(node_id, "노드")
+    nid = _node_ref(node_id, "노드")
     if not str(evidence or "").strip():
-        return _refuse(log, f"#{nid} 재검증 근거(evidence)가 없다")
+        return _refuse(log, f"{MB.label(nid)} 재검증 근거(evidence)가 없다")
     body, block = _load(rm, rid)
     n = block.node(nid)
     if n is None:
-        return _refuse(log, f"#{nid} 는 Root #{rid} 지도의 노드가 아니다")
+        return _refuse(log, f"{MB.label(nid)} 는 Root #{rid} 지도의 노드가 아니다")
     if n.state != REVERIFY:
-        return _refuse(log, f"#{nid} 는 재검증 상태가 아니다 (지금 {n.state})")
+        return _refuse(log, f"{MB.label(nid)} 는 재검증 상태가 아니다 (지금 {n.state})")
     n.state = DONE
     new = compute_states(block)
     try:
-        _write_root(rm, rid, body, new, f"#{nid} 재검증 완료 — 근거: {evidence}", log)
+        _write_root(rm, rid, body, new, f"{MB.label(nid)} 재검증 완료 — 근거: {evidence}", log)
     except WayfinderTransportError as e:
         return _stopped(log, "Root 본문", str(e), [])
     return {"ok": True, "id": nid, "state": DONE, "frontier": _frontier_list(new), "log": log.lines}
@@ -1160,7 +1186,7 @@ def close_root(root_id, *, confirm=False, user_answer="", rm=None, logf=None) ->
     log, rm = _log_of(logf), _port(rm)
     rid = _issue_id(root_id, "Root")
     block = compute_states(_load(rm, rid)[1])
-    blockers = [f"#{n.id} {n.title} — {n.state}" for n in sorted(block.nodes, key=lambda x: x.id)
+    blockers = [f"{MB.label(n.id)} {n.title} — {n.state}" for n in sorted(block.nodes, key=lambda x: MB.id_key(x.id))
                 if n.state != DONE]
     blockers += [f"안개: {x}" for x in block.fog]
     if not confirm:
