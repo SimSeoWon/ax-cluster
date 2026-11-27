@@ -58,7 +58,7 @@ description: AX 마스터에서 탐색이 필요한 큰 일감을 웨이파인�
     ax-projects:wayfinder_sync_tool(root_id)                           다시 계산 — 바뀌었을 때만 Root 본문 쓰기
     ax-projects:wayfinder_propose_tool(root_id, title, type, parent, deps, summary, graduates)   새 노드 제안 (쓰기 0)
     ax-projects:wayfinder_register_tool(root_id, proposal, user_answer)   제안 등록 (사람 게이트)
-    ax-projects:wayfinder_claim_tool(root_id, node_id, owner)          Frontier 선점 (예정 노드는 일감 생성)
+    ax-projects:wayfinder_claim_tool(root_id, node_id, owner, prepare_only)   Frontier 선점 또는 분산 인터뷰용 티켓 준비
     ax-projects:wayfinder_verified_tool(root_id, node_id, evidence)    재검증 노드 완료 (근거 필수)
     ax-projects:wayfinder_close_tool(root_id, confirm, user_answer)    Root 마감 미리보기·마감 (사람 게이트)
     ax-projects:wayfinder_edit_propose_tool(root_id, op, target, text, reason)   맵 편집 제안 (쓰기 0)
@@ -82,8 +82,9 @@ description: AX 마스터에서 탐색이 필요한 큰 일감을 웨이파인�
 ## 3. 진행 — Frontier 와 노드 처리
 
 1. `ax-projects:wayfinder_status_tool(root_id)` 로 Frontier 와 대조 결과를 본다. `check.ok` 가 false 면 7로 간다.
-2. Frontier 가 여럿이면 어느 노드를 집을지 사용자에게 묻는다 — 순서는 내가 고르지 않는다.
-3. `ax-projects:wayfinder_claim_tool(root_id, node_id, owner)` 로 선점한다. `node_id` 는 번호 또는 예정 키 P<n>이다.
+2. 사용자에게 단독 처리와 분산 발주 중 어떤 방식으로 진행할지 묻는다. 이 작업의 방식을 이미 정했으면 그 답을 따른다.
+3. 단독 처리에서는 Frontier가 여럿이면 어느 노드를 집을지 묻는다. 한 건씩 선점, 인터뷰, 플랜, 구현, 검증을 진행한다.
+   `ax-projects:wayfinder_claim_tool(root_id, node_id, owner)` 로 선점한다. `node_id` 는 번호 또는 예정 키 P<n>이다.
    예정 노드면 일감·선행 blocks를 만들고, 지도 키와 그 키를 가리키는 부모·선행을 번호로 바꾼다.
    응답 `id` 는 일감 번호, `key` 는 옛 예정 키다. Redmine 담당자는 그대로다. 별도 동의 게이트는 없다.
 4. **선점 응답의 `id`** 로 노드 일감을 보통의 `ax-plan` 흐름으로 처리한다 — `ax-projects:plan_start_tool` 부터.
@@ -91,7 +92,15 @@ description: AX 마스터에서 탐색이 필요한 큰 일감을 웨이파인�
    손으로 지도를 고치지 않는다.
    그다음 Frontier 가 비었고 목적지에 아직 닿지 않았으면, 끝난 노드의 결과로 드러난 다음 노드를 4절로 제안한다 —
    맵은 이렇게 자란다(`#1028`). 무엇을 붙일지는 사용자와 정한다.
-6. 지도가 실제와 다르게 보이면 `ax-projects:wayfinder_sync_tool(root_id)` 로 다시 계산한다. 바뀐 것이 없으면 쓰지 않는다.
+6. 분산 발주는 사이클마다 반복한다.
+   - 이번 사이클의 작업 가능한 노드를 보여 주고 사용자와 준비 대상을 정한다.
+     `ax-projects:wayfinder_claim_tool(root_id, node_id, prepare_only=True)` 로 한 건씩 티켓을 준비한다.
+     번호가 있는 Frontier는 그 티켓을 재사용한다. 준비한 노드는 담당 없이 Frontier에 남는다.
+   - 각 티켓에서 `plan_start_tool`로 착수 전 인터뷰를 열고 사용자와 명세·태스크·개발 완료 체크리스트를 확정한다.
+   - 사용자가 발주를 요청하면 준비된 티켓을 가용 워커에 배정한다. 미준비 노드와 대기 사유를 보여 준다.
+   - 이번 묶음의 결과를 티켓에서 모아 검수한다. 선행이 끝나거나 안개가 걷힌 노드는 다음 사이클에서 준비한다.
+     수정이 필요한 노드는 같은 티켓에 근거와 수정 요구를 남긴다.
+7. 지도가 실제와 다르게 보이면 `ax-projects:wayfinder_sync_tool(root_id)` 로 다시 계산한다. 바뀐 것이 없으면 쓰지 않는다.
 
 ## 4. 새 노드 — 제안 → 동의 → 등록
 

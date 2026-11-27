@@ -1420,16 +1420,17 @@ def wayfinder_register_tool(root_id: int, proposal: dict, user_answer: str) -> s
 
 
 @mcp.tool()
-def wayfinder_claim_tool(root_id: int, node_id: int | str, owner: str) -> str:
+def wayfinder_claim_tool(root_id: int, node_id: int | str, owner: str = "", prepare_only: bool = False) -> str:
     """Frontier 노드를 선점한다 (`#982`) — 지도에 담당을 적고 작업중으로 옮긴다.
 
     `node_id`는 일감 번호 또는 예정 키 P<n>. 예정 노드는 이때 일감·선행 blocks를 만들고 지도 키와 참조를
     새 번호로 바꾼다(`#1036`). 응답 `id`가 일감 번호, `key`가 옛 예정 키다. 기존 번호 노드는 지도만 바꾼다.
     Redmine 담당자는 바꾸지 않는다. Frontier 아닌 노드는 거절한다. 응답의 `id`로 보통의 일감 흐름을 시작한다.
+    `prepare_only=True`는 분산 인터뷰용 티켓을 준비하고 노드를 Frontier에 둔다. 이때 담당을 주지 않는다.
     """
     from .. import wayfinder
     try:
-        return json.dumps(wayfinder.claim(root_id, node_id, owner), ensure_ascii=False)
+        return json.dumps(wayfinder.claim(root_id, node_id, owner, prepare_only=prepare_only), ensure_ascii=False)
     except Exception as e:                               # noqa: BLE001
         return _fail(e)
 

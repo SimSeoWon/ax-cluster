@@ -368,6 +368,30 @@ def test_claim_creates_issue_1036():
           and len(out["created"]) == 1 and rm3.issues[ROOT]["description"] == before, str(out))
 
 
+def test_prepare_distributed_ticket():
+    rm = _fresh()
+    _build(rm, "목적", SPECS)
+    _, logf = _quiet()
+    before = len(rm.writes())
+    blocked = WF.claim(ROOT, "P2", prepare_only=True, rm=rm, logf=logf)
+    check("분산 준비: 차단 노드는 일감을 만들지 않는다",
+          not blocked["ok"] and len(rm.writes()) == before, str(blocked))
+    prepared = WF.claim(ROOT, "P1", prepare_only=True, rm=rm, logf=logf)
+    issue_id = prepared["id"]
+    block = WF.load(ROOT, rm=rm)
+    node = block.node(issue_id)
+    check("분산 준비: 일감 번호를 받고 노드는 담당 없이 Frontier",
+          prepared["created"] == [issue_id] and node.state == "Frontier" and not node.owner, str(prepared))
+    before = len(rm.writes())
+    again = WF.claim(ROOT, issue_id, prepare_only=True, rm=rm, logf=logf)
+    check("분산 준비: 번호가 있는 Frontier는 기존 일감 재사용",
+          again["ok"] and again["id"] == issue_id and not again["created"] and len(rm.writes()) == before,
+          str(again))
+    solo = WF.claim(ROOT, issue_id, "codex", rm=rm, logf=logf)
+    check("분산 준비 뒤에도 같은 번호로 단독 선점 가능",
+          solo["ok"] and solo["state"] == "작업중" and not solo["created"], str(solo))
+
+
 def test_planned_node_out_and_drift_1036():
     """`#1036` — 예정 노드를 범위 밖으로 돌리면 지도만 쓴다 · 예정 노드가 착수 뒤 상태면 대조 차이."""
     rm = _fresh()
@@ -1075,7 +1099,7 @@ def test_distributed_node_display_and_guards():
 
 def main() -> int:
     for fn in (test_create_map_preview, test_create_map_confirm, test_create_map_refusals,
-               test_first_nodes_only_1028, test_claim_creates_issue_1036,
+               test_first_nodes_only_1028, test_claim_creates_issue_1036, test_prepare_distributed_ticket,
                test_planned_node_out_and_drift_1036,
                test_title_validation, test_compute_states, test_check, test_sync,
                test_sync_keeps_reverify, test_on_node_closed, test_propose_node, test_register_node,

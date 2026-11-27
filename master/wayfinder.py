@@ -1123,26 +1123,31 @@ def _apply_node_out(rm, rid: int, body: str, new: MB.MapBlock, plan: dict, notes
 
 # ── 선점 · 재검증 완료 · Root 마감 ────────────────────────────────────────
 
-def claim(root_id, node_id, owner, *, project="", rm=None, logf=None, lock_root=None) -> dict:
+def claim(root_id, node_id, owner="", *, prepare_only=False, project="", rm=None, logf=None, lock_root=None) -> dict:
     """Frontier 노드를 선점한다 — 담당을 적고 작업중으로. Redmine 담당자(assigned_to)는 바꾸지 않는다.
 
     `#1036` — **예정 노드(P<n>)면 이때 Redmine 일감을 만든다.** 순서: 노드 일감(부모 Root · Root 마일스톤 ·
     본문 = 요약 + 노드 표지) → 선행마다 blocks(선점은 Frontier 만 받으므로 선행은 모두 완료 = 일감 있음) →
     지도의 키를 #번호로 바꾸고 그 키를 가리키는 부모·선행도 바꾼다 → 작업중 → Root 본문. 응답의 `id` 가
     새 일감 번호, `key` 가 옛 예정 키다. 도중 실패는 되돌리지 않고 이미 만든 번호를 돌려준다.
-    이미 번호가 있는 노드는 종전처럼 지도만 바꾼다."""
+    이미 번호가 있는 노드는 종전처럼 지도만 바꾼다.
+    prepare_only는 분산 사이클 인터뷰용으로 티켓만 준비한다. 노드는 Frontier에 둔다."""
     rid = _issue_id(root_id, "Root")
     nid = _node_ref(node_id, "노드")
     assignments = _distributed_nodes(rid, rm, lock_root)
     log, rm = _log_of(logf), _port(rm)
     if nid in assignments:
         return _refuse(log, f"{MB.label(nid)} 는 분산 노드 배정으로 관리 중이다")
-    try:
-        owner = _check_text(owner if isinstance(owner, str) else "", "담당", required=True)
-    except WayfinderError as e:
-        _fail(log, str(e))
-    if owner == MB.NO_DEPS:
-        _fail(log, f"담당 {MB.NO_DEPS!r} 는 '담당 없음' 과 겹친다")
+    if prepare_only:
+        if owner:
+            return _refuse(log, "분산 노드 준비 단계에서는 담당을 지정하지 않는다")
+    else:
+        try:
+            owner = _check_text(owner if isinstance(owner, str) else "", "담당", required=True)
+        except WayfinderError as e:
+            _fail(log, str(e))
+        if owner == MB.NO_DEPS:
+            _fail(log, f"담당 {MB.NO_DEPS!r} 는 '담당 없음' 과 겹친다")
     body, block = _load(rm, rid)
     block = compute_states(block)
     n = block.node(nid)
@@ -1150,6 +1155,13 @@ def claim(root_id, node_id, owner, *, project="", rm=None, logf=None, lock_root=
         return _refuse(log, f"{MB.label(nid)} 는 Root #{rid} 지도의 노드가 아니다")
     if n.state != FRONTIER:
         return _refuse(log, f"{MB.label(nid)} 는 Frontier 가 아니다 (지금 {n.state}) — 선점하지 않는다")
+    if prepare_only:
+        differences = _differences(rm, rid, block)
+        if differences:
+            return _refuse(log, "지도와 Redmine 대조 결과에 차이가 있다", differences=differences)
+        if not MB.is_planned(nid):
+            return {"ok": True, "id": nid, "key": None, "created": [], "owner": n.owner,
+                    "state": n.state, "log": log.lines}
     key, created = None, []
     if MB.is_planned(nid):
         planned_deps = [d for d in n.deps if MB.is_planned(d)]
@@ -1176,15 +1188,17 @@ def claim(root_id, node_id, owner, *, project="", rm=None, logf=None, lock_root=
             x.deps = [new_id if d == key else d for d in x.deps]
         n, nid = block.node(new_id), new_id
         log(f"예정 노드 {key} → 일감 #{new_id}")
-    n.owner, n.state = owner, WORKING
+    if not prepare_only:
+        n.owner, n.state = owner, WORKING
     new = compute_states(block)
     made = f"예정 노드 {key} → 일감 #{nid} 생성 · " if key else ""
+    note = (f"#{nid} 분산 노드 준비 — {made}인터뷰 대기" if prepare_only else
+            f"#{nid} 선점 — {made}담당 {owner} (Redmine 담당자는 바꾸지 않음)")
     try:
-        _write_root(rm, rid, body, new,
-                    f"#{nid} 선점 — {made}담당 {owner} (Redmine 담당자는 바꾸지 않음)", log)
+        _write_root(rm, rid, body, new, note, log)
     except WayfinderTransportError as e:
         return _stopped(log, "Root 본문", str(e), created)
-    return {"ok": True, "id": nid, "key": key, "created": created, "owner": owner, "state": WORKING,
+    return {"ok": True, "id": nid, "key": key, "created": created, "owner": n.owner, "state": n.state,
             "log": log.lines}
 
 
