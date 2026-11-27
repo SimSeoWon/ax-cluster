@@ -1097,6 +1097,45 @@ def test_distributed_node_display_and_guards():
         check("1038 배정 뒤 범위 밖 편집 거절·쓰기 없음", not result["ok"] and len(rm.writes()) == before, str(result))
 
 
+def test_distributed_dispatch_preflight():
+    from tempfile import TemporaryDirectory
+    from master import plan_block, spec_block, wayfinder_dispatch as dispatch
+    from master.client.bundle import HostFacts
+
+    rm = _fresh()
+    _build(rm, "목적", SPECS)
+    _, logf = _quiet()
+    issue_id = WF.claim(ROOT, "P1", prepare_only=True, rm=rm, logf=logf)["id"]
+    issue = rm.issues[issue_id]
+    with TemporaryDirectory() as tmp:
+        before = len(rm.writes())
+        preview = dispatch.candidates(ROOT, [issue_id, "P2", 99999], rm=rm, lock_root=tmp)
+        check("발주 미리보기: 미준비 티켓과 지도에 없는 번호의 대기 사유",
+              preview["ok"] and not preview["ready"] and len(preview["waiting"]) == 3
+              and len(rm.writes()) == before, str(preview))
+        spec = "\n".join(f"## {heading}\n승인된 내용" for heading in
+                         ("문제", "분류", "관측", "범위", "완료 조건", "열린 결정"))
+        issue["description"] = spec_block.put(issue["description"], spec)
+        tasks = [plan_block.IssuePlanTask("T1", "대기", "구현")]
+        issue["description"] = plan_block.append(issue["description"], tasks)
+        preview = dispatch.candidates(ROOT, [issue_id], rm=rm, lock_root=tmp)
+        check("발주 미리보기: 체크리스트 미등록 티켓 대기",
+              not preview["ready"] and "체크리스트" in preview["waiting"][0]["why"], str(preview))
+        issue["description"] = plan_block.replace(
+            issue["description"], tasks, checklist=[plan_block.IssuePlanCheck("C1", "미확인", "검사")])
+        preview = dispatch.candidates(ROOT, [issue_id, issue_id], rm=rm, lock_root=tmp)
+        check("발주 미리보기: 승인된 플랜 한 건, 중복 입력 제거",
+              [row["id"] for row in preview["ready"]] == [issue_id], str(preview))
+        facts = [HostFacts("worker-a", "sim", "/repo", "ssh", codex="codex 1", checkout_ok=True),
+                 HostFacts("worker-b", "sim", "/repo", "ssh", codex="codex 1", checkout_ok=True)]
+        first = dispatch.reserve_worker(tmp, ROOT, issue_id, facts, mode="codex")
+        second = dispatch.reserve_worker(tmp, ROOT, issue_id + 1, facts, mode="codex")
+        duplicate = dispatch.reserve_worker(tmp, ROOT, issue_id, facts, mode="codex")
+        check("발주 예약: 점유 중인 워커를 빼고 두 번째 등록 워커 선택",
+              first["ok"] and second["ok"] and first["worker"].host != second["worker"].host)
+        check("발주 예약: 같은 노드를 거듭 발주할 수 없다", not duplicate["ok"], str(duplicate))
+
+
 def main() -> int:
     for fn in (test_create_map_preview, test_create_map_confirm, test_create_map_refusals,
                test_first_nodes_only_1028, test_claim_creates_issue_1036, test_prepare_distributed_ticket,
@@ -1107,7 +1146,7 @@ def main() -> int:
                test_graduate_propose, test_graduate_register, test_edit_ops, test_edit_refusals,
                test_fog_cleared_close_root, test_fake_refuses_blocked_close, test_node_out_propose,
                test_node_out_apply, test_node_out_close_fails, test_node_out_changed_between,
-               test_distributed_node_display_and_guards):
+               test_distributed_node_display_and_guards, test_distributed_dispatch_preflight):
         try:
             fn()
         except Exception as e:                       # noqa: BLE001
