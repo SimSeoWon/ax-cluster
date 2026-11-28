@@ -168,15 +168,18 @@ def _run_and_handoff(lock_root, rm, reservation: dict, mode: str) -> dict:
     if not result["termination_confirmed"]:
         result["state"] = issue_lock.NODE_RUNNING
         return result
-    transition = issue_lock.advance_node_assignment(
-        lock_root, issue_id, assignment_id=record["assignment_id"], to=issue_lock.NODE_REVIEW,
-        by="master", why=result["why"])
+    transition = issue_lock.record_node_exit(
+        lock_root, issue_id, assignment_id=record["assignment_id"], why=result["why"])
     if not transition["ok"]:
         result.update(why=transition["why"], reason=transition.get("reason"))
         return result
-    result["state"] = issue_lock.NODE_REVIEW
-    note = (f"웨이파인더 배정 검수 대기 — Root #{record['root_id']} · 워커 {record['worker']} · "
-            f"배정 {record['assignment_id']} · {result['why']}. 같은 티켓의 워커 작업·검증 노트를 확인한다.")
+    result.update(state=transition["record"]["state"], why=transition["why"])
+    needs_review = result["state"] == issue_lock.NODE_REVIEW
+    label = "검수 대기" if needs_review else "재작업 대기"
+    note = (f"웨이파인더 배정 {label} — Root #{record['root_id']} · 워커 {record['worker']} · "
+            f"배정 {record['assignment_id']} · {result['why']}.")
+    if needs_review:
+        note += " 같은 티켓의 워커 작업·검증 노트를 확인한다."
     try:
         written = rm.update_issue(issue_id, notes=note)
     except Exception as error:
@@ -187,7 +190,7 @@ def _run_and_handoff(lock_root, rm, reservation: dict, mode: str) -> dict:
 
 def dispatch_cycle(root_id: int, node_ids, user_answer: str, *, rm=None, lock_root=None,
                    workers=None, worker_mode=None, clean=None) -> dict:
-    """승인된 사이클을 예약·실행하고 확인된 종료를 검수 대기로 넘긴다."""
+    """승인된 사이클을 실행하고 확인된 종료를 착수 여부에 따라 인계한다."""
     if not user_answer.strip():
         return {"ok": False, "why": "사용자의 실제 발주 요청 원문이 필요하다"}
     lock_root = issue_lock.default_root() if lock_root is None else lock_root

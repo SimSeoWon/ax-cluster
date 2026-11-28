@@ -1207,6 +1207,14 @@ def test_distributed_dispatch_preflight():
 
     def simulate_worker(worker, ticket, *, assignment_id, grant, mode, on_exit):
         if ticket == issue_id:
+            branch = f"wayfinder/{ROOT}/n{ticket}"
+            with issue_lock.node_guard(tmp, ticket):
+                started = issue_lock.start_node_work(tmp, ticket, assignment_id=assignment_id, worker=worker.host,
+                                                     start_rev="a" * 40, branch=branch)
+                submitted = issue_lock.submit_node_result(
+                    tmp, ticket, assignment_id=assignment_id, worker=worker.host, end="b" * 40,
+                    hashes=["b" * 40], subjects=["검증 결과"], summary="검사 통과")
+            assert started["ok"] and submitted["ok"], (started, submitted)
             on_exit()
             return 0, "검증 결과 기록"
         return 255, "연결 끊김"
@@ -1239,6 +1247,16 @@ def test_distributed_dispatch_preflight():
         check("이전 배정의 종료는 새 배정에 영향을 주지 않는다",
               stale.get("reason") == "stale_assignment"
               and issue_lock.node_assignments(tmp)[issue_id] == again["record"], str(stale))
+        with patch.object(dispatch, "run_assignment",
+                          return_value={"rc": 0, "termination_confirmed": True, "why": "워커 실행 종료 확인 (rc=0)"}):
+            missing = dispatch._run_and_handoff(tmp, rm, again, "codex")
+        check("#1065 착수 없는 rc 0은 검수 노트 대신 사유가 있는 재작업 대기로 전이",
+              missing["state"] == issue_lock.NODE_REWORK and missing["rc"] == 0
+              and "원격 착수 기록이 없다" in missing["why"]
+              and "재작업 대기" in rm.issues[issue_id]["journals"][-1]["notes"]
+              and issue_lock.node_assignments(tmp)[issue_id]["state"] == issue_lock.NODE_REWORK
+              and [node["id"] for node in dispatch.candidates(ROOT, [issue_id], rm=rm, lock_root=tmp)["ready"]]
+              == [issue_id], str(missing))
 
 
 def test_distributed_review_1050():

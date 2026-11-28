@@ -47,6 +47,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import subprocess
 import threading
 import urllib.error
@@ -506,7 +507,7 @@ def pick_worker(facts: list, requires=(), *, clean=None, need_agent: bool = True
     return p
 
 
-def agent_command(facts, path: str, instr: str, *, mode: str) -> str:
+def agent_command(facts, path: str, instr: str, *, mode: str, node_assignment_id: str = "") -> str:
     """워커에서 도는 **지휘자** 한 줄 (`#385`). `mode` 는 `claude` 또는 `codex`.
 
     [중요] 지시문은 **갈래를 만들지 않는다** — 실측 2026-09-08(리포트 56 ⓒ): codex 가
@@ -590,11 +591,17 @@ def agent_command(facts, path: str, instr: str, *, mode: str) -> str:
         #    [주의] 파일이 아니라 **명령줄**인 것은 바로 위 `windows.sandbox` 와 같은 근거다
         #    (*"앱이 관리하는 파일을 고치지 않는다"*) — `codex mcp add` 로는 쓸 수도 없다.
         appr = bundle.codex_approval_flags()
+        # The correlation ID travels independently so the MCP can log a missing grant.
+        ticket_trace = (
+            f"-c {shlex.quote('mcp_servers.ax-client.env.AX_NODE_TICKET_TRACE_ID=' + json.dumps(node_assignment_id))} "
+            if node_assignment_id else ""
+        )
         return (f'{cd} && codex exec --json -s workspace-write '
                 f'-c sandbox_workspace_write.network_access=true '
                 f'{win}'
                 f'{agy}'
                 f'{appr} '
+                f'{ticket_trace}'
                 f'-C "{path}" "{instr}" < {nul}')
     raise ValueError(f"모르는 지휘자 모드: {mode!r}")
 
@@ -878,7 +885,11 @@ def _ssh_stoppable(host: str, user: str, cmd: str, *, timeout: int = DEFAULT_TIM
     run_id = _uuid.uuid4().hex
     ask = stop if stop is not None else (lambda: stop_requested(task_id, host) if task_id else False)
     if node_ticket_grant:
-        cmd = "IFS= read -r AX_NODE_TICKET_GRANT && export AX_NODE_TICKET_GRANT && " + cmd
+        cmd = ("IFS= read -r AX_NODE_TICKET_GRANT && export AX_NODE_TICKET_GRANT && { "
+               'if [ -n "$AX_NODE_TICKET_GRANT" ]; then '
+               "printf '%s\\n' '[ax-node-ticket] stage=launcher grant=present' >&2; "
+               "else printf '%s\\n' '[ax-node-ticket] stage=launcher grant=missing' >&2; fi; "
+               f"{cmd}; }}")
     argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", *bundle._mux_opts(),
             f"{user}@{host}", stoppable_command(cmd, run_id)]
     try:
@@ -926,6 +937,13 @@ def _ssh_stoppable(host: str, user: str, cmd: str, *, timeout: int = DEFAULT_TIM
                 if node_ticket_grant:
                     out = (out or "").replace(node_ticket_grant, "[ticket grant]")
                     err = (err or "").replace(node_ticket_grant, "[ticket grant]")
+                    for line in err.splitlines():
+                        trace = re.search(
+                            r"\[ax-node-ticket\] stage=(?:launcher|mcp)(?: assignment=[0-9a-f]{32})? grant=(?:present|missing)\b",
+                            line,
+                        )
+                        if trace:
+                            log(f"{who} {trace.group()}")
                 if on_exit is not None and 0 <= p.returncode < 255:
                     on_exit()
                 if p.returncode != 0 and (err or "").strip():
@@ -1216,7 +1234,8 @@ def run_node_ticket(facts, issue_id: int, *, assignment_id: str, grant: str, mod
     if facts.windows:
         return run_worker_session1(facts, task_id, mode=mode, timeout=timeout, cancelled=lambda: False,
                                    node_issue_id=issue_id, node_ticket_grant=grant, on_exit=on_exit)
-    cmd = agent_command(facts, facts.path, NODE_TICKET_INSTRUCTION.format(issue_id=issue_id), mode=mode)
+    cmd = agent_command(facts, facts.path, NODE_TICKET_INSTRUCTION.format(issue_id=issue_id),
+                        mode=mode, node_assignment_id=assignment_id)
     return _ssh_stoppable(facts.host, facts.user, cmd, task_id=task_id, timeout=timeout, stop=lambda: False,
                           node_ticket_grant=grant, on_exit=on_exit)
 

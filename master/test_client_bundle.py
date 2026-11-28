@@ -1460,6 +1460,26 @@ def test_project_local_codex_surfaces() -> None:
     merged2 = bundle.codex_project_mcp_text(merged, f, "ax-client")
     check("MCP 관리 블록은 멱등",
           merged2.count(bundle.CODEX_MCP_BEGIN) == 1, merged2)
+    env_line = 'env_vars = ["AX_NODE_TICKET_GRANT"]'
+    scoped = bundle.codex_project_mcp_text(merged, f, "ax-client", project="AXCluster")
+    check("#1065 AXCluster 워커 설정은 티켓 권한 이름만 전달",
+          env_line in scoped and bundle.codex_project_mcp_text(scoped, f, "ax-client", project="AXCluster") == scoped,
+          scoped)
+    requester = _facts(role="requester", codex="0.153.4")
+    check("#1065 요청자와 다른 프로젝트의 설정은 종전대로 유지",
+          env_line not in bundle.codex_project_mcp_text("", requester, "ax-client", project="AXCluster")
+          and env_line not in bundle.codex_project_mcp_text("", f, "ax-client", project="ModularStage"))
+    from unittest.mock import patch
+
+    transport = {"type": "stdio", **bundle.mcp_entry_for(f)}
+    with patch.object(bundle, "_remote_read", return_value=""), \
+            patch.object(bundle, "_remote_write"), \
+            patch.object(bundle, "codex_mcp_get", return_value={"transport": transport}):
+        missing = bundle.codex_project_mcp_add(f, "ax-client", project="AXCluster")
+        transport["env_vars"] = ["AX_NODE_TICKET_GRANT"]
+        actual = bundle.codex_project_mcp_add(f, "ax-client", project="AXCluster")
+    check("#1065 배달 후 Codex가 보는 전달 설정을 대조",
+          "환경변수 전달 설정이 빠졌다" in missing and "[완료]" in actual, str((missing, actual)))
     calls = []
     saved = bundle._ssh
     bundle._ssh = lambda host, user, cmd, timeout=None: (
@@ -2695,7 +2715,7 @@ def test_index_only_delivery() -> None:
     bundle._register_residency = lambda project, facts: {"registered": False}
     bundle._ensure_ignored = lambda facts: True
     bundle.claude_mcp_local_add = lambda facts, n: f"{n} [완료] local"
-    bundle.codex_project_mcp_add = lambda facts, n: f"{n} [완료] codex"
+    bundle.codex_project_mcp_add = lambda facts, n, *, project: f"{n} [완료] codex"
     try:
         got = bundle.deliver("K", f, project_init=idx)
     finally:

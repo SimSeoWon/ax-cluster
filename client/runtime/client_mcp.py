@@ -47,6 +47,7 @@ MCP 를 띄우는 규약에 기댄다(`.ax/` 를 cwd 고정으로 둔 기존 결
 from __future__ import annotations
 
 import json
+import re
 import sys
 import os
 import urllib.error
@@ -2398,6 +2399,10 @@ def main() -> int:
                 st.reconfigure(encoding="utf-8")
         except (OSError, ValueError):
             pass
+    trace_id = os.environ.get("AX_NODE_TICKET_TRACE_ID", "")
+    if re.fullmatch(r"[0-9a-f]{32}", trace_id):
+        grant_state = "present" if os.environ.get("AX_NODE_TICKET_GRANT", "").strip() else "missing"
+        print(f"[ax-node-ticket] stage=mcp assignment={trace_id} grant={grant_state}", file=sys.stderr, flush=True)
     serve()
     return 0
 

@@ -1403,7 +1403,13 @@ CODEX_MCP_BEGIN = "# BEGIN AX MANAGED MCP"
 CODEX_MCP_END = "# END AX MANAGED MCP"
 
 
-def codex_project_mcp_text(existing: str, facts: HostFacts, name: str) -> str:
+def _codex_project_env_vars(project: str, facts: HostFacts, name: str) -> list[str]:
+    if project == "AXCluster" and facts.role == "worker" and name == MCP_SERVER_NAME:
+        return ["AX_NODE_TICKET_GRANT"]
+    return []
+
+
+def codex_project_mcp_text(existing: str, facts: HostFacts, name: str, *, project: str = "") -> str:
     """프로젝트 `.codex/config.toml` 의 AX 관리 MCP 블록 (`#699`)."""
     text = existing or ""
     if CODEX_MCP_BEGIN in text and CODEX_MCP_END in text:
@@ -1415,10 +1421,12 @@ def codex_project_mcp_text(existing: str, facts: HostFacts, name: str) -> str:
         raise BundleError(f"{CODEX_PROJECT_CONFIG_REL} 에 사람이 관리하는 `{table}` 가 "
                           "있어 AX 블록을 넣지 않는다")
     entry = mcp_entry_for(facts)
+    env_vars = _codex_project_env_vars(project, facts, name)
+    env_line = f"env_vars = {json.dumps(env_vars)}\n" if env_vars else ""
     block = (f"{CODEX_MCP_BEGIN}\n{table}\n"
              f"command = {json.dumps(entry['command'], ensure_ascii=False)}\n"
              f"args = {json.dumps(list(entry['args']), ensure_ascii=False)}\n"
-             f"{CODEX_MCP_END}\n")
+             f"{env_line}{CODEX_MCP_END}\n")
     return ((text + "\n\n") if text else "") + block
 
 
@@ -1477,7 +1485,7 @@ def codex_mcp_add(facts: HostFacts, name: str) -> str:
     return f"{name} [완료] codex mcp get 대조 통과"
 
 
-def codex_project_mcp_add(facts: HostFacts, name: str) -> str:
+def codex_project_mcp_add(facts: HostFacts, name: str, *, project: str = "") -> str:
     """프로젝트 로컬 Codex MCP를 쓰고 그 체크아웃에서 되읽는다 (`#699`)."""
     if not facts.codex:
         return f"{name} [주의] 건너뜀 — 이 기계에 codex 가 없다"
@@ -1485,7 +1493,7 @@ def codex_project_mcp_add(facts: HostFacts, name: str) -> str:
     path = f"{facts.path}{sep}{CODEX_PROJECT_CONFIG_REL.replace('/', sep)}"
     prev = _remote_read(facts, path)
     _remote_write(facts, CODEX_PROJECT_CONFIG_REL,
-                  codex_project_mcp_text(prev, facts, name), base="checkout")
+                  codex_project_mcp_text(prev, facts, name, project=project), base="checkout")
     got = codex_mcp_get(facts, name, project=True)
     if not got:
         return f"{name} [주의] 프로젝트 설정을 썼는데 codex 가 못 찾는다"
@@ -1493,6 +1501,10 @@ def codex_project_mcp_add(facts: HostFacts, name: str) -> str:
         tr = got.get("transport") or {}
         return (f"{name} [주의] 프로젝트 설정과 다르다 — "
                 f"{tr.get('command')} {' '.join(tr.get('args') or [])}")
+    required_env_vars = _codex_project_env_vars(project, facts, name)
+    actual_env_vars = got["transport"].get("env_vars") or []
+    if any(variable not in actual_env_vars for variable in required_env_vars):
+        return f"{name} [주의] 프로젝트 MCP 환경변수 전달 설정이 빠졌다"
     return f"{name} [완료] 프로젝트 `.codex/config.toml` 대조 통과"
 
 
@@ -2310,7 +2322,7 @@ def _deliver(project: str, facts: HostFacts, *, dry_run: bool = False,
     #    홈 전역 `codex mcp add ax-client`는 다음 프로젝트 배달이 같은 이름을
     #    덮어써서 직전 프로젝트를 깨뜨렸다. 체크아웃의 `.codex/config.toml`을 쓴다.
     if spec.codex_mcp_for(facts.role, pinit):
-        written["codex_mcp"] = [codex_project_mcp_add(facts, n)
+        written["codex_mcp"] = [codex_project_mcp_add(facts, n, project=project)
                                 for n in spec.codex_mcp_for(facts.role, pinit)]
     # ── 훅 등록: **파일을 놓는 것으로 끝나지 않는다** (`#337`) ──────────
     #    작업장 자산이 `.claude/hooks/` 를 보내지만 훅은 `settings.json` 의 `hooks` 키에

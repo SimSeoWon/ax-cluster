@@ -607,7 +607,11 @@ def run_job(root: Path, d: Path) -> int:
         _log(d, f"🔴 세션 0 거절 — SessionId={sid} · {s0}")
         return finish()
     ticket_args = {"node_issue_id": node_issue_id} if node_ticket else {}
-    argv = build_argv(root, files, job.get("approvals") or (), self_repo=job.get("self_repo") is True,
+    approvals = list(job.get("approvals") or ())
+    assignment = re.fullmatch(r"node-[0-9]+-([0-9a-f]{32})", str(job.get("task_id", ""))) if node_ticket else None
+    if mode == "codex" and assignment:
+        approvals.append(f'mcp_servers.ax-client.env.AX_NODE_TICKET_TRACE_ID="{assignment[1]}"')
+    argv = build_argv(root, files, approvals, self_repo=job.get("self_repo") is True,
                       mode=mode, **ticket_args)
     _log(d, f"argv 준비 — 모드 {mode} · 실행 파일 {argv[0]}")
     # 🔴 [중요] **자식까지 죽여야 한다** (실측 2026-09-12). 세션 1 은 데스크톱이 있어서
@@ -623,6 +627,8 @@ def run_job(root: Path, d: Path) -> int:
         kw["start_new_session"] = True
     if node_ticket:
         kw["env"] = {**os.environ, "AX_NODE_TICKET_GRANT": grant}
+        if assignment:
+            _log(d, f"[ax-node-ticket] stage=launcher assignment={assignment[1]} grant=present")
     relay = None if node_ticket else _start_relay(root, d)
     proc = None
     try:

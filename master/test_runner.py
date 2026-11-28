@@ -1977,25 +1977,31 @@ def test_wayfinder_ticket_transport_dry_run() -> None:
     def ssh_popen(argv, **kwargs):
         def communicate(**kw):
             calls.append(kw.get("input"))
-            return synthetic_grant, ""
+            return synthetic_grant, "[ax-node-ticket] stage=launcher grant=present"
 
         calls.append(argv)
         return SimpleNamespace(returncode=0, communicate=communicate)
 
-    with patch.object(R, "_POPEN", ssh_popen):
+    with patch.object(R, "_POPEN", ssh_popen), patch.object(R, "_ssh_log") as ssh_log:
         result = R.run_node_ticket(_facts(), 1039, assignment_id="a" * 32, grant=synthetic_grant,
                                    mode="codex", on_exit=lambda: exits.append("linux"))
     check("Wayfinder Linux: 티켓 번호는 명령으로, 권한은 SSH stdin으로 전달",
           "Wayfinder ticket 1039" in calls[0][-1] and all(synthetic_grant not in arg for arg in calls[0])
           and calls[1] == synthetic_grant + "\n")
     check("Wayfinder Linux: 종료 근거와 출력의 권한값 제거", result == (0, "[ticket grant]") and exits == ["linux"])
+    check("#1065 Linux 런처 로그와 MCP 환경의 배정 ID 연결",
+          'mcp_servers.ax-client.env.AX_NODE_TICKET_TRACE_ID="' + "a" * 32 + '"' in calls[0][-1]
+          and "stage=launcher grant=present" in ssh_log.call_args.args[0]
+          and "a" * 32 in ssh_log.call_args.args[0])
 
     launcher = _load_launcher()
     with TemporaryDirectory() as name:
         root = Path(name)
         job = root / "job"
         job.mkdir()
-        (job / launcher.JOB).write_text(json.dumps({"node_issue_id": 1039, "request_id": "preview"}), encoding="utf-8")
+        (job / launcher.JOB).write_text(
+            json.dumps({"node_issue_id": 1039, "request_id": "preview", "task_id": "node-1039-" + "a" * 32}),
+            encoding="utf-8")
         grant_file = job / launcher.TICKET_GRANT
         grant_file.write_text(synthetic_grant, encoding="ascii")
         observed = {}
@@ -2016,6 +2022,9 @@ def test_wayfinder_ticket_transport_dry_run() -> None:
               R.NODE_TICKET_INSTRUCTION == launcher.NODE_TICKET_INSTRUCTION
               and (job / launcher.TERMINATED).read_text() == "preview"
               and (job / launcher.OUT).read_text() == "[ticket grant]")
+        check("#1065 Windows 런처 로그와 MCP 환경의 배정 ID 연결",
+              'mcp_servers.ax-client.env.AX_NODE_TICKET_TRACE_ID="' + "a" * 32 + '"' in observed["argv"]
+              and f"stage=launcher assignment={'a' * 32} grant=present" in (job / launcher.LOG).read_text(encoding="utf-8"))
 
 
 def main() -> int:

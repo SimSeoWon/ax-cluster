@@ -365,10 +365,17 @@ def advance_node_assignment(root, issue_id: int, *, assignment_id: str, to: str,
                                         by=by, why=why, logf=logf)
 
 
-def _advance_node_assignment(root, issue_id: int, *, assignment_id: str, to: str, by: str, why: str,
+def record_node_exit(root, issue_id: int, *, assignment_id: str, why: str) -> dict:
+    """종료가 확인된 배정의 착수 여부를 같은 잠금 안에서 확인하고 상태를 전이한다."""
+    with node_guard(root, issue_id):
+        return _advance_node_assignment(root, issue_id, assignment_id=assignment_id, to=None,
+                                        by="master", why=why)
+
+
+def _advance_node_assignment(root, issue_id: int, *, assignment_id: str, to: str | None, by: str, why: str,
                              logf=None) -> dict:
     """호출자는 해당 티켓의 node_guard를 유지한다."""
-    required = {NODE_REVIEW: (NODE_RUNNING,), NODE_REWORK: (NODE_REVIEW,), NODE_ACCEPTED: (NODE_REVIEW,),
+    required = {None: (NODE_RUNNING,), NODE_REVIEW: (NODE_RUNNING,), NODE_REWORK: (NODE_REVIEW,), NODE_ACCEPTED: (NODE_REVIEW,),
                 "finished": (NODE_REVIEW, NODE_ACCEPTED)}
     if to not in required or not assignment_id or not by.strip() or not why.strip():
         return _refuse(logf, issue_id, "advance_node", "invalid", "배정 번호·허용 전이·주체·근거가 필요하다")
@@ -381,6 +388,11 @@ def _advance_node_assignment(root, issue_id: int, *, assignment_id: str, to: str
             return _refuse(logf, issue_id, "advance_node", "stale_assignment", "현재 배정 번호와 다르다")
         if rec["state"] not in required[to]:
             return _refuse(logf, issue_id, "advance_node", "invalid_state", f"현재 상태 {rec['state']}")
+        if to is None:
+            to = NODE_REVIEW
+            if not rec.get("start_rev"):
+                to = NODE_REWORK
+                why = f"{why} · 원격 착수 기록이 없다"
         updated = {**rec, "state": to, "updated": _now()}
         if to == "finished":
             del nodes[key]
@@ -388,7 +400,7 @@ def _advance_node_assignment(root, issue_id: int, *, assignment_id: str, to: str
             nodes[key] = updated
         _record(data, f"node_{to}", issue_id, by, why)
         _save(root, data)
-    return {"ok": True, "record": updated, "log": [_emit(logf, issue_id, "advance_node", to)]}
+    return {"ok": True, "record": updated, "why": why, "log": [_emit(logf, issue_id, "advance_node", to)]}
 
 
 def _current_running(data, issue_id: int, assignment_id: str, worker: str):
