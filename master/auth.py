@@ -40,14 +40,16 @@ SCHEME = "Bearer"
 BASIC = "Basic"
 
 NODE_TICKET_PATH = "/api/v1/wayfinder/issue"
-_NODE_TICKET_PREFIX = "ax-node-v1~"
+_NODE_TICKET_PREFIX = "ax-node-v2~"
 _NODE_WORKER = re.compile(r"[A-Za-z0-9_.:@-]{1,128}")
+_NODE_ASSIGNMENT = re.compile(r"[0-9a-f]{32}")
 
 
 @dataclass(frozen=True)
 class NodeTicketGrant:
     issue_id: int
     worker: str
+    assignment_id: str
     expires_at: int
 
 
@@ -55,28 +57,34 @@ def _node_ticket_signature(master_token: str, payload: str) -> str:
     return hmac.digest(master_token.encode(), payload.encode("ascii"), "sha256").hex()
 
 
-def issue_node_ticket_grant(master_token: str, issue_id: int, worker: str, *, expires_at: int) -> str:
-    """마스터 내부 발급 계약. 승인된 배정에 한해 호출하고 워커에는 발급 결과만 전달한다."""
+def issue_node_ticket_grant(master_token: str, issue_id: int, worker: str, *,
+                            assignment_id: str, expires_at: int) -> str:
+    """승인된 배정의 식별자를 서명하고 워커에는 발급 결과만 전달한다."""
     if (len(master_token) < MIN_TOKEN_LEN or type(issue_id) is not int or not 0 < issue_id < 10**18
-            or not _NODE_WORKER.fullmatch(worker) or type(expires_at) is not int
+            or not _NODE_WORKER.fullmatch(worker)
+            or not isinstance(assignment_id, str) or not _NODE_ASSIGNMENT.fullmatch(assignment_id)
+            or type(expires_at) is not int
             or not time.time() < expires_at < 10**12):
         raise ValueError("invalid node ticket grant")
-    payload = f"{_NODE_TICKET_PREFIX}{issue_id}~{worker}~{expires_at}"
+    payload = f"{_NODE_TICKET_PREFIX}{issue_id}~{worker}~{assignment_id}~{expires_at}"
     return f"{payload}~{_node_ticket_signature(master_token, payload)}"
 
 
 def _read_node_ticket_grant(token: str, master_token: str) -> NodeTicketGrant | None:
-    fields = token.removeprefix(_NODE_TICKET_PREFIX).split("~")
-    if len(fields) != 4 or len(master_token) < MIN_TOKEN_LEN:
+    if not token.startswith(_NODE_TICKET_PREFIX) or len(master_token) < MIN_TOKEN_LEN:
         return None
-    issue, worker, expires, signature = fields
+    fields = token.removeprefix(_NODE_TICKET_PREFIX).split("~")
+    if len(fields) != 5:
+        return None
+    issue, worker, assignment_id, expires, signature = fields
     if not (re.fullmatch(r"[1-9][0-9]{0,17}", issue) and _NODE_WORKER.fullmatch(worker)
+            and _NODE_ASSIGNMENT.fullmatch(assignment_id)
             and re.fullmatch(r"[1-9][0-9]{0,11}", expires) and re.fullmatch(r"[0-9a-f]{64}", signature)):
         return None
     payload = token.rsplit("~", 1)[0]
     if int(expires) <= time.time() or not hmac.compare_digest(signature, _node_ticket_signature(master_token, payload)):
         return None
-    return NodeTicketGrant(int(issue), worker, int(expires))
+    return NodeTicketGrant(int(issue), worker, assignment_id, int(expires))
 
 # [중요] **뷰 토큰은 API 토큰과 다르다** (2026-08-13).
 #

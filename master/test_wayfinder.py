@@ -1189,6 +1189,7 @@ def test_distributed_dispatch_preflight():
             scoped = auth._read_node_ticket_grant(grant, test_master_token)
             check("배정 일감·워커로 서명한 기간 제한 권한을 실행에 전달",
                   scoped is not None and scoped.issue_id == issue_id and scoped.worker == worker.host
+                  and scoped.assignment_id == assignment_id
                   and ticket == issue_id and assignment_id == first["record"]["assignment_id"] and mode == "codex")
             on_exit()
             return 0, grant

@@ -130,6 +130,21 @@ def _locked(root):
             fcntl.flock(fh, fcntl.LOCK_UN)
 
 
+@contextmanager
+def node_guard(root, issue_id: int):
+    """같은 티켓의 배정 변경과 외부 쓰기를 직렬화한다. 전역 상태 잠금보다 먼저 잡는다."""
+    if type(issue_id) is not int or issue_id <= 0:
+        raise ValueError("양의 정수 노드 일감 번호가 필요하다")
+    directory = Path(root) / ".node_locks"
+    directory.mkdir(parents=True, exist_ok=True)
+    with (directory / str(issue_id)).open("a+") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
 def _emit(logf, issue_id, op: str, msg: str) -> str:
     line = f"[issue_lock] #{issue_id} {op}: {msg}"
     if logf:
@@ -305,7 +320,7 @@ def reserve_node(root, issue_id: int, *, root_id: int, worker: str, logf=None) -
             or issue_id == root_id or not isinstance(worker, str) or not worker.strip()):
         return _refuse(logf, issue_id, "reserve_node", "invalid", "노드 번호·Root 번호·워커가 필요하다")
     worker = worker.strip()
-    with _locked(root):
+    with node_guard(root, issue_id), _locked(root):
         data = _load(root)
         active = data["active"]
         key = str(issue_id)
@@ -330,6 +345,16 @@ def reserve_node(root, issue_id: int, *, root_id: int, worker: str, logf=None) -
 def advance_node_assignment(root, issue_id: int, *, assignment_id: str, to: str, by: str, why: str,
                             logf=None) -> dict:
     """마스터가 확인한 종료 → 검수, 또는 승인된 재작업·마감 결과를 기록한다."""
+    if type(issue_id) is not int or issue_id <= 0:
+        return _refuse(logf, issue_id, "advance_node", "invalid", "노드 번호가 필요하다")
+    with node_guard(root, issue_id):
+        return _advance_node_assignment(root, issue_id, assignment_id=assignment_id, to=to,
+                                        by=by, why=why, logf=logf)
+
+
+def _advance_node_assignment(root, issue_id: int, *, assignment_id: str, to: str, by: str, why: str,
+                             logf=None) -> dict:
+    """호출자는 해당 티켓의 node_guard를 유지한다."""
     required = {NODE_REVIEW: NODE_RUNNING, NODE_REWORK: NODE_REVIEW, "finished": NODE_REVIEW}
     if to not in required or not assignment_id or not by.strip() or not why.strip():
         return _refuse(logf, issue_id, "advance_node", "invalid", "배정 번호·허용 전이·주체·근거가 필요하다")

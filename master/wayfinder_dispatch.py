@@ -138,6 +138,7 @@ def run_assignment(lock_root, record: dict, worker, *, mode: str) -> dict:
         return {"rc": 1, "termination_confirmed": False, "why": "현재 배정과 실행 요청이 일치하지 않는다"}
     try:
         grant = auth.issue_node_ticket_grant(auth.load_token(), issue_id, worker.host,
+                                            assignment_id=record["assignment_id"],
                                             expires_at=int(time.time()) + runner.DEFAULT_TIMEOUT)
     except (auth.AuthError, ValueError, OSError) as error:
         return {"rc": 1, "termination_confirmed": True,

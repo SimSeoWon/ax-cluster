@@ -20,6 +20,8 @@ task_queue MCP 서버 (2026-05-02 재작성: SQLite → MD 폴더 저장)
 import sys
 import json
 import threading
+import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from .models import (
@@ -767,26 +769,36 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         from ..redmine import get_issue
         return get_issue(issue_id)
 
+    @contextmanager
     def node_ticket(request: Request, issue_id: int):
-        from .. import map_block, redmine
+        from .. import issue_lock, map_block, redmine
 
         grant = getattr(request.state, "node_ticket_grant", None)
         if grant is None or grant.issue_id != issue_id:
             raise HTTPException(403, "node ticket assignment required")
-        issue = redmine.get_issue(issue_id, include_private=False)
-        if "error" in issue:
-            raise HTTPException(502, "node ticket lookup failed")
-        try:
-            marker = map_block.parse_node(issue.get("description") or "")
-        except map_block.MapError:
-            marker = None
-        if marker is None or issue.get("id") != issue_id or issue.get("parent") != marker.root:
-            raise HTTPException(403, "assigned issue is not a Wayfinder node ticket")
-        return grant, issue
+        lock_root = issue_lock.default_root()
+        with issue_lock.node_guard(lock_root, issue_id):
+            assignment = issue_lock.node_assignments(lock_root).get(issue_id)
+            if (assignment is None or assignment["assignment_id"] != grant.assignment_id
+                    or assignment["worker"] != grant.worker or assignment["state"] != issue_lock.NODE_RUNNING
+                    or grant.expires_at <= time.time()):
+                raise HTTPException(403, "node ticket assignment is no longer active")
+            issue = redmine.get_issue(issue_id, include_private=False)
+            if "error" in issue:
+                raise HTTPException(502, "node ticket lookup failed")
+            try:
+                marker = map_block.parse_node(issue.get("description") or "")
+            except map_block.MapError:
+                marker = None
+            if (marker is None or issue.get("id") != issue_id or issue.get("parent") != marker.root
+                    or marker.root != assignment["root_id"]):
+                raise HTTPException(403, "assigned issue is not a Wayfinder node ticket")
+            yield lock_root, assignment, issue
 
     @app.get("/api/v1/wayfinder/issue/{issue_id}")
     def node_ticket_get_ep(request: Request, issue_id: int):
-        return node_ticket(request, issue_id)[1]
+        with node_ticket(request, issue_id) as (_, _, issue):
+            return issue
 
     @app.post("/api/v1/wayfinder/issue/{issue_id}/note")
     def node_ticket_note_ep(request: Request, issue_id: int, req: NodeTicketNoteReq):
@@ -795,11 +807,12 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         notes = req.notes.strip()
         if not notes:
             raise HTTPException(422, "notes must not be blank")
-        grant, _ = node_ticket(request, issue_id)
-        result = update_issue(issue_id, notes=f"[Wayfinder worker: {grant.worker}]\n{notes}")
-        if result.startswith("[주의]"):
-            raise HTTPException(502, "node ticket note update failed")
-        return {"ok": True, "issue_id": issue_id, "worker": grant.worker}
+        with node_ticket(request, issue_id) as (_, assignment, _):
+            worker = assignment["worker"]
+            result = update_issue(issue_id, notes=f"[Wayfinder worker: {worker}]\n{notes}")
+            if result.startswith("[주의]"):
+                raise HTTPException(502, "node ticket note update failed")
+            return {"ok": True, "issue_id": issue_id, "worker": worker}
 
     @app.post("/api/v1/redmine/issue")
     def redmine_create_issue_ep(req: RedmineIssueReq):

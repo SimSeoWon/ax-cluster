@@ -637,7 +637,7 @@ def test_wayfinder_node_ticket_live() -> None:
     from unittest.mock import patch
 
     from client.runtime import client_mcp
-    from master import redmine
+    from master import issue_lock, redmine
     from master.auth import auth_headers, issue_node_ticket_grant
 
     iid = 1037
@@ -655,12 +655,16 @@ def test_wayfinder_node_ticket_live() -> None:
 
     with tempfile.TemporaryDirectory(prefix="ax-node-ticket-test-") as tmp:
         c, master, requester, worker = _live_queue(Path(tmp))
-        H = auth_headers(issue_node_ticket_grant(master, iid, "worker-2", expires_at=int(time.time()) + 60))
+        lock_root = Path(tmp) / "node-locks"
+        old = issue_lock.reserve_node(lock_root, iid, root_id=1008, worker="worker-2")["record"]
+        H = auth_headers(issue_node_ticket_grant(master, iid, "worker-2",
+                                               assignment_id=old["assignment_id"], expires_at=int(time.time()) + 60))
 
         def api(method, path, payload):
             return c.request(method, path, headers=H, json=payload).json()
 
-        with patch.object(redmine, "api_key", return_value="test-key"), \
+        with patch.object(issue_lock, "default_root", return_value=lock_root), \
+                patch.object(redmine, "api_key", return_value="test-key"), \
                 patch.object(redmine, "_request", side_effect=lambda method, url, _key, payload=None, **kw:
                              sender(method, url, payload)):
             r = client_mcp.dispatch_tool("wayfinder_get_node_ticket", {"issue_id": iid}, api=api)
@@ -684,6 +688,18 @@ def test_wayfinder_node_ticket_live() -> None:
                   and res.json()["journals"][0]["notes"] == "비공개")
             with patch.object(redmine, "get_issue", return_value={"id": iid, "description": "일반 일감"}):
                 check("#1037 권한이 있어도 노드 표지 없는 일감은 거절", c.get(base, headers=H).status_code == 403)
+            for state in (issue_lock.NODE_REVIEW, issue_lock.NODE_REWORK):
+                issue_lock.advance_node_assignment(lock_root, iid, assignment_id=old["assignment_id"],
+                                                   to=state, by="master", why="검증")
+            new = issue_lock.reserve_node(lock_root, iid, root_id=1008, worker="worker-3")["record"]
+            H2 = auth_headers(issue_node_ticket_grant(master, iid, "worker-3",
+                                                      assignment_id=new["assignment_id"], expires_at=int(time.time()) + 60))
+            stale = c.post(base + "/note", headers=H, json={"notes": "이전 워커의 늦은 기록"})
+            check("#1050 재배정 뒤 이전 권한은 만료 전이어도 쓰기 0",
+                  stale.status_code == 403 and len(notes) == 1, stale.text)
+            current = c.post(base + "/note", headers=H2, json={"notes": "새 배정의 기록"})
+            check("#1050 재배정 뒤 새 워커만 같은 티켓에 기록",
+                  current.status_code == 200 and len(notes) == 2 and "worker-3" in notes[-1]["notes"], current.text)
 
 
 if __name__ == "__main__":

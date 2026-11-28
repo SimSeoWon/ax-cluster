@@ -235,11 +235,40 @@ def t_node_assignment_races(tmp):
               and any(r.get("reason") == reason for r in results), str(results))
 
 
+def t_node_write_guard(tmp):
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError
+    from threading import Event
+
+    first = IL.reserve_node(tmp, 1037, root_id=1008, worker="a")["record"]
+    entered = Event()
+
+    def reassign():
+        entered.set()
+        for state in (IL.NODE_REVIEW, IL.NODE_REWORK):
+            IL.advance_node_assignment(tmp, 1037, assignment_id=first["assignment_id"],
+                                       to=state, by="master", why="검수")
+        return IL.reserve_node(tmp, 1037, root_id=1008, worker="b")
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with IL.node_guard(tmp, 1037):
+            next_assignment = pool.submit(reassign)
+            check("재배정 시도가 시작됨", entered.wait(2))
+            try:
+                next_assignment.result(timeout=0.1)
+            except TimeoutError:
+                check("같은 티켓 쓰기가 끝날 때까지 재배정 대기", True)
+            else:
+                check("같은 티켓 쓰기가 끝날 때까지 재배정 대기", False)
+            check("독립 티켓은 계속 배정", IL.reserve_node(tmp, 1038, root_id=1008, worker="c")["ok"])
+        second = next_assignment.result(timeout=2)
+        check("쓰기 종료 뒤 새 배정으로 교체", second["ok"] and second["record"]["worker"] == "b")
+
+
 def main() -> int:
     for fn in (t_acquire_free, t_same_issue_already, t_busy_names_holder, t_pause_cycle,
                t_pause_refusals, t_release, t_corrupt_not_overwritten,
                t_concurrent_processes, t_concurrent_threads, t_history_cap, t_note_author,
-               t_node_assignments, t_node_assignment_races):
+               t_node_assignments, t_node_assignment_races, t_node_write_guard):
         run(fn)
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_issue_lock: {PASS}/{total} 통과")

@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import os
 import shutil
 import sys
@@ -98,32 +99,43 @@ def main() -> int:
     seen = []
 
     async def record(scope, receive, send):
-        seen.append(scope["state"]["node_ticket_grant"].worker)
+        grant = scope["state"]["node_ticket_grant"]
+        seen.append((grant.worker, grant.assignment_id))
         await send({"type": "http.response.start", "status": 200, "headers": []})
         await send({"type": "http.response.body", "body": b""})
 
     app = BearerAuthMiddleware(record, master_token, scoped=((worker_token, ()),), node_ticket_grants=True)
     base = f"{NODE_TICKET_PATH}/1037"
+    assignment_id = "a" * 32
     with patch("master.auth.time.time", return_value=100):
-        grant = issue_node_ticket_grant(master_token, 1037, "worker-2", expires_at=200)
-        forged = issue_node_ticket_grant(worker_token, 1037, "worker-2", expires_at=200)
+        grant = issue_node_ticket_grant(master_token, 1037, "worker-2", assignment_id=assignment_id, expires_at=200)
+        forged = issue_node_ticket_grant(worker_token, 1037, "worker-2", assignment_id=assignment_id, expires_at=200)
+        old_payload = "ax-node-v1~1037~worker-2~200"
+        old_mac = hmac.digest(master_token.encode(), old_payload.encode("ascii"), "sha256").hex()
         for method, path, credential, expected in (
             ("GET", base, grant, 200),
             ("POST", base + "/note", grant, 200),
+            ("POST", base + "/start", grant, 403),
+            ("POST", base + "/submit", grant, 403),
             ("GET", f"{NODE_TICKET_PATH}/1038", grant, 403),
+            ("POST", f"{NODE_TICKET_PATH}/1038/submit", grant, 403),
             ("PATCH", base, grant, 403),
+            ("GET", base + "/start", grant, 403),
+            ("POST", base + "/submit/extra", grant, 403),
             ("POST", "/api/v1/redmine/note", grant, 403),
             ("GET", base + "/", grant, 403),
             ("GET", base, worker_token, 403),
             ("GET", base, forged, 401),
             ("GET", base, grant.replace("worker-2", "worker-3"), 401),
+            ("POST", base + "/note", grant.replace(f"~{assignment_id}~", f"~{'b' * 32}~"), 401),
+            ("POST", base + "/note", f"{old_payload}~{old_mac}", 401),
         ):
             status, _, _ = asyncio.run(call(app, path, method=method, headers=auth_headers(credential)))
             check(f"노드 권한 {method} {path} → {expected}", status == expected, str(status))
     with patch("master.auth.time.time", return_value=200):
         status, _, _ = asyncio.run(call(app, base, headers=auth_headers(grant)))
         check("만료된 발주 권한 거절", status == 401, str(status))
-    check("발급 때 서명된 워커가 앱에 전달된다", seen == ["worker-2", "worker-2"])
+    check("발급 때 서명된 워커·배정이 앱에 전달된다", seen == [("worker-2", assignment_id)] * 2)
 
     print("[1] 토큰 생성·적재")
     p = _TMP / "cfg" / "token"
