@@ -143,7 +143,8 @@ def start(issue_id, *, project: str = "", getter=None, kind_of=None, active=None
 
 
 def set_plan(issue_id, tasks: list, why: str, *, user_answer: str = "", getter=None, updater=None,
-             events_path=None, caller: str = "") -> dict:
+             events_path=None, caller: str = "", divergence: str = "", divergence_reason: str = "",
+             project: str = "", ledger_root=None, gate=None) -> dict:
     """플랜을 만들거나 태스크를 추가·편집한다. `tasks` 는 **원하는 전체 목록**(표 순서)이다.
 
     각 항목: `id`·`goal` 필수, `target`·`deps`(목록 또는 「T1·T2」)·`check`·`steps`(조건부 단계 선언,
@@ -211,11 +212,22 @@ def set_plan(issue_id, tasks: list, why: str, *, user_answer: str = "", getter=N
             new_body = (PB.replace(body, new_tasks, checklist=cl, autonomy=prop["autonomy"]) if current
                         else PB.append(body, new_tasks, checklist=cl, autonomy=prop["autonomy"]))
             plan = PB.parse(new_body)
+        judged = None
+        if prop is not None:                           # #1040 — 동의 답 판정(관문이 켜진 프로젝트만)
+            from master import interview_ledger as L
+            try:
+                judged = L.check_answer(issue_id, "plan", user_answer, divergence=divergence,
+                                        divergence_reason=divergence_reason, project=project,
+                                        root=ledger_root,
+                                        enabled=gate if gate is not None else (None if getter is None else False))
+            except L.LedgerError as e:
+                raise PlanToolError(str(e)) from e
         added = [t.id for t in new_tasks if t.id not in old]
         summary = (f"플랜 {'갱신' if current else '등록'} — 추가 {', '.join(added) or '없음'}"
                    f" · 제거 {', '.join(t.id for t in dropped) or '없음'}\n사유: {why.strip()}"
                    + (f"\n최신 제안 대조 통과 — 체크리스트 {len(prop['checklist'])} · 자율성 {prop['autonomy']:g}"
-                      f"\n사용자 동의: {user_answer.strip()}" if prop is not None else ""))
+                      f"\n사용자 동의: {user_answer.strip()}" if prop is not None else "")
+                   + (f"\n확신도: {judged['note_line']}" if judged else ""))
         result = _write(issue_id, new_body, summary, updater or _default_updater)
         # #939 — 스펙 템플릿(docs/issue-spec.md) 누락 항목. 경고일 뿐 등록은 이미 끝났다.
         return {"ok": True, "issue_id": issue_id, "created": current is None, "added": added,

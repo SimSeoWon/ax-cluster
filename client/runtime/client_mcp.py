@@ -943,7 +943,7 @@ def tool_plan_set(api, args: dict) -> dict:
     answer = str(args.get("user_answer") or "")
     if answer.strip():
         payload["user_answer"] = answer
-    return api("POST", "/api/v1/plan/set", payload)
+    return api("POST", "/api/v1/plan/set", _with_divergence(payload, args))
 
 
 def tool_plan_propose(api, args: dict) -> dict:
@@ -991,6 +991,15 @@ def tool_plan_transition(api, args: dict) -> dict:
     return api("POST", "/api/v1/plan/transition", payload)
 
 
+def _with_divergence(payload: dict, args: dict) -> dict:
+    """`#1040` — 관문이 켜진 프로젝트의 답 판정 인자. 비면 싣지 않는다(서버 기본값)."""
+    for key in ("divergence", "divergence_reason"):
+        value = str(args.get(key) or "").strip()
+        if value:
+            payload[key] = value
+    return payload
+
+
 def tool_interview_step(api, args: dict) -> dict:
     step = str(args.get("step") or "").strip()
     result = str(args.get("result") or "")
@@ -1004,7 +1013,7 @@ def tool_interview_step(api, args: dict) -> dict:
     category = str(args.get("category") or "").strip()
     if category:
         payload["category"] = category
-    return api("POST", "/api/v1/interview/step", payload)
+    return api("POST", "/api/v1/interview/step", _with_divergence(payload, args))
 
 
 def tool_interview_ask(api, args: dict) -> dict:
@@ -1030,8 +1039,8 @@ def tool_interview_spec(api, args: dict) -> dict:
     answer = str(args.get("user_answer") or "")
     if not content.strip() or not answer.strip():
         raise ClientError("content 와 user_answer 는 비울 수 없다")
-    return api("POST", "/api/v1/interview/spec", {"issue_id": _issue_id(args.get("issue_id")),
-                                                 "content": content, "user_answer": answer})
+    return api("POST", "/api/v1/interview/spec", _with_divergence(
+        {"issue_id": _issue_id(args.get("issue_id")), "content": content, "user_answer": answer}, args))
 
 
 ISSUE_TOOLS = {"issue_start": tool_issue_start, "issue_finish": tool_issue_finish,
@@ -1825,7 +1834,10 @@ TOOLS.extend([
                        "description": "이 태스크가 하는 조건부 단계 번호(plan_start 의 steps 표)"}}}},
          "why": {"type": "string", "description": "플랜을 바꾸는 이유 — 사용자 결정"},
          "user_answer": {"type": "string",
-                         "description": "최신 플랜 제안에 대한 사용자 동의 원문 — 새 플랜·제안 흐름 일감은 필수"}}}},
+                         "description": "최신 플랜 제안에 대한 사용자 동의 원문 — 새 플랜·제안 흐름 일감은 필수"},
+         "divergence": {"type": "string", "enum": ["none", "add", "revise", "flip"],
+                        "description": "#1040 — 답이 추천 1번과 얼마나 어긋나나(관문이 켜진 프로젝트)"},
+         "divergence_reason": {"type": "string"}}}},
     {"name": "plan_propose",
      "description": "플랜 확정의 첫 칸 — 태스크 목록·개발 완료 체크리스트·자율성 값(0~1, 비우면 지금 값 또는 0.5)을 "
                     "일감에 제안 노트로 남긴다. 본문은 바뀌지 않는다. 사용자가 동의하면 같은 목록과 user_answer 로 "
@@ -1857,7 +1869,10 @@ TOOLS.extend([
          "step": {"type": "string", "enum": ["classify", "investigate", "specify", "reproduce", "impact"]},
          "result": {"type": "string"},
          "user_answer": {"type": "string"},
-         "category": {"type": "string", "description": "classify 에서만 — bug · modify · feature …"}}}},
+         "category": {"type": "string", "description": "classify 에서만 — bug · modify · feature …"},
+         "divergence": {"type": "string", "enum": ["none", "add", "revise", "flip"],
+                        "description": "#1040 — 답이 추천 1번과 얼마나 어긋나나(관문이 켜진 프로젝트)"},
+         "divergence_reason": {"type": "string"}}}},
     {"name": "interview_ask",
      "description": "사용자에게 묻기 전에 질문을 장부에 등록한다(#1040). stage: classify · investigate · specify · "
                     "reproduce · impact · spec · plan · decision. recommended 는 가장 추천하는 방안(필수), "
@@ -1881,7 +1896,10 @@ TOOLS.extend([
      "inputSchema": {"type": "object", "required": ["issue_id", "content", "user_answer"], "properties": {
          "issue_id": {"type": "integer"},
          "content": {"type": "string"},
-         "user_answer": {"type": "string"}}}},
+         "user_answer": {"type": "string"},
+         "divergence": {"type": "string", "enum": ["none", "add", "revise", "flip"],
+                        "description": "#1040 — 답이 추천 1번과 얼마나 어긋나나(관문이 켜진 프로젝트)"},
+         "divergence_reason": {"type": "string"}}}},
     {"name": "plan_transition",
      "description": "플랜 태스크 하나의 상태를 바꾼다 — 상태를 바꾸는 유일한 쓰기. to: 작업중 · 완료 · 차단 · "
                     "해당없음 · 대기. 완료는 근거(커밋 해시·검사 결과), 차단·해당없음은 사유가 note 에 필수다. "

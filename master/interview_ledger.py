@@ -262,3 +262,18 @@ def judge(root, issue_id, stage: str, user_answer: str, *, divergence: str = "",
                           f"보이고 새로 묻는다 ({line})")
     return {"ok": True, "question_id": q["id"], "kind": kind, "pick": pick, "confidence_before": q["confidence"],
             "confidence_after": after, "note_line": line}
+
+
+def check_answer(issue_id, stage: str, user_answer: str, *, divergence: str = "", divergence_reason: str = "",
+                 project: str = "", root=None, enabled=None) -> dict | None:
+    """기록 도구(인터뷰 단계·스펙 영역·플랜 등록)가 **쓰기 직전에** 부른다. 관문이 꺼졌으면 None(종전 동작).
+
+    켜졌으면 `judge` 결과(확신도 줄 포함) — 거절이면 `LedgerError`. 판정은 질문을 닫으므로 다른 검사를 다
+    통과한 뒤에 부른다.
+    """
+    if enabled is None:
+        enabled = gate_enabled(project)
+    if not enabled:
+        return None
+    return judge(default_root(project) if root is None else root, issue_id, stage, user_answer,
+                 divergence=divergence, divergence_reason=divergence_reason)

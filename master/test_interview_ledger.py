@@ -132,9 +132,68 @@ def t_gate_switch():
     check("관문 enforce", L.gate_enabled(registry=R({"interview_gate": "enforce"})) is True)
 
 
+def t_record_gate(root):
+    """T3 — 실 `interview.record` 가 관문을 거친다(가짜 Redmine · 임시 장부)."""
+    from master import interview as IV
+    notes = []
+
+    def getter(_):
+        return {"description": "## 문제·맥락\n시험", "journals": [{"notes": n} for n in notes]}
+
+    def noter(_, text):
+        notes.append(text)
+        return "ok"
+
+    kw = dict(category="bug", getter=getter, noter=noter, ledger_root=root, gate=True)
+
+    def refused_iv(*a, **k):
+        try:
+            IV.record(*a, **k)
+        except IV.InterviewError as e:
+            return str(e)
+        return ""
+
+    why = refused_iv(1037, "classify", "버그로 예측", "응", divergence=L.NONE, **kw)
+    check("[중요] 관문 켬 — 질문 없이 분류 기록 거절", "등록된 질문이 없다" in why and not notes, why)
+    L.ask(root, 1037, "classify", "버그인가?", "버그", ["수정"], 60, "재현 여부")
+    L.record_prompt(root, ANS_2215)
+    why = refused_iv(1037, "classify", "버그로 예측", ANS_2215, divergence=L.FLIP, divergence_reason="딴 지시", **kw)
+    check("[중요] 관문 켬 — 22:15 원문은 수정 요청으로 거절·노트 0", "수정 요청" in why and not notes, why)
+    L.ask(root, 1037, "classify", "다시 — 버그인가?", "버그", ["수정"], 50, "재현 여부")
+    L.record_prompt(root, "1번 버그로 가자")
+    got = IV.record(1037, "classify", "버그로 예측", "1번 버그로 가자", divergence=L.NONE, **kw)
+    check("관문 켬 — 실제 답이면 기록 + 노트에 확신도", got["ok"] and "## 확신도" in notes[-1]
+          and "50 → 70" in notes[-1], notes[-1][-120:])
+
+    got = IV.record(1038, "classify", "버그", "응", category="bug", getter=getter, noter=noter, ledger_root=root)
+    check("[중요] 가짜 getter + gate 미지정 → 관문 꺼짐(실 설정을 읽지 않는다)", got["ok"], str(got)[:200])
+
+
+def t_set_plan_gate(root):
+    """T3 — 실 `set_plan`(제안 흐름) 이 동의 답을 판정한다."""
+    from master import plan_tools as PT
+    from master import testkit_issue as TK
+    tasks = [{"id": "T1", "goal": "g"}]
+    iss = TK.FakeIssue(TK.spec_body())
+    TK.propose(iss, 5, tasks)
+    try:
+        PT.set_plan(5, tasks, "등록", user_answer="1번으로 등록하자", getter=iss.get, updater=iss.update,
+                    divergence=L.NONE, ledger_root=root, gate=True)
+        why = ""
+    except PT.PlanToolError as e:
+        why = str(e)
+    check("[중요] 플랜 등록 — 질문 없으면 거절", "등록된 질문이 없다" in why, why)
+    L.ask(root, 5, "plan", "이 플랜 등록?", "등록", ["자율성 변경"], 80)
+    L.record_prompt(root, "1번으로 등록하자")
+    got = PT.set_plan(5, tasks, "등록", user_answer="1번으로 등록하자", getter=iss.get, updater=iss.update,
+                      divergence=L.NONE, ledger_root=root, gate=True)
+    check("플랜 등록 — 실제 동의면 통과 + 노트에 확신도", got["ok"] and "확신도: 확신도 80 → 100"
+          in iss.writes[-1][1], iss.writes[-1][1][-160:])
+
+
 def main() -> int:
     for fn in (t_ask_rules, t_judge_no_question, t_judge_fabricated, t_judge_2215, t_judge_pick_and_confidence,
-               t_affirm, t_open_questions):
+               t_affirm, t_open_questions, t_record_gate, t_set_plan_gate):
         with tempfile.TemporaryDirectory(prefix="ax-ledger-") as d:
             try:
                 fn(Path(d))

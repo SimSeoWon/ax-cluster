@@ -18,6 +18,9 @@ Python 이 거쳤는지 체크한다.** 질문 내용은 고정하지 않는다 
 - 진행 상태는 **노트에서만** 복원한다 — 중단돼도 노트를 읽어 이어 간다(사용자: 「중간에 중단되어도
   해당 내용을 보고 추적할 수 있을 것 같네」).
 - 사용자 답이 진짜인지는 판정하지 않는다(비범위) — 과정이 있었는지만 본다.
+  🔴 `#1040` 이 그 비범위를 닫았다(사용자 결정 2026-11-28): 관문(`interview_gate: enforce`)이 켜진 프로젝트는
+  `master/interview_ledger.py` 가 「그 단계 질문이 등록됐나 · 답이 질문 뒤 실제 입력과 원문으로 같은가 ·
+  보기 선택이나 명시적 긍정인가」를 쓰기 직전에 판정하고, 확신도 변화를 노트에 남긴다. 꺼진 프로젝트는 종전대로.
 - 모든 단계를 거치면 `write_spec` 으로 스펙 영역(`master/spec_block.py`)을 쓴다 — 파급 측정 뒤에만 열린다.
   스펙 영역이 생기면 단계 기록은 닫힌다(인터뷰가 끝났다). 스펙을 고칠 때는 `write_spec` 을 다시 부른다.
 """
@@ -82,12 +85,14 @@ def _attrs(line: str) -> dict | None:
     return dict(kv.split("=", 1) for kv in m.group(1).split() if "=" in kv)
 
 
-def render(step: str, category: str, *, result: str = "", user_answer: str = "", skip_reason: str = "") -> str:
+def render(step: str, category: str, *, result: str = "", user_answer: str = "", skip_reason: str = "",
+           confidence: str = "") -> str:
     head = f"[ax:interview step={step} category={category}{' skipped=1' if skip_reason else ''} v={VERSION}]"
     title = f"착수 전 인터뷰 — {LABELS[step]}"
     if skip_reason:
         return f"{head}\n{title} · 건너뜀\n\n사유: {skip_reason}"
-    return f"{head}\n{title}\n\n## 결과\n\n{result.strip()}\n\n## 사용자 답\n\n{user_answer.strip()}"
+    out = f"{head}\n{title}\n\n## 결과\n\n{result.strip()}\n\n## 사용자 답\n\n{user_answer.strip()}"
+    return out + (f"\n\n## 확신도\n\n{confidence}" if confidence else "")
 
 
 def _invalidate_after(records: dict[str, Record], step: str) -> None:
@@ -211,7 +216,8 @@ def status(issue_id, *, getter=None, cats=None) -> dict:
 
 
 def record(issue_id, step: str, result: str, user_answer: str, *, category: str = "",
-           getter=None, noter=None, cats=None) -> dict:
+           getter=None, noter=None, cats=None, divergence: str = "", divergence_reason: str = "",
+           project: str = "", ledger_root=None, gate=None) -> dict:
     """단계 하나를 기록한다. 적용하지 않는 뒤 단계는 건너뜀 노트로 이어서 남긴다.
 
     `category` 는 분류 단계에서만 받는다(다른 단계는 노트의 분류를 쓴다).
@@ -252,7 +258,10 @@ def record(issue_id, step: str, result: str, user_answer: str, *, category: str 
     elif redo:
         log.append(f"[interview] #{issue_id} {step} 재기록 — 최신 노트가 기준, 뒤 단계 기록 무효")
     written = [step]
-    _note(issue_id, render(step, cat, result=result, user_answer=user_answer), noter)
+    judged = _ledger(issue_id, step, user_answer, divergence, divergence_reason, project, ledger_root,
+                     gate if gate is not None else (None if getter is _default_getter else False))
+    _note(issue_id, render(step, cat, result=result, user_answer=user_answer,
+                           confidence=judged["note_line"] if judged else ""), noter)
     log.append(f"[interview] #{issue_id} {step} 기록 (분류 {cat})")
     # 기록 뒤 상태 — 적용하지 않는 단계를 건너뜀 노트로 남긴다
     records = dict(st.records)
@@ -268,6 +277,8 @@ def record(issue_id, step: str, result: str, user_answer: str, *, category: str 
         written.append(f"{s}(건너뜀)")
         log.append(f"[interview] #{issue_id} {s} 건너뜀 — 분류 {cat}")
     nxt = _next(cat, records, cats)
+    if judged:
+        log.append(f"[interview] #{issue_id} {step} 관문 통과 — {judged['note_line']}")
     out = {"ok": True, "issue_id": issue_id, "step": step, "category": cat, "written": written,
            "next": nxt, "next_label": LABELS.get(nxt, "스펙 영역"),
            "category_doc": cats[cat].as_dict()["doc"], "guide": cats[cat].body, "log": log}
@@ -286,6 +297,20 @@ def record(issue_id, step: str, result: str, user_answer: str, *, category: str 
     return out
 
 
+def _ledger(issue_id, stage, user_answer, divergence, divergence_reason, project, root, gate):
+    """`#1040` 관문 — 꺼졌으면 None. 거절은 `InterviewError`(사유 그대로)로 바꿔 같은 모양으로 돌려준다.
+
+    [주의] 관문 설정(`interview_gate`)은 **실 Redmine 경로(getter 주입 없음)에서만** 읽는다. 가짜 getter 를 주입한
+    호출(검사)은 `gate=True` 로 명시해야 켜진다 — 실 트윈 설정을 켜도 기존 검사가 갑자기 막히지 않게 한다.
+    """
+    from master import interview_ledger as L
+    try:
+        return L.check_answer(issue_id, stage, user_answer, divergence=divergence,
+                              divergence_reason=divergence_reason, project=project, root=root, enabled=gate)
+    except L.LedgerError as e:
+        raise InterviewError(str(e)) from e
+
+
 def _node_skip(body: str) -> str:
     """노드 일감이면 웨이파인더 질문을 생략하는 사유 한 줄, 아니면 빈 문자열 (`#1024`)."""
     from master import map_block as MB
@@ -298,7 +323,9 @@ def _node_skip(body: str) -> str:
     return f"노드 일감(Root #{marker.root}) — 웨이파인더 질문 생략"
 
 
-def write_spec(issue_id, content: str, user_answer: str, *, getter=None, updater=None, cats=None) -> dict:
+def write_spec(issue_id, content: str, user_answer: str, *, getter=None, updater=None, cats=None,
+               divergence: str = "", divergence_reason: str = "", project: str = "", ledger_root=None,
+               gate=None) -> dict:
     """인터뷰 마지막 — 확정 스펙(여섯 항목)을 스펙 영역에 쓴다. 본문의 영역 밖 글자는 그대로 둔다.
 
     파급 측정까지 모든 단계(또는 건너뜀)가 노트로 있어야 열린다. `user_answer` 는 요약을 보인 뒤 받은
@@ -324,8 +351,11 @@ def write_spec(issue_id, content: str, user_answer: str, *, getter=None, updater
     except SB.SpecError as e:
         raise InterviewError(str(e)) from e
     replaced = SB.exists(body)
+    judged = _ledger(issue_id, "spec", user_answer, divergence, divergence_reason, project, ledger_root,
+                     gate if gate is not None else (None if getter is _default_getter else False))
     note = (f"[ax:interview-spec v={SB.FORMAT_VERSION}]\n착수 전 인터뷰 — 스펙 영역 "
-            f"{'갱신' if replaced else '기록'} (분류 {st.category})\n\n## 사용자 답\n\n{user_answer.strip()}")
+            f"{'갱신' if replaced else '기록'} (분류 {st.category})\n\n## 사용자 답\n\n{user_answer.strip()}"
+            + (f"\n\n## 확신도\n\n{judged['note_line']}" if judged else ""))
     out = str(updater(issue_id, description=new_body, notes=note))
     if out.startswith("[주의]"):
         raise InterviewTransportError(out)
