@@ -246,3 +246,126 @@ def dispatch_cycle(root_id: int, node_ids, user_answer: str, *, rm=None, lock_ro
     return {"ok": bool(results) and all(r.get("state") == issue_lock.NODE_REVIEW and r["rc"] == 0
                                        and not r["redmine"].startswith("[주의]") for r in results),
             "root_id": checked["root_id"], "waiting": checked["waiting"], "results": results}
+
+
+# ── 검수 (`#1050` T3) ───────────────────────────────────────────────────────
+#
+# 사용자 결정(#1050 노트, 「1번으로 가자.」): 도구 하나 · 기본 미리보기 · confirm=True + 사용자 원문일 때만 쓴다.
+# pass 순서 = 배정 「승인됨」 → 티켓 「완료」·100(이 배정에 한해 완료 관문 통과) → 맵 갱신 → 배정 해제.
+# 각 단계는 끝났는지 먼저 보고 건너뛰므로, 중간 실패 뒤 같은 호출을 다시 부르면 남은 단계부터 이어 간다.
+# rework = 근거 노트 → 같은 티켓 재작업 상태. Root 브랜치 머지는 하지 않는다(범위 밖).
+
+VERDICTS = ("pass", "rework")
+NEEDS_RESULT = ("작업",)          # 제출 결과(커밋 범위)가 있어야 통과하는 노드 타입
+
+
+def _review_view(issue_id: int, record: dict | None, issue: dict, node_type: str) -> dict:
+    view = {"id": issue_id, "status": issue.get("status"), "type": node_type}
+    if record:
+        view.update(worker=record["worker"], assignment_id=record["assignment_id"], state=record["state"],
+                    family=record.get("family", ""), branch=record.get("branch", ""))
+        result = record.get("result")
+        if result:
+            view["result"] = {k: result[k] for k in ("base", "end", "hashes", "subjects", "authors", "summary")}
+    return view
+
+
+def _pass_note(record: dict, why: str, user_answer: str) -> str:
+    result = record.get("result")
+    if result:
+        commits = "\n".join(f"- `{h[:12]}` {s}" for h, s in zip(result["hashes"], result["subjects"]))
+        span = (f"범위 `{result['base'][:12]}..{result['end'][:12]}` (커밋 {len(result['hashes'])}건) · "
+                f"브랜치 `{result['branch']}` · 작성 계열 {', '.join(result['authors'])}\n{commits}")
+    else:
+        span = f"제출된 커밋 범위 없음 · 작성 계열 {record.get('family') or '기록 없음'}"
+    return (f"웨이파인더 검수 통과 — 워커 {record['worker']} · 배정 {record['assignment_id']}\n{span}\n\n"
+            f"검수 근거: {why}\n사용자 승인: {user_answer}")
+
+
+def review(issue_id: int, verdict: str, why: str = "", *, confirm: bool = False, user_answer: str = "",
+           rm=None, lock_root=None, map_hook=None) -> dict:
+    """검수 대기 배정을 통과(마감·해제) 또는 재작업으로 넘긴다. 기본은 미리보기(쓰기 0)."""
+    if type(issue_id) is not int or issue_id <= 0:
+        return {"ok": False, "why": "노드 일감 번호가 필요하다"}
+    if verdict not in VERDICTS:
+        return {"ok": False, "why": f"판정은 {'/'.join(VERDICTS)} 중 하나다"}
+    lock_root = issue_lock.default_root() if lock_root is None else lock_root
+    rm = wayfinder._port(rm)
+    map_hook = wayfinder.on_node_closed if map_hook is None else map_hook
+    with issue_lock.node_guard(lock_root, issue_id):
+        record = issue_lock.node_assignments(lock_root).get(issue_id)
+        issue = wayfinder._get(rm, issue_id)
+        try:
+            marker = map_block.parse_node(issue.get("description") or "")
+        except map_block.MapError:
+            marker = None
+        node_type = marker.type if marker else ""
+        view = _review_view(issue_id, record, issue, node_type)
+        allowed = (issue_lock.NODE_REVIEW, issue_lock.NODE_ACCEPTED) if verdict == "pass" else (issue_lock.NODE_REVIEW,)
+        problem = ""
+        if marker is None:
+            problem = "웨이파인더 노드 표지가 없는 일감이다"
+        elif record is None:
+            problem = "분산 배정이 없다 — 이미 해제됐거나 발주되지 않았다"
+        elif record["root_id"] != marker.root:
+            problem = "배정의 Root 와 노드 표지의 Root 가 다르다"
+        elif record["state"] not in allowed:
+            problem = (f"검수할 수 있는 상태가 아니다 ({record['state']}) — 원격 종료가 확인돼 검수 대기인 배정만 "
+                       "받는다")
+        elif verdict == "pass" and node_type in NEEDS_RESULT and not record.get("result"):
+            problem = f"{node_type} 노드는 제출된 결과(커밋 범위)가 있어야 통과한다 — 재작업으로 돌리거나 제출을 확인한다"
+        if problem:
+            return {"ok": False, "why": problem, "node": view}
+        if not confirm:
+            return {"ok": True, "dry_run": True, "verdict": verdict, "node": view}
+        if not why.strip() or not user_answer.strip():
+            return {"ok": False, "why": "검수 근거와 사용자 승인 원문이 필요하다", "node": view}
+        aid, steps = record["assignment_id"], []
+
+        def advance(to):
+            got = issue_lock._advance_node_assignment(lock_root, issue_id, assignment_id=aid, to=to,
+                                                      by="master", why=why)
+            if not got["ok"]:
+                raise _ReviewStop("ledger", got["why"])
+            steps.append(to)
+
+        try:
+            if verdict == "rework":
+                written = rm.update_issue(issue_id, notes=(
+                    f"웨이파인더 검수 — 재작업 · 워커 {record['worker']} · 배정 {aid}\n\n"
+                    f"재작업 근거: {why}\n사용자 승인: {user_answer}"))
+                if str(written).startswith("[주의]"):
+                    raise _ReviewStop("redmine", written)
+                steps.append("note")
+                advance(issue_lock.NODE_REWORK)
+                return {"ok": True, "verdict": verdict, "steps": steps, "node": view}
+            if record["state"] == issue_lock.NODE_REVIEW:
+                advance(issue_lock.NODE_ACCEPTED)
+            if issue.get("status") != wayfinder.DONE:
+                def gate(n):
+                    current = issue_lock.node_assignments(lock_root).get(int(n))
+                    ok = bool(current and current["assignment_id"] == aid
+                              and current["state"] == issue_lock.NODE_ACCEPTED)
+                    return {"apply": not ok, "ok": ok,
+                            "why": "검수 통과한 배정의 마감" if ok else "검수 통과 기록과 배정이 맞지 않는다"}
+
+                written = rm.update_issue(issue_id, notes=_pass_note(record, why, user_answer),
+                                          status_name=wayfinder.DONE, done_ratio=100, completion_gate=gate)
+                if str(written).startswith("[주의]") or wayfinder._get(rm, issue_id).get("status") != wayfinder.DONE:
+                    raise _ReviewStop("redmine", str(written))
+                steps.append("closed")
+            mapped = map_hook(issue_id, rm=rm)
+            if not mapped.get("ok"):
+                raise _ReviewStop("map", str(mapped.get("why") or mapped))
+            steps.append("map")
+            advance("finished")
+        except _ReviewStop as stop:
+            return {"ok": False, "verdict": verdict, "step": stop.step, "why": stop.why, "steps": steps,
+                    "retry": "같은 호출을 다시 부르면 끝난 단계는 건너뛰고 이어 간다", "node": view}
+        return {"ok": True, "verdict": verdict, "steps": steps, "node": view}
+
+
+class _ReviewStop(Exception):
+    def __init__(self, step: str, why: str):
+        super().__init__(why)
+        self.step, self.why = step, why

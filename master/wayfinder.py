@@ -408,7 +408,8 @@ def frontier(root_id, *, rm=None, lock_root=None) -> dict:
     rid = _issue_id(root_id, "Root")
     block = compute_states(load(rid, rm=rm))
     records = _distributed_nodes(rid, rm, lock_root)
-    labels = {IL.NODE_RUNNING: "실행 중", IL.NODE_REVIEW: "검수 대기", IL.NODE_REWORK: "재작업 대기"}
+    labels = {IL.NODE_RUNNING: "실행 중", IL.NODE_REVIEW: "검수 대기", IL.NODE_REWORK: "재작업 대기",
+              IL.NODE_ACCEPTED: "검수 통과 · 마감 중"}
     view = []
     for n in block.nodes:
         rec = records.get(n.id)

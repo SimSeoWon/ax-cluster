@@ -1241,6 +1241,88 @@ def test_distributed_dispatch_preflight():
               and issue_lock.node_assignments(tmp)[issue_id] == again["record"], str(stale))
 
 
+def test_distributed_review_1050():
+    """`#1050` T3 — 검수 대기 배정의 통과(마감·맵·해제)와 재작업, 중간 실패 뒤 재시도."""
+    from tempfile import TemporaryDirectory
+    from master import issue_lock, plan_block, spec_block
+    from master import wayfinder_dispatch as dispatch
+
+    rm = _fresh()
+    specs = [{"key": "a", "title": "작업 A", "type": "작업", "parent": "Root", "deps": [], "summary": "A"},
+             {"key": "b", "title": "작업 B", "type": "작업", "parent": "Root", "deps": [], "summary": "B"},
+             {"key": "c", "title": "검증 C", "type": "검증", "parent": "Root", "deps": [], "summary": "C"}]
+    _build(rm, "목적", specs)
+    _, logf = _quiet()
+    spec = "\n".join(f"## {h}\n승인된 내용" for h in ("문제", "분류", "관측", "범위", "완료 조건", "열린 결정"))
+    ids = []
+    for key in ("P1", "P2", "P3"):
+        iid = WF.claim(ROOT, key, prepare_only=True, rm=rm, logf=logf)["id"]
+        rm.issues[iid]["description"] = plan_block.append(
+            spec_block.put(rm.issues[iid]["description"], spec), [plan_block.IssuePlanTask("T1", "대기", "구현")],
+            checklist=[plan_block.IssuePlanCheck("C1", "미확인", "검사")])
+        ids.append(iid)
+    a, b, c = ids
+    with TemporaryDirectory() as tmp:
+        recs = {}
+        for iid, worker in ((a, "w1"), (b, "w2"), (c, "w3")):
+            recs[iid] = issue_lock.reserve_node(tmp, iid, root_id=ROOT, worker=worker, family="codex")["record"]
+        rev = "1" * 40
+        issue_lock.start_node_work(tmp, a, assignment_id=recs[a]["assignment_id"], worker="w1", start_rev=rev,
+                                   branch=f"wayfinder/{ROOT}/n{a}")
+        issue_lock.submit_node_result(tmp, a, assignment_id=recs[a]["assignment_id"], worker="w1", end="2" * 40,
+                                      hashes=["2" * 40], subjects=["A 구현"], summary="test 3/3")
+        review = lambda iid, verdict, **kw: dispatch.review(iid, verdict, kw.pop("why", "검수"), rm=rm,
+                                                            lock_root=tmp, **kw)
+        check("#1050 실행 중 배정은 검수 거절", not review(a, "pass")["ok"])
+        for iid in ids:
+            issue_lock.advance_node_assignment(tmp, iid, assignment_id=recs[iid]["assignment_id"],
+                                               to=issue_lock.NODE_REVIEW, by="master", why="종료 확인")
+        before = len(rm.writes())
+        preview = review(a, "pass")
+        check("#1050 미리보기: 제출 범위·계열 표시 · 쓰기 0",
+              preview["ok"] and preview["dry_run"] and preview["node"]["result"]["hashes"] == ["2" * 40]
+              and preview["node"]["family"] == "codex" and len(rm.writes()) == before, str(preview))
+        check("#1050 제출 없는 작업 노드는 통과 거절", "제출된 결과" in review(b, "pass")["why"])
+        check("#1050 제출 없는 검증 노드는 통과 미리보기 가능", review(c, "pass")["ok"])
+        check("#1050 승인 원문 없이 확정 거절",
+              not review(a, "pass", confirm=True)["ok"] and len(rm.writes()) == before)
+
+        rm.fail = {"update_issue": rm.counts.get("update_issue", 0) + 1}
+        first = review(a, "pass", confirm=True, user_answer="통과시켜")
+        state = issue_lock.node_assignments(tmp)[a]["state"]
+        check("#1050 마감 실패: step redmine · 배정은 승인됨 유지 · 티켓 열림",
+              not first["ok"] and first["step"] == "redmine" and state == issue_lock.NODE_ACCEPTED
+              and rm.issues[a]["status"] != WF.DONE, str(first))
+        rm.fail = {}
+        mapped_fail = review(a, "pass", confirm=True, user_answer="통과시켜",
+                             map_hook=lambda iid, rm: {"ok": False, "why": "맵 대역 실패"})
+        check("#1050 재시도: 승인 단계 건너뛰고 마감 · 맵 실패면 배정 유지",
+              not mapped_fail["ok"] and mapped_fail["steps"] == ["closed"] and mapped_fail["step"] == "map"
+              and rm.issues[a]["status"] == WF.DONE and a in issue_lock.node_assignments(tmp), str(mapped_fail))
+        notes = [j["notes"] for j in rm.issues[a]["journals"] if "검수 통과" in j["notes"]]
+        check("#1050 마감 노트에 범위·작성 계열·근거·승인 원문",
+              len(notes) == 1 and "커밋 1건" in notes[0] and "작성 계열 codex" in notes[0]
+              and "통과시켜" in notes[0], str(notes))
+        done = review(a, "pass", confirm=True, user_answer="통과시켜")
+        check("#1050 재시도: 마감 건너뛰고 맵 갱신 → 배정 해제",
+              done["ok"] and done["steps"] == ["map", "finished"] and a not in issue_lock.node_assignments(tmp)
+              and len([j for j in rm.issues[a]["journals"] if "검수 통과" in j["notes"]]) == 1, str(done))
+        check("#1050 해제 뒤 같은 검수 호출은 거절", not review(a, "pass", confirm=True, user_answer="x")["ok"])
+
+        rw = review(b, "rework", why="테스트 누락", confirm=True, user_answer="다시 해")
+        check("#1050 재작업: 근거 노트 → 같은 티켓 재작업 상태",
+              rw["ok"] and rw["steps"] == ["note", issue_lock.NODE_REWORK]
+              and issue_lock.node_assignments(tmp)[b]["state"] == issue_lock.NODE_REWORK
+              and "테스트 누락" in rm.issues[b]["journals"][-1]["notes"]
+              and rm.issues[b]["status"] != WF.DONE, str(rw))
+        again = dispatch.candidates(ROOT, [b], rm=rm, lock_root=tmp)
+        check("#1050 재작업 티켓은 다음 발주 후보", [r["id"] for r in again["ready"]] == [b], str(again))
+        check("#1050 재작업 상태에서 다시 검수 거절", not review(b, "rework", confirm=True, user_answer="x")["ok"])
+        from master import redmine
+        gate = redmine.make_completion_gate(root_fn=lambda: tmp)
+        check("#1050 검수 도구 밖의 직접 마감은 기존 관문이 계속 막는다", not gate(c)["ok"], str(gate(c)))
+
+
 def main() -> int:
     for fn in (test_create_map_preview, test_create_map_confirm, test_create_map_refusals,
                test_first_nodes_only_1028, test_claim_creates_issue_1036, test_prepare_distributed_ticket,
@@ -1251,7 +1333,8 @@ def main() -> int:
                test_graduate_propose, test_graduate_register, test_edit_ops, test_edit_refusals,
                test_fog_cleared_close_root, test_fake_refuses_blocked_close, test_node_out_propose,
                test_node_out_apply, test_node_out_close_fails, test_node_out_changed_between,
-               test_distributed_node_display_and_guards, test_distributed_dispatch_preflight):
+               test_distributed_node_display_and_guards, test_distributed_dispatch_preflight,
+               test_distributed_review_1050):
         try:
             fn()
         except Exception as e:                       # noqa: BLE001

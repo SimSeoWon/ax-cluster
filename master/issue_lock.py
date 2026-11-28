@@ -35,6 +35,7 @@ LOCK_NAME = ".issue_lock.lock"
 HISTORY_CAP = 50
 RELEASE_OPS = ("complete", "cancel", "finish")
 NODE_RUNNING, NODE_REVIEW, NODE_REWORK = "running", "review", "rework"
+NODE_ACCEPTED = "accepted"   # `#1050` T3 — 검수 통과를 기록했고 티켓 마감·맵 갱신·해제가 남은 상태
 NODE_FAMILIES = ("codex", "claude")   # `#1050` T2 — 노드 배정의 작성 계열(발주 지휘자 모드)
 
 
@@ -102,7 +103,7 @@ def _load(root) -> dict:
                 or type(rec.get("root_id")) is not int or rec["root_id"] <= 0
                 or not isinstance(worker, str) or not worker.strip()
                 or not isinstance(rec.get("assignment_id"), str) or not rec["assignment_id"]
-                or rec.get("state") not in (NODE_RUNNING, NODE_REVIEW, NODE_REWORK)
+                or rec.get("state") not in (NODE_RUNNING, NODE_REVIEW, NODE_REWORK, NODE_ACCEPTED)
                 or k in paused or (active and rec["issue_id"] == active["issue_id"])):
             raise _bad(p, f"node_assignments[{k}] 기록이 잘못됐거나 단독 잠금과 겹친다")
         if rec["state"] == NODE_RUNNING:
@@ -367,7 +368,8 @@ def advance_node_assignment(root, issue_id: int, *, assignment_id: str, to: str,
 def _advance_node_assignment(root, issue_id: int, *, assignment_id: str, to: str, by: str, why: str,
                              logf=None) -> dict:
     """호출자는 해당 티켓의 node_guard를 유지한다."""
-    required = {NODE_REVIEW: NODE_RUNNING, NODE_REWORK: NODE_REVIEW, "finished": NODE_REVIEW}
+    required = {NODE_REVIEW: (NODE_RUNNING,), NODE_REWORK: (NODE_REVIEW,), NODE_ACCEPTED: (NODE_REVIEW,),
+                "finished": (NODE_REVIEW, NODE_ACCEPTED)}
     if to not in required or not assignment_id or not by.strip() or not why.strip():
         return _refuse(logf, issue_id, "advance_node", "invalid", "배정 번호·허용 전이·주체·근거가 필요하다")
     with _locked(root):
@@ -377,7 +379,7 @@ def _advance_node_assignment(root, issue_id: int, *, assignment_id: str, to: str
         rec = nodes.get(key)
         if rec is None or rec["assignment_id"] != assignment_id:
             return _refuse(logf, issue_id, "advance_node", "stale_assignment", "현재 배정 번호와 다르다")
-        if rec["state"] != required[to]:
+        if rec["state"] not in required[to]:
             return _refuse(logf, issue_id, "advance_node", "invalid_state", f"현재 상태 {rec['state']}")
         updated = {**rec, "state": to, "updated": _now()}
         if to == "finished":

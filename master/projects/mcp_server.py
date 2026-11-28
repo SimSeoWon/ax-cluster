@@ -1427,6 +1427,25 @@ def wayfinder_dispatch_tool(root_id: int, node_ids: list[int | str], confirm: bo
 
 
 @mcp.tool()
+def wayfinder_review_tool(node_id: int, verdict: str, why: str = "", confirm: bool = False,
+                          user_answer: str = "") -> str:
+    """분산 노드 검수 (`#1050` T3). 기본 호출은 미리보기다(배정·제출 범위·작성 계열 표시, 쓰기 0).
+
+    `verdict`: pass(통과) · rework(재작업). 원격 종료가 확인돼 검수 대기인 배정만 받는다. 작업 노드의 통과는
+    워커가 제출한 결과(커밋 범위)가 있어야 한다. 미리보기를 보이고 사용자 승인을 받은 뒤 `confirm=True` +
+    `why`(검수 근거) + `user_answer`(승인 원문)로 부른다. pass 는 티켓 「완료」·100 → 맵 갱신 → 배정 해제,
+    rework 는 근거 노트 → 같은 티켓 재작업 상태다. 실패하면 `step` 을 보고하고, 같은 호출을 다시 부르면
+    끝난 단계는 건너뛰고 이어 간다. Root 브랜치 머지는 하지 않는다.
+    """
+    from .. import wayfinder_dispatch
+    try:
+        return json.dumps(wayfinder_dispatch.review(node_id, verdict, why, confirm=confirm,
+                                                    user_answer=user_answer), ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
 def wayfinder_sync_tool(root_id: int) -> str:
     """맵을 다시 계산해 바뀌었을 때만 Root 본문에 쓴다 (`#982`) — 새로 고침·정합 확인용.
 

@@ -56,6 +56,7 @@ description: AX 마스터에서 탐색이 필요한 큰 일감을 웨이파인�
     ax-projects:wayfinder_create_tool(root_id, destination, nodes, fog, out_of_scope, confirm, user_answer)   맵 미리보기·등록
     ax-projects:wayfinder_status_tool(root_id)                         Frontier·상태 개수 + 지도/Redmine 대조 (읽기)
     ax-projects:wayfinder_dispatch_tool(root_id, node_ids, confirm, user_answer)   분산 사이클 드라이런·발주
+    ax-projects:wayfinder_review_tool(node_id, verdict, why, confirm, user_answer)   분산 노드 검수 — 통과·재작업
     ax-projects:wayfinder_sync_tool(root_id)                           다시 계산 — 바뀌었을 때만 Root 본문 쓰기
     ax-projects:wayfinder_propose_tool(root_id, title, type, parent, deps, summary, graduates)   새 노드 제안 (쓰기 0)
     ax-projects:wayfinder_register_tool(root_id, proposal, user_answer)   제안 등록 (사람 게이트)
@@ -102,8 +103,13 @@ description: AX 마스터에서 탐색이 필요한 큰 일감을 웨이파인�
      준비된 티켓, 대기 사유, 잠금 장부와 레지스트리 기준 예상 워커를 보여 준다.
      드라이런이 끝나면 사용자의 실제 발주 요청을 기다린다. 요청 뒤 같은 대상을
      `ax-projects:wayfinder_dispatch_tool(root_id, node_ids, confirm=True, user_answer=요청 원문)` 로 발주한다.
-   - 이번 묶음의 결과를 티켓에서 모아 검수한다. 선행이 끝나거나 안개가 걷힌 노드는 다음 사이클에서 준비한다.
-     수정이 필요한 노드는 같은 티켓에 근거와 수정 요구를 남긴다.
+   - 이번 묶음의 결과를 티켓에서 모아 검수한다(`#1050`). 워커는 착수·결과 제출을 티켓 권한으로 기록하고,
+     작성 계열은 발주 지휘자 모드, 커밋 범위는 서버가 저장소에서 구한 값이다.
+     `ax-projects:wayfinder_review_tool(node_id, verdict)` 미리보기로 제출 범위·계열을 보이고 사용자 판정을 받는다.
+     승인 뒤 `confirm=True` + `why`(검수 근거) + `user_answer`(승인 원문)로 부른다 — pass 는 티켓 「완료」·맵 갱신·
+     배정 해제, rework 는 근거 노트 뒤 같은 티켓을 재작업 상태로 돌린다(다음 사이클에 같은 티켓으로 다시 발주).
+     실패하면 `step` 을 보고하고 묻는다 — 같은 호출을 다시 부르면 끝난 단계는 건너뛴다.
+     선행이 끝나거나 안개가 걷힌 노드는 다음 사이클에서 준비한다.
 7. 지도가 실제와 다르게 보이면 `ax-projects:wayfinder_sync_tool(root_id)` 로 다시 계산한다. 바뀐 것이 없으면 쓰지 않는다.
 
 ## 4. 새 노드 — 제안 → 동의 → 등록
