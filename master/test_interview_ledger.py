@@ -55,6 +55,27 @@ def t_judge_no_question(root):
     check("질문 미등록 거절", "등록된 질문이 없다" in why, why)
 
 
+def t_session_answers(root):
+    for issue, text in ((1050, "응 신규 기능이야"), (1051, "1")):
+        start = L.record_prompt(root, "P4 진행해", session="codex")["id"]
+        question = L.ask(root, issue, "classify", "어느 분류로 진행할까요?", "신규 기능",
+                         ["기존 기능 수정"], 90, prompt_id=start, require_prompt=True)
+        other = L.record_prompt(root, text, session="claude")["id"]
+        decision = dict(action=L.CONFIRM, divergence=L.NONE, divergence_reason="신규 기능 선택", option=1)
+        why = refused(L.assess_answer, root, issue, "classify", text, prompt_id=other, **decision)
+        check("다른 세션의 동일 원문 거절", "같은 세션" in why, why)
+        current = L.record_prompt(root, text, session="codex")["id"]
+        why = refused(L.assess_answer, root, issue, "classify", text + " ", prompt_id=current, **decision)
+        check("호출 원문 불일치 거절", "원문" in why, why)
+        got = L.assess_answer(root, issue, "classify", text, prompt_id=current, **decision)
+        check("질문 맥락으로 내린 동의 판정을 기록", got["status"] == "answered"
+              and got["user_answer"] == text and got["question_id"] == question["id"], str(got))
+    why = refused(L.ask, root, 1050, "classify", "q", "r", confidence=90, require_prompt=True)
+    check("질문 등록에 현재 턴 입력 ID를 요구", "prompt_id" in why, why)
+    why = refused(L.ask, root, 1050, "classify", "q", "r", confidence=90, prompt_id=start)
+    check("지나간 턴 입력 ID는 재사용할 수 없다", "현재 사용자 입력" in why, why)
+
+
 def t_judge_fabricated(root):
     L.ask(root, 9, "classify", "q", "버그", ["수정"], 80)
     why = refused(L.judge, root, 9, "classify", "응", divergence=L.NONE)
@@ -257,7 +278,7 @@ def t_stop_check(root):
 
 
 def main() -> int:
-    for fn in (t_ask_rules, t_judge_no_question, t_judge_fabricated, t_judge_2215, t_judge_pick_and_confidence,
+    for fn in (t_ask_rules, t_judge_no_question, t_session_answers, t_judge_fabricated, t_judge_2215, t_judge_pick_and_confidence,
                t_affirm, t_open_questions, t_record_gate, t_set_plan_gate, t_failures,
                t_stop_check):
         with tempfile.TemporaryDirectory(prefix="ax-ledger-") as d:

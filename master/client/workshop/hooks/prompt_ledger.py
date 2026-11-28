@@ -13,7 +13,7 @@
 - 경로: 배달된 클라(`client_mcp.queue_api`) → 8101 `POST /api/v1/interview/prompt`(프로젝트 태그는 클라가 붙인다).
 - [중요] **세션을 막지 않는다(fail-open)** — 마스터가 죽어도 사용자의 입력은 그대로 모델에 간다. 실패는
   stderr 한 줄. 관문이 켜진 프로젝트에서는 장부가 비어 기록이 거절되므로 실패가 조용히 묻히지 않는다.
-- stdout 에는 아무것도 쓰지 않는다 — `UserPromptSubmit` 의 stdout 은 모델 컨텍스트에 붙는다.
+- 성공하면 모델 컨텍스트에 현재 턴의 입력 장부 ID만 전달한다. 사용자 원문은 장부에 남긴다.
 - 마스터 자신은 배달된 `.ax/lib` 이 없다 → `--root`(ax-client 설정 디렉토리)를 받고 저장소의 클라를 쓴다.
 """
 import json
@@ -68,7 +68,14 @@ def main(argv=None, stdin=None) -> int:
         got = client.queue_api(root)("POST", "/api/v1/interview/prompt", {
             "text": text, "session": str(data.get("session_id") or ""),
             "source": opts.get("source") or "claude"})
-        if not (isinstance(got, dict) and got.get("ok")):
+        if isinstance(got, dict) and got.get("ok"):
+            prompt_id = got.get("id")
+            if isinstance(prompt_id, str) and prompt_id and data.get("session_id"):
+                print(json.dumps({"hookSpecificOutput": {
+                    "hookEventName": "UserPromptSubmit",
+                    "additionalContext": f"AX interview prompt_id for this user turn: {prompt_id}",
+                }}))
+        else:
             why = got.get("why") or got.get("status") if isinstance(got, dict) else got
             print(f"[입력 장부] 기록 안 됨 — {str(why)[:160]}", file=sys.stderr)
     except Exception as e:                              # noqa: BLE001 — fail-open

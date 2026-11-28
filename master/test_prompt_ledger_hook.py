@@ -33,7 +33,7 @@ def queue_api(root):
             return {"ok": False, "status": "not_mounted"}
         if mode == "block":
             return {"ok": True, "block": True, "issue_id": 1039, "reason": "[AX 멈춤 판정] #1039 판정 resume"}
-        return {"ok": True}
+        return {"ok": True, "id": "test-prompt"} if path.endswith("/prompt") else {"ok": True}
     return api
 '''
 
@@ -123,7 +123,10 @@ def main() -> int:
         text = "1번으로 가자. 근데 로그도 남겨"
         p, call = run(root, {"prompt": text, "session_id": "s-1", "cwd": str(root),
                              "hook_event_name": "UserPromptSubmit"}, extra=("--source", "codex"))
-        check("rc 0 · stdout 비움(모델 컨텍스트에 안 붙는다)", p.returncode == 0 and p.stdout == "", p.stdout + p.stderr)
+        check("rc 0 · 모델 컨텍스트에는 입력 ID만 전달", p.returncode == 0 and json.loads(p.stdout) == {
+            "hookSpecificOutput": {"hookEventName": "UserPromptSubmit",
+                                   "additionalContext": "AX interview prompt_id for this user turn: test-prompt"}},
+              p.stdout + p.stderr)
         check("[중요] 8101 입력 장부로 원문 그대로", call.get("path") == "/api/v1/interview/prompt"
               and call.get("payload", {}).get("text") == text, str(call))
         check("세션·출처", call.get("payload", {}).get("session") == "s-1"

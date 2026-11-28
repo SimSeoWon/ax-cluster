@@ -1031,7 +1031,8 @@ def tool_interview_ask(api, args: dict) -> dict:
     return api("POST", "/api/v1/interview/ask", {
         "issue_id": _issue_id(args.get("issue_id")), "stage": stage, "question": question,
         "recommended": recommended, "confidence": confidence,
-        "alternatives": [str(a) for a in alternatives], "gaps": str(args.get("gaps") or "")})
+        "alternatives": [str(a) for a in alternatives], "gaps": str(args.get("gaps") or ""),
+        **({"prompt_id": args["prompt_id"]} if args.get("prompt_id") else {})})
 
 
 def tool_interview_spec(api, args: dict) -> dict:

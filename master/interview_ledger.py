@@ -45,6 +45,7 @@ GAPS_BELOW = 70                             # 이보다 낮으면 「빈 것」�
 
 NONE, ADD, REVISE, FLIP = "none", "add", "revise", "flip"
 DIVERGENCE = {NONE: "어긋남 없음", ADD: "보강", REVISE: "수정", FLIP: "뒤집기"}
+CONFIRM, FOLLOWUP, STOP = "confirm", "followup", "stop"
 RAISE = 20                                  # 추천 선택·어긋남 없음
 
 GATE_KEY, GATE_ON = "interview_gate", "enforce"
@@ -127,7 +128,7 @@ def _text(value, what: str) -> str:
 
 
 def ask(root, issue_id, stage: str, question: str, recommended: str, alternatives=(), confidence=None,
-        gaps: str = "") -> dict:
+        gaps: str = "", *, prompt_id: str = "", require_prompt: bool = False) -> dict:
     """질문 하나를 등록한다. 같은 일감·단계의 답 안 받은 앞 질문은 이 질문으로 대체된다."""
     n = int(issue_id)
     if stage not in STAGES:
@@ -148,8 +149,12 @@ def ask(root, issue_id, stage: str, question: str, recommended: str, alternative
             "status": "open"}
     with _locked(root):
         data = _load(root)
+        if prompt_id or require_prompt:
+            prompt = _current_prompt(data, prompt_id)
+            item.update(session=prompt["session"], opened_by=prompt["id"])
         for old in data["questions"]:
-            if old["issue_id"] == n and old["stage"] == stage and old["status"] == "open":
+            if (old["issue_id"] == n and old["stage"] == stage and old["status"] == "open"
+                    and old.get("session") == item.get("session")):
                 old["status"] = "replaced"
         data["questions"].append(item)
         _save(root, data)
@@ -176,7 +181,7 @@ def record_prompt(root, text: str, *, session: str = "", source: str = "") -> di
     """사용자 입력 원문 한 건 — 훅만 부른다. 빈 입력은 남기지 않는다."""
     if not isinstance(text, str) or not text.strip():
         return {"ok": False, "why": "빈 입력"}
-    item = {"id": uuid4().hex[:12], "at": _now(), "text": text, "session": str(session or "")[:80],
+    item = {"id": uuid4().hex, "at": _now(), "text": text, "session": str(session or "")[:80],
             "source": str(source or "")[:40]}
     with _locked(root):
         data = _load(root)
@@ -184,6 +189,56 @@ def record_prompt(root, text: str, *, session: str = "", source: str = "") -> di
         data.setdefault("stop_blocks", {}).pop(item["session"] or "-", None)   # 새 입력 = 연속 차단 초기화
         _save(root, data)
     return {"ok": True, "id": item["id"], "at": item["at"]}
+
+
+def _current_prompt(data: dict, prompt_id: str) -> dict:
+    """훅이 발급한 현재 턴의 입력 ID에서 세션을 확인한다."""
+    if not prompt_id:
+        raise LedgerError("입력 훅에서 받은 현재 턴의 prompt_id가 필요하다")
+    seen: set[str] = set()
+    for prompt in reversed(data["prompts"]):
+        session = prompt.get("session")
+        if not session or session in seen:
+            continue
+        if prompt["id"] == prompt_id:
+            return prompt
+        seen.add(session)
+    raise LedgerError("입력 장부에서 해당 세션의 현재 사용자 입력을 확인할 수 없다")
+
+
+def assess_answer(root, issue_id, stage: str, user_answer: str, *, prompt_id: str, action: str,
+                  divergence: str, divergence_reason: str, option: int = 0) -> dict:
+    """LLM이 해석한 답을 장부에 대조하고 확정·후속 질문·중단 상태를 기록한다."""
+    n = int(issue_id)
+    reason = _text(divergence_reason, "답변 해석 근거")
+    if action not in (CONFIRM, FOLLOWUP, STOP):
+        raise LedgerError("답변 해석은 confirm, followup, stop 중 하나다")
+    if divergence not in DIVERGENCE:
+        raise LedgerError("답변의 어긋남 등급(divergence)이 필요하다")
+    with _locked(root):
+        data = _load(root)
+        prompt = _current_prompt(data, prompt_id)
+        if prompt["text"] != user_answer:
+            raise LedgerError("답변 원문이 현재 턴의 실제 사용자 입력과 일치하지 않는다")
+        q = next((entry for entry in reversed(data["questions"])
+                  if entry["issue_id"] == n and entry["stage"] == stage
+                  and entry.get("session") == prompt["session"] and entry["status"] == "open"), None)
+        if q is None or prompt["at"] <= q["at"]:
+            raise LedgerError(f"#{n} {stage}: 같은 세션에 답변보다 먼저 등록된 질문이 없다")
+        if any(entry.get("prompt_id") == prompt_id for entry in data["questions"]):
+            raise LedgerError("같은 턴의 사용자 답변이 이미 처리됐다")
+        if type(option) is not int or not 0 <= option <= len(q["alternatives"]) + 1:
+            raise LedgerError("선택 번호가 등록된 보기 범위를 벗어난다")
+        if option > 1 and divergence == NONE:
+            raise LedgerError("대안 선택에는 추천안과의 차이를 기록한다")
+        after = confidence_after(q["confidence"], divergence)
+        status = {CONFIRM: "answered", FOLLOWUP: "followup_required", STOP: "stopped"}[action]
+        q.update(status=status, answered_at=_now(), prompt_id=prompt_id, pick=option,
+                 action=action, divergence=divergence, divergence_reason=reason, confidence_after=after)
+        _save(root, data)
+    line = f"확신도 {q['confidence']} → {after} · {DIVERGENCE[divergence]} — {reason}"
+    return {"ok": True, "status": status, "question_id": q["id"], "user_answer": user_answer,
+            "note_line": line, "pick": option}
 
 
 # ── 답 판정 ──────────────────────────────────────────────────────────────────

@@ -170,6 +170,7 @@ class InterviewAskReq(_IssueReq):
     confidence: int
     alternatives: list[str] = []
     gaps: str = ""
+    prompt_id: str = ""
 
 
 
@@ -1027,7 +1028,8 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         from .. import interview_ledger
         return _plan_call("interview_ask", req, lambda p: interview_ledger.ask(
             interview_ledger.default_root(p), req.issue_id, req.stage, req.question, req.recommended,
-            req.alternatives, req.confidence, req.gaps))
+            req.alternatives, req.confidence, req.gaps, prompt_id=req.prompt_id,
+            require_prompt=interview_ledger.gate_enabled(p)))
 
     @app.post("/api/v1/interview/prompt")
     def interview_prompt_ep(req: InterviewPromptReq):
