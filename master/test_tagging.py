@@ -316,7 +316,12 @@ def test_ledger_routes_live() -> None:
         check("[중요] 태그 없음 → no_project_tag", r.json().get("status") == "no_project_tag", r.text[:200])
         r = c.post("/api/v1/interview/stop", json={"project": "AXCluster", "session": "s"}, headers=H)
         j = r.json()
-        check("[중요] 멈춤 판정 — 잠금 없음 → 200 · block False", r.status_code == 200 and j.get("block") is False
+        check("[중요] 멈춤 판정 — 관문 꺼짐 → 200 · block False", r.status_code == 200 and j.get("block") is False
+              and "관문 꺼짐" in j.get("reason", ""), r.text[:200])
+        (proots / "AXCluster" / "config.yaml").write_text("interview_gate: enforce\n", encoding="utf-8")
+        r = c.post("/api/v1/interview/stop", json={"project": "AXCluster", "session": "s"}, headers=H)
+        j = r.json()
+        check("[중요] 멈춤 판정 — 관문 켬 + 잠금 없음 → block False", r.status_code == 200 and j.get("block") is False
               and "활성 일감 없음" in j.get("reason", ""), r.text[:200])
         r = c.post("/api/v1/interview/stop", json={"session": "s"}, headers=H)
         check("멈춤 판정 — 태그 없음 → 거절이지만 block False(fail-open)",

@@ -1299,9 +1299,14 @@ def test_hook_registration() -> None:
     #    실측 01:30: 라운드가 4/4 완주하고 Redmine `#354` 까지 났는데 `.33` 은 끝난 줄 몰랐다.
     #    그래서 `pending_works` 를 `UserPromptSubmit` 에도 걸어 **매 턴** 고지한다.
     #    [주의] 소음이 안 되는 근거는 스크립트에 있다 — 열린 work 이 0이면 침묵한다.
-    check("[중요] 세 이벤트에 걸린다 (매 턴 고지 포함)",
-          set(got["hooks"]) == {"PostToolUse", "SessionStart", "UserPromptSubmit"},
+    #    `#1040` — 입력 장부(UserPromptSubmit 에 한 줄 더)·멈춤 판정(Stop)이 붙어 네 이벤트가 됐다.
+    check("[중요] 네 이벤트에 걸린다 (매 턴 고지 · #1040 Stop 포함)",
+          set(got["hooks"]) == {"PostToolUse", "SessionStart", "UserPromptSubmit", "Stop"},
           str(set(got["hooks"])))
+    _cmds = [h.get("command", "") for e in (got["hooks"].get("UserPromptSubmit") or []) for h in e.get("hooks") or []]
+    check("#1040 UserPromptSubmit 에 입력 장부 훅", any("prompt_ledger.py" in c for c in _cmds), str(_cmds))
+    _cmds = [h.get("command", "") for e in (got["hooks"].get("Stop") or []) for h in e.get("hooks") or []]
+    check("#1040 Stop 에 멈춤 판정 훅", any("stop_gate.py" in c for c in _cmds), str(_cmds))
     ups = got["hooks"].get("UserPromptSubmit") or []
     check("  같은 스크립트를 쓴다 (판정 로직을 두 벌 두지 않는다)",
           ups and "pending_works.py" in str(ups[0]), str(ups))

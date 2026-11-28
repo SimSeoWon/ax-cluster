@@ -1054,6 +1054,8 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         if bad:
             return {**bad, "block": False}
         p = getattr(_mount_gate, "last", "") or req.project.strip()
+        if not interview_ledger.gate_enabled(p):
+            return {"ok": True, "block": False, "reason": f"{p} 관문 꺼짐(interview_gate)"}
         try:
             active = issue_lock.current(issue_lock.default_root(p))
             n = active["issue_id"] if active else None

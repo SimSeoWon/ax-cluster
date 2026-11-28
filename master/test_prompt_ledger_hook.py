@@ -32,7 +32,7 @@ def queue_api(root):
         if mode == "refuse":
             return {"ok": False, "status": "not_mounted"}
         if mode == "block":
-            return {"ok": True, "block": True, "reason": "[AX 멈춤 판정] #1039 판정 resume"}
+            return {"ok": True, "block": True, "issue_id": 1039, "reason": "[AX 멈춤 판정] #1039 판정 resume"}
         return {"ok": True}
     return api
 '''
@@ -86,7 +86,11 @@ def main() -> int:
         p, call = run(root, "not json")
         check("JSON 아님 → 조용히 rc 0", p.returncode == 0 and not call and p.stderr == "", p.stderr)
 
-        stop = {"session_id": "s-9", "stop_hook_active": True, "hook_event_name": "Stop", "cwd": str(root)}
+        tr = root / "transcript.jsonl"
+        tr.write_text(json.dumps({"type": "tool_use", "input": {"issue_id": 1039, "task_id": "T3"}}) + "\n",
+                      encoding="utf-8")
+        stop = {"session_id": "s-9", "stop_hook_active": True, "hook_event_name": "Stop", "cwd": str(root),
+                "transcript_path": str(tr)}
         p, call = run(root, stop, mode="block", hook=STOP)
         out = json.loads(p.stdout or "{}")
         check("[중요] Stop — 서버가 block 이면 decision block + 사실 사유", p.returncode == 0
@@ -94,6 +98,17 @@ def main() -> int:
         check("Stop — 판정 라우트·세션·stop_hook_active 전달", call.get("path") == "/api/v1/interview/stop"
               and call["payload"] == {"session": "s-9", "stop_hook_active": True}, str(call))
         check("Stop — stdout 은 ASCII(윈도우 콘솔 안전)", p.stdout.isascii(), p.stdout)
+        other = root / "other.jsonl"
+        other.write_text(json.dumps({"input": {"issue_id": 10390}}) + "\n", encoding="utf-8")
+        p, _ = run(root, {**stop, "transcript_path": str(other)}, mode="block", hook=STOP)
+        check("[중요] Stop — 그 일감을 다루지 않은 옆 세션은 막지 않는다(10390 ≠ 1039)", p.returncode == 0
+              and p.stdout == "" and "다룬 기록" in p.stderr, p.stdout + p.stderr)
+        p, _ = run(root, {**stop, "transcript_path": str(root / "missing.jsonl")}, mode="block", hook=STOP)
+        check("Stop — 대화 기록을 못 읽으면 막지 않는다", p.stdout == "", p.stdout)
+        esc = root / "esc.jsonl"
+        esc.write_text('{"content": "{\\"issue_id\\": 1039}"}\n', encoding="utf-8")
+        p, _ = run(root, {**stop, "transcript_path": str(esc)}, mode="block", hook=STOP)
+        check("Stop — 문자열 안에 이스케이프된 issue_id 도 읽는다", '"decision": "block"' in p.stdout, p.stdout + p.stderr)
         p, _ = run(root, stop, mode="ok", hook=STOP)
         check("Stop — block 아님 → stdout 비움", p.returncode == 0 and p.stdout == "", p.stdout)
         p, _ = run(root, stop, mode="raise", hook=STOP)

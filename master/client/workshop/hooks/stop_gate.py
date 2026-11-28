@@ -16,7 +16,11 @@
 - [중요] **fail-open** — 마스터가 죽었거나 판정이 실패하면 막지 않는다(stderr 한 줄). 같은 세션 연속 차단은
   서버가 3회로 끊는다(무한 반복 방지).
 - 워커에는 배달하지 않는다 — 사람이 없는 경로에서 Stop 을 막으면 안 된다.
+- [중요] **그 일감을 다룬 세션만 막는다** — 마스터의 훅은 사용자 설정이라 모든 세션에 걸린다. 서버가 block 을
+  줘도 이 세션의 대화 기록(`transcript_path`)에 그 일감 번호(`"issue_id": N`)가 없으면 막지 않는다(다른 일을 하는
+  옆 세션). 기록을 못 읽으면 막지 않는다(fail-open).
 """
+import re
 import json
 import sys
 from pathlib import Path
@@ -25,6 +29,18 @@ HTTP_TIMEOUT_SEC = 15
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from prompt_ledger import _args, _load_client       # noqa: E402 — 같은 배선(클라 찾기·--root)을 쓴다
+
+
+def _session_touched(data: dict, issue_id) -> bool:
+    """이 세션 대화 기록에 그 일감 번호가 도구 인자로 나왔나. 못 읽으면 False(막지 않음)."""
+    path = str(data.get("transcript_path") or "")
+    if not path or issue_id is None:
+        return False
+    try:
+        text = Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return re.search(r'\\?"issue_id\\?"\s*:\s*' + str(int(issue_id)) + r"\b", text) is not None
 
 
 def main(argv=None, stdin=None) -> int:
@@ -46,6 +62,9 @@ def main(argv=None, stdin=None) -> int:
     except Exception as e:                              # noqa: BLE001 — fail-open
         print(f"[멈춤 판정] 건너뜀 — {str(e).splitlines()[0][:160] if str(e) else type(e).__name__}",
               file=sys.stderr)
+        return 0
+    if isinstance(got, dict) and got.get("block") and not _session_touched(data, got.get("issue_id")):
+        print(f"[멈춤 판정] #{got.get('issue_id')} 을 다룬 기록이 이 세션에 없다 — 막지 않음", file=sys.stderr)
         return 0
     if isinstance(got, dict) and got.get("block"):
         # ensure_ascii — 윈도우 콘솔(CP949)에서 한글 print 가 죽지 않게 \u 로 내보낸다(JSON 으로는 같다)

@@ -208,7 +208,10 @@ CODE_SKILLS = {"worker": ("ax-work",),
 #    가 `endpoint()` None 에서 빠진다). 에이전트·룰은 UE 전제라 여전히 안 보낸다.
 CODE_WORKSHOP = INDEX_ONLY_WORKSHOP + (".claude/hooks/pending_works.py",
                                        ".claude/hooks/editor_mcp.py",
-                                       ".claude/hooks/work_completion.py")
+                                       ".claude/hooks/work_completion.py",
+                                       # `#1040` — 대화 장부(입력 원문)·멈춤 판정. 요청자의 일감 인터뷰·진행에 쓴다
+                                       ".claude/hooks/prompt_ledger.py",
+                                       ".claude/hooks/stop_gate.py")
 
 # 폐지된 스킬 — 배달 대상에서 지우는 것만으로는 **이미 놓인 기계가 정리되지 않는다**.
 # `plan` 이 제거 항목으로 들고, `deliver` 가 지운다.
@@ -420,6 +423,11 @@ MANAGED_HOOKS = (
     # The hook itself ignores unrelated calls unless that session has a pending watch.
     ("PostToolUse", "",
      ".claude/hooks/work_completion.py", 7260),
+    # 🔴 `#1040` (사용자 결정 2026-11-28) — 인터뷰·플랜 기록은 **사용자의 실제 입력**과 대조된다. 입력 원문을
+    #    마스터 입력 장부에 적는다(stdout 없음 · fail-open). 판정이 resume 인데 사유 없이 턴을 끝내면 Stop 이
+    #    막는다(그 일감을 다룬 세션만 · 관문 스위치가 켜진 프로젝트만 · 서버 판정 실패면 통과).
+    ("UserPromptSubmit", "", ".claude/hooks/prompt_ledger.py", 8),
+    ("Stop", "", ".claude/hooks/stop_gate.py", 20),
 )
 
 # Claude's asyncRewake wakes an idle session on exit 2; ordinary async waits for another turn.

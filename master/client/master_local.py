@@ -108,6 +108,7 @@ class Paths:
     claude_settings: Path | None = None
     skills_dir: Path | None = None       # `#929` master/skills 정본 디렉터리
     claude_skills: Path | None = None    # `#929` ~/.claude/skills 링크 디렉터리
+    codex_hooks: Path | None = None      # `#1040` ~/.codex/hooks.json (Claude 는 claude_settings 의 hooks)
 
     def __post_init__(self) -> None:
         if self.agy_settings is None:
@@ -118,6 +119,8 @@ class Paths:
             self.skills_dir = REPO / "master" / "skills"
         if self.claude_skills is None:
             self.claude_skills = self.home / ".claude" / "skills"
+        if self.codex_hooks is None:
+            self.codex_hooks = self.home / ".codex" / "hooks.json"
 
     @classmethod
     def default(cls, home: Path | None = None) -> "Paths":
@@ -447,6 +450,57 @@ def claude_permissions_text(existing: str) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
 
 
+# ── `#1040` 대화 장부 훅 — 마스터의 Claude·Codex 지휘 세션 ──────────────────────
+# 입력 장부(UserPromptSubmit)와 멈춤 판정(Stop). 워커에는 배달하지 않는다(사람이 없는 경로). 스크립트는 이
+# 저장소의 것을 쓰고 `--root` 로 ax-client 설정 디렉토리를 준다(마스터에는 배달된 `.ax/lib` 이 없다).
+# [중요] marker 는 스크립트 경로 — 그 문자열이 든 항목만 우리 것으로 보고 교체한다(사람 것은 남는다).
+# [주의] Codex 는 새·바뀐 훅을 사람이 `/hooks` 에서 한 번 승인해야 돈다(공식 문서 hooks — 해시로 신뢰 기록).
+MASTER_HOOKS = (("UserPromptSubmit", "prompt_ledger.py", 8), ("Stop", "stop_gate.py", 20))
+HOOKS_DIR = REPO / "master" / "client" / "workshop" / "hooks"
+
+
+def hook_command(p: "Paths", script: str, source: str) -> str:
+    return f"{p.python} {HOOKS_DIR / script} --root {p.root} --source {source}"
+
+
+def hooks_text(existing: str, p: "Paths", source: str, what: str) -> str:
+    """`settings.json`(Claude) · `hooks.json`(Codex) 의 새 본문 — 관리 훅만 교체, 나머지 보존."""
+    try:
+        data = json.loads(existing or "{}")
+    except ValueError as exc:
+        raise MasterLocalError(f"기존 {what} 이 깨진 JSON 이다 — 덮지 않는다") from exc
+    if not isinstance(data, dict) or not isinstance(data.get("hooks", {}), dict):
+        raise MasterLocalError(f"{what} 및 hooks 는 객체여야 한다 — 덮지 않는다")
+    hooks = data.setdefault("hooks", {})
+    for event, script, timeout in MASTER_HOOKS:
+        entries = hooks.get(event, [])
+        if not isinstance(entries, list):
+            raise MasterLocalError(f"{what} 의 hooks.{event} 가 배열이 아니다 — 덮지 않는다")
+        marker = str(HOOKS_DIR / script)
+        kept = [e for e in entries if not any(marker in str(h.get("command", ""))
+                                              for h in (e.get("hooks") or []) if isinstance(h, dict))]
+        kept.append({"hooks": [{"type": "command", "command": hook_command(p, script, source),
+                                "timeout": timeout}]})
+        hooks[event] = kept
+    return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+
+
+def hooks_ok(text: str, p: "Paths", source: str) -> tuple:
+    """(관리 훅이 정확히 한 벌씩 있나, 빠진·어긋난 것)."""
+    try:
+        hooks = (json.loads(text or "{}") or {}).get("hooks") or {}
+    except ValueError:
+        return False, ["JSON 아님"]
+    bad = []
+    for event, script, timeout in MASTER_HOOKS:
+        want = hook_command(p, script, source)
+        got = [h for e in (hooks.get(event) or []) for h in (e.get("hooks") or []) if isinstance(h, dict)
+               and str(HOOKS_DIR / script) in str(h.get("command", ""))]
+        if len(got) != 1 or got[0].get("command") != want or got[0].get("timeout") != timeout:
+            bad.append(event)
+    return not bad, bad
+
+
 def claude_all_approved(text: str) -> bool:
     try:
         data = json.loads(text or "{}")
@@ -696,6 +750,14 @@ def plan(p: Paths, project: str) -> list:
                    f"{p.claude_settings} permissions.defaultMode=bypassPermissions (백업 후)"))
     except MasterLocalError as ex:
         out.append(f"{LOG} claude 권한: [실패] {ex}")
+    for label, path, source in (("claude 훅", p.claude_settings, "claude"), ("codex 훅", p.codex_hooks, "codex")):
+        try:                               # `#1040`
+            prev = _read(path)
+            new = hooks_text(prev, p, source, path.name)
+            out.append(f"{LOG} {label}: " + ("이미 같다" if new == prev else
+                       f"{path} 에 UserPromptSubmit·Stop 관리 훅 (백업 후)"))
+        except MasterLocalError as ex:
+            out.append(f"{LOG} {label}: [실패] {ex}")
     try:                                   # 계획에서도 실제 편집을 메모리에서 한 번 돌려 본다
         prev = _read(p.codex_toml)
         approve = all_client_tools()
@@ -802,6 +864,26 @@ def apply(p: Paths, project: str, *, facts=None) -> int:
     except MasterLocalError as ex:
         bad += 1
         print(f"{LOG} [실패] claude 권한: {ex}")
+
+    # ── `#1040` 대화 장부 훅 (Claude settings.json · Codex hooks.json) ──
+    for label, path, source in (("claude 훅", p.claude_settings, "claude"), ("codex 훅", p.codex_hooks, "codex")):
+        try:
+            prev = _read(path)
+            new = hooks_text(prev, p, source, path.name)
+            if new == prev:
+                print(f"{LOG} {label}: 이미 같다 — 쓰지 않는다")
+            else:
+                bk = _backup(path, stamp)
+                mode = (path.stat().st_mode & 0o777) if path.exists() else 0o600
+                _write_private(path, new, mode)
+                print(f"{LOG} {label}: 백업 {bk or '(원본 없음)'} · 관리 훅 기록")
+            ok, missing = hooks_ok(_read(path), p, source)
+            bad += 0 if ok else 1
+            print(f"{LOG} {label}: 파일 되읽기 {'대조 통과' if ok else '[실패] ' + ', '.join(missing)}")
+        except MasterLocalError as ex:
+            bad += 1
+            print(f"{LOG} [실패] {label}: {ex}")
+    print(f"{LOG} [주의] codex 훅은 사람이 codex 의 /hooks 에서 한 번 승인해야 돈다(바뀔 때마다)")
 
     # ── Codex (~/.codex/config.toml 관리 블록) ─────────────────
     try:
@@ -986,6 +1068,9 @@ def check(p: Paths, project: str, *, smoke: bool = True) -> int:
         f"{p.claude_json} mcpServers.{SERVER}")
     row("claude approvals", claude_all_approved(_read(p.claude_settings)),
         "permissions.defaultMode=bypassPermissions")
+    for label, path, source in (("claude hooks", p.claude_settings, "claude"), ("codex hooks", p.codex_hooks, "codex")):
+        ok, missing = hooks_ok(_read(path), p, source)                # `#1040`
+        row(label, ok, f"{path} UserPromptSubmit·Stop" + (f" — 어긋남 {missing}" if missing else ""))
     ok, why = codex_get_matches(codex_get_live(), e)
     row("codex", ok, why or "codex mcp get --json 대조")
     try:

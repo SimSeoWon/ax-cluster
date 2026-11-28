@@ -630,6 +630,38 @@ def test_live_config_guard_detects_change() -> None:
     check("#930 바뀌면 이름을 짚는다", _changed(a, {**a, "claude": {"args": ["/tmp/y"]}}) == ["claude"])
 
 
+def test_master_hooks() -> None:
+    """`#1040` T6 — 마스터 Claude·Codex 에 대화 장부 훅. 관리 훅만 교체하고 사람 것은 남긴다."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        p = _paths(Path(d))
+        check("#1040 codex 훅 기본 자리는 ~/.codex/hooks.json", p.codex_hooks == p.home / ".codex" / "hooks.json")
+        mine = {"hooks": [{"type": "command", "command": "/usr/bin/true"}]}
+        old = {"theme": "dark", "hooks": {"Stop": [mine], "PreToolUse": [mine]}}
+        new = json.loads(ml.hooks_text(json.dumps(old), p, "claude", "settings.json"))
+        check("#1040 다른 설정·사람 훅은 남는다", new["theme"] == "dark" and new["hooks"]["PreToolUse"] == [mine]
+              and mine in new["hooks"]["Stop"], str(new)[:300])
+        cmds = [h["command"] for e in new["hooks"]["Stop"] for h in e["hooks"]]
+        check("#1040 Stop 에 stop_gate · --root · --source claude", any("stop_gate.py" in c and f"--root {p.root}" in c
+              and c.endswith("--source claude") for c in cmds), str(cmds))
+        again = ml.hooks_text(json.dumps(new), p, "claude", "settings.json")
+        check("#1040 두 번 써도 한 벌(멱등)", json.loads(again) == new)
+        ok, bad = ml.hooks_ok(again, p, "claude")
+        check("#1040 hooks_ok 통과", ok, str(bad))
+        ok, bad = ml.hooks_ok(again, p, "codex")
+        check("#1040 출처가 다르면 어긋남(codex 자리에 claude 훅)", not ok and set(bad) == {"UserPromptSubmit", "Stop"},
+              str(bad))
+        ok, bad = ml.hooks_ok(json.dumps(old), p, "claude")
+        check("#1040 관리 훅 없음 → 어긋남", not ok, str(bad))
+        for broken, why in (("{", "깨진 JSON"), ('{"hooks": []}', "객체"), ('{"hooks": {"Stop": {}}}', "배열")):
+            try:
+                ml.hooks_text(broken, p, "codex", "hooks.json")
+                got = ""
+            except ml.MasterLocalError as e:
+                got = str(e)
+            check(f"#1040 {why} → 덮지 않는다", why in got, got)
+
+
 def main() -> int:
     before = _live_config()
     try:
@@ -639,7 +671,8 @@ def main() -> int:
                    test_claude_user_get, test_config_same_shape_as_delivery,
                    test_token_never_printed, test_apply_writes_root_and_files, test_agy_permissions, test_969_master_local_checks,
                    test_cli_wiring, test_claude_skills_sync_and_check,
-                   test_apply_refuses_cli_outside_real_config, test_live_config_guard_detects_change):
+                   test_apply_refuses_cli_outside_real_config, test_live_config_guard_detects_change,
+                   test_master_hooks):
             fn()
     finally:
         # `#930` — 임시 경로만 보는 검사는 통과해도 실제 설정이 망가진 것을 못 본다
