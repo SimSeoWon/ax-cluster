@@ -280,6 +280,52 @@ def _live_queue(tmp: Path):
     return TestClient(got["app"]), master_t, req_t, wrk_t
 
 
+def test_ledger_routes_live() -> None:
+    """[중요] `#1040` — 질문·입력 장부 실물 라우트: requester 200 · worker 403 · 태그 없음 거절 · 원문은 장부에만."""
+    import json
+    import os
+    import shutil
+    import tempfile
+    tmp = Path(tempfile.mkdtemp(prefix="test_ledger_route_"))
+    old_root = os.environ.get("AX_PROJECTS_ROOT")
+    try:
+        proots = tmp / "projects"
+        (proots / "AXCluster").mkdir(parents=True)
+        (proots / "projects.yaml").write_text(
+            "version: 1\nactive: AXCluster\nprojects:\n- AXCluster\n", encoding="utf-8")
+        os.environ["AX_PROJECTS_ROOT"] = str(proots)
+        c, _m, req_t, wrk_t = _live_queue(tmp)
+        H = {"Authorization": f"Bearer {req_t}"}
+        ask = {"project": "AXCluster", "issue_id": 7, "stage": "classify", "question": "버그인가?",
+               "recommended": "버그", "alternatives": ["수정"], "confidence": 80}
+        r = c.post("/api/v1/interview/ask", json=ask, headers=H)
+        check("[중요] 질문 장부 — requester 200 · ok", r.status_code == 200 and r.json().get("ok"), r.text[:200])
+        r = c.post("/api/v1/interview/ask", json={**ask, "alternatives": ["a", "b", "c", "d"]}, headers=H)
+        check("질문 장부 — 대안 4개 → ok:false 사유", r.json().get("ok") is False and "3개" in r.json().get("why", ""),
+              r.text[:200])
+        secret = "비밀 문장 1번으로 가자"
+        r = c.post("/api/v1/interview/prompt", json={"project": "AXCluster", "text": secret, "source": "t"}, headers=H)
+        check("[중요] 입력 장부 — requester 200 · ok", r.status_code == 200 and r.json().get("ok"), r.text[:200])
+        led = json.loads((proots / "AXCluster" / "interview_ledger.json").read_text(encoding="utf-8"))
+        check("  트윈 장부에 질문 1 · 입력 1", len(led["questions"]) == 1 and led["prompts"][0]["text"] == secret,
+              str(led)[:200])
+        tq_logs = "".join(p.read_text(encoding="utf-8", errors="replace")
+                          for p in tmp.rglob("*.log") if p.is_file())
+        check("[중요] 입력 원문은 큐 로그에 남지 않는다", secret not in tq_logs)
+        r = c.post("/api/v1/interview/prompt", json={"text": secret}, headers=H)
+        check("[중요] 태그 없음 → no_project_tag", r.json().get("status") == "no_project_tag", r.text[:200])
+        for path, body in (("/api/v1/interview/ask", ask),
+                           ("/api/v1/interview/prompt", {"project": "AXCluster", "text": "x"})):
+            r = c.post(path, json=body, headers={"Authorization": f"Bearer {wrk_t}"})
+            check(f"[중요] worker 토큰 → 403 ({path})", r.status_code == 403, str(r.status_code))
+    finally:
+        if old_root is None:
+            os.environ.pop("AX_PROJECTS_ROOT", None)
+        else:
+            os.environ["AX_PROJECTS_ROOT"] = old_root
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_usage_route_live() -> None:
     """[중요] `POST /api/v1/usage` (`#763`) — 실물 라우트가 임시 트윈에 한 줄을 쓰고, 관문이 거절한다."""
     import json
@@ -624,7 +670,7 @@ if __name__ == "__main__":
                test_stamp_check_does_not_use_mount, test_twin_writers_are_gated,
                test_gates_are_actually_wired, test_claim_filters_by_project,
                test_untagged_is_rejected_on_write_surfaces, test_path_normalization,
-               test_senders_are_wired, test_usage_route_live, test_issue_routes_declared,
+               test_senders_are_wired, test_usage_route_live, test_ledger_routes_live, test_issue_routes_declared,
                test_issue_routes_live, test_wayfinder_node_ticket_live):
         fn()
     print(f"{'OK' if not FAIL else 'FAIL'} test_tagging: {PASS}/{PASS + FAIL} 통과")

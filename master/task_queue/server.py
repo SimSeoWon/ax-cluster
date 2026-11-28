@@ -139,6 +139,15 @@ class InterviewSpecReq(_IssueReq):
     user_answer: str
 
 
+class InterviewPromptReq(BaseModel):
+    """`#1040` — `UserPromptSubmit` 훅이 사용자 입력 원문을 입력 장부에 적는다(일감과 무관)."""
+    model_config = ConfigDict(extra="forbid")
+    project: str = ""
+    text: str
+    session: str = ""
+    source: str = ""
+
+
 class InterviewAskReq(_IssueReq):
     """`#1040` — 묻기 전에 질문 장부에 등록한다."""
     stage: str
@@ -1003,6 +1012,23 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         return _plan_call("interview_ask", req, lambda p: interview_ledger.ask(
             interview_ledger.default_root(p), req.issue_id, req.stage, req.question, req.recommended,
             req.alternatives, req.confidence, req.gaps))
+
+    @app.post("/api/v1/interview/prompt")
+    def interview_prompt_ep(req: InterviewPromptReq):
+        """입력 장부 한 건(`#1040`). [주의] 로그에는 길이만 — 원문은 장부에만 남는다."""
+        from .. import interview_ledger
+        bad = _mount_gate(req.project, require=True)
+        if bad:
+            return bad
+        p = getattr(_mount_gate, "last", "") or req.project.strip()
+        try:
+            got = interview_ledger.record_prompt(interview_ledger.default_root(p), req.text,
+                                                 session=req.session, source=req.source)
+        except Exception as e:                               # noqa: BLE001
+            got = {"ok": False, "why": f"{type(e).__name__}: {e}"}
+        _tq_log(f"[ledger] prompt project={p} source={req.source or '-'} len={len(req.text)} → ok={got.get('ok')}",
+                root)
+        return got
 
     @app.post("/api/v1/interview/spec")
     def interview_spec_ep(req: InterviewSpecReq):

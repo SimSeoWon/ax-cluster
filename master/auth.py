@@ -316,6 +316,7 @@ REQUESTER_SCOPE: tuple = (
     ("POST", "/api/v1/interview/spec", "", "exact"),
     # `#1040` — 질문 장부(묻기 전 등록).
     ("POST", "/api/v1/interview/ask", "", "exact"),
+    ("POST", "/api/v1/interview/prompt", "", "exact"),   # 입력 장부 — UserPromptSubmit 훅
     # `#963` — 플랜 제안·자율성 재제안. 같은 일감 노트에 쓴다.
     ("POST", "/api/v1/plan/propose", "", "exact"),
     ("POST", "/api/v1/plan/autonomy", "", "exact"),
