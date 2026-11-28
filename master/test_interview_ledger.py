@@ -286,7 +286,8 @@ def t_stop_check(root):
     for v in ("stop", "plan_needed", "interview_needed", "plan_done", "blocked"):
         check(f"판정 {v} → 통과", not L.stop_check(root, active_issue=1039, verdict={"verdict": v})["block"])
     check("판정 모름(None) → 통과(fail-open)", not L.stop_check(root, active_issue=1039, verdict=None)["block"])
-    L.ask(root, 1039, "decision", "어느 쪽?", "A", ["B"], 80)
+    prompt = L.record_prompt(root, "진행", session="s")
+    L.ask(root, 1039, "decision", "어느 쪽?", "A", ["B"], 80, prompt_id=prompt["id"])
     got = L.stop_check(root, active_issue=1039, verdict=res, session="s")
     check("[중요] 답 대기 질문 있음 → 통과", not got["block"] and "답 대기" in got["reason"], str(got))
     L.record_prompt(root, "A로 해", session="s")
@@ -301,10 +302,40 @@ def t_stop_check(root):
     check("새 입력이면 차단 수 초기화", L.stop_check(root, active_issue=1039, verdict=res, session="t")["block"])
 
 
+def t_prestart_stop(root):
+    def decision(session):
+        return L.stop_check(root, active_issue=None, verdict=None, session=session)
+
+    start = L.record_prompt(root, "진행해", session="this")
+    L.ask(root, 1050, "classify", "어느 분류?", "신규 기능", confidence=90, prompt_id=start["id"])
+    check("착수 전 질문의 답 대기 → 정상 종료", not decision("this")["block"])
+    L.record_prompt(root, "응 신규 기능이야", session="other")
+    check("다른 세션 입력으로 답 대기가 끝나지 않는다", not decision("this")["block"])
+    reply = L.record_prompt(root, "기존 기능으로 바꿔", session="this")
+    got = decision("this")
+    check("같은 세션의 미처리 착수 전 답 → 차단", got["block"] and got["session_bound"]
+          and got["issue_id"] == 1050, str(got))
+    check("다른 세션은 통과", not decision("other")["block"])
+    L.assess_answer(root, 1050, "classify", "기존 기능으로 바꿔", prompt_id=reply["id"],
+                    action=L.FOLLOWUP, divergence=L.REVISE, divergence_reason="기존 기능 수정 요청")
+    check("후속 질문을 아직 등록하지 않았으면 차단", decision("this")["block"])
+    L.ask(root, 1050, "classify", "기존 기능 수정 범위인가요?", "기존 기능 수정", confidence=90,
+          prompt_id=reply["id"])
+    check("후속 질문을 등록한 뒤 답 대기 → 정상 종료", not decision("this")["block"])
+    accepted = L.record_prompt(root, "응", session="this")
+    L.assess_answer(root, 1050, "classify", "응", prompt_id=accepted["id"], action=L.CONFIRM,
+                    divergence=L.NONE, divergence_reason="기존 기능 수정 확인")
+    check("확정 뒤 정상 종료", not decision("this")["block"])
+    L.ask(root, 1050, "investigate", "이 범위로?", "이대로", confidence=90, prompt_id=accepted["id"])
+    L.record_prompt(root, "멈춰", session="this")
+    got = decision("this")
+    check("명시적 중단 뒤 정상 종료", not got["block"] and "멈춤 지시" in got["reason"], str(got))
+
+
 def main() -> int:
     for fn in (t_ask_rules, t_no_question, t_session_answers, t_fabricated_answer, t_unrelated_answer,
                t_choices_and_confidence, t_open_questions, t_record_gate, t_set_plan_gate, t_failures,
-               t_stop_check):
+               t_stop_check, t_prestart_stop):
         with tempfile.TemporaryDirectory(prefix="ax-ledger-") as d:
             try:
                 fn(Path(d))

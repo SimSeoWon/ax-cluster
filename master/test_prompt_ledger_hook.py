@@ -33,6 +33,9 @@ def queue_api(root):
             return {"ok": False, "status": "not_mounted"}
         if mode == "block":
             return {"ok": True, "block": True, "issue_id": 1039, "reason": "[AX 멈춤 판정] #1039 판정 resume"}
+        if mode == "session_bound":
+            return {"ok": True, "block": True, "issue_id": 1050, "session_bound": True,
+                    "reason": "#1050 같은 세션의 미처리 답변"}
         return {"ok": True, "id": "test-prompt"} if path.endswith("/prompt") else {"ok": True}
     return api
 '''
@@ -162,6 +165,9 @@ def main() -> int:
               and p.stdout == "" and "다룬 기록" in p.stderr, p.stdout + p.stderr)
         p, _ = run(root, {**stop, "transcript_path": str(root / "missing.jsonl")}, mode="block", hook=STOP)
         check("Stop — 대화 기록을 못 읽으면 막지 않는다", p.stdout == "", p.stdout)
+        p, _ = run(root, {**stop, "transcript_path": ""}, mode="session_bound", hook=STOP)
+        check("Stop — 장부에 세션이 연결된 착수 전 답변은 실제 차단 출력", p.returncode == 0
+              and json.loads(p.stdout or "{}").get("decision") == "block", p.stdout + p.stderr)
         esc = root / "esc.jsonl"
         esc.write_text('{"content": "{\\"issue_id\\": 1039}"}\n', encoding="utf-8")
         p, _ = run(root, {**stop, "transcript_path": str(esc)}, mode="block", hook=STOP)

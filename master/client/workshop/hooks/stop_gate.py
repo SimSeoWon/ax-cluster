@@ -63,7 +63,8 @@ def main(argv=None, stdin=None) -> int:
         print(f"[멈춤 판정] 건너뜀 — {str(e).splitlines()[0][:160] if str(e) else type(e).__name__}",
               file=sys.stderr)
         return 0
-    if isinstance(got, dict) and got.get("block") and not _session_touched(data, got.get("issue_id")):
+    if (isinstance(got, dict) and got.get("block") and got.get("session_bound") is not True
+            and not _session_touched(data, got.get("issue_id"))):
         print(f"[멈춤 판정] #{got.get('issue_id')} 을 다룬 기록이 이 세션에 없다 — 막지 않음", file=sys.stderr)
         return 0
     if isinstance(got, dict) and got.get("block"):

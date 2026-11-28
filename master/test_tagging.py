@@ -323,6 +323,15 @@ def test_ledger_routes_live() -> None:
         j = r.json()
         check("[중요] 멈춤 판정 — 관문 켬 + 잠금 없음 → block False", r.status_code == 200 and j.get("block") is False
               and "활성 일감 없음" in j.get("reason", ""), r.text[:200])
+        prompt = {"project": "AXCluster", "session": "s", "text": "진행해"}
+        opened = c.post("/api/v1/interview/prompt", json=prompt, headers=H).json()
+        r = c.post("/api/v1/interview/ask", json={**ask, "prompt_id": opened.get("id", "")}, headers=H)
+        check("질문 장부 — 실제 입력 ID로 세션 연결", r.json().get("session") == "s", r.text[:200])
+        c.post("/api/v1/interview/prompt", json={**prompt, "text": "응 신규 기능이야"}, headers=H)
+        for session, expected in (("s", True), ("other", False)):
+            r = c.post("/api/v1/interview/stop", json={"project": "AXCluster", "session": session}, headers=H)
+            check(f"착수 전 Stop — 세션 {session} 의 미처리 답변만 차단",
+                  r.json().get("block") is expected, r.text[:200])
         r = c.post("/api/v1/interview/stop", json={"session": "s"}, headers=H)
         check("멈춤 판정 — 태그 없음 → 거절이지만 block False(fail-open)",
               r.json().get("status") == "no_project_tag" and r.json().get("block") is False, r.text[:200])

@@ -313,8 +313,7 @@ def split_failures(failures: list[dict], changed) -> tuple[list[dict], list[dict
 
 # ── 멈춤 판정 (②, T5) ─────────────────────────────────────────────────────────
 # #1039 00:27: plan_start 가 resume 을 줬는데 지휘자가 「재개했다」고 말하고 턴을 끝냈다. 막는 장치가 없었다.
-# Stop 훅이 이 판정을 묻는다. 막는 것은 **일감 잠금이 활성이고 판정이 resume/next 인데 정당한 사유가 없을 때**뿐:
-#   답 대기 질문(질문 장부) · 판정 stop(실패 장부) · 사용자의 멈춤 지시(입력 장부 마지막 문장).
+# Stop 훅은 같은 세션의 미처리 인터뷰 답과 활성 작업의 resume/next를 함께 확인한다.
 # [중요] 사유 문장은 사실만 적는다 — 훅 경로 글의 명령형은 주입으로 거부된다(CLAUDE.md). 무엇을 할지는 스킬이 말한다.
 STOP_WORDS = ("멈춰", "멈추", "멈춤", "중단", "그만", "스톱", "stop", "보류", "마무리", "인수인계", "끝내", "기다려",
               "잠깐", "나중에")
@@ -323,24 +322,40 @@ MAX_BLOCKS = 3                                        # 같은 세션 연속 차
 
 def stop_check(root, *, active_issue, verdict: dict | None, session: str = "") -> dict:
     """`{"block": bool, "reason": str, ...}`. 판정을 못 하면 막지 않는다(fail-open)."""
-    if not active_issue:
-        return {"block": False, "reason": "활성 일감 없음"}
-    n = int(active_issue)
+    n = int(active_issue) if active_issue else None
     v = (verdict or {}).get("verdict", "")
     tasks = (verdict or {}).get("tasks") or []
-    if v not in ("resume", "next"):
-        return {"block": False, "reason": f"#{n} 판정 {v or '모름'}"}
+    session = str(session or "")[:80]
+    if not session and (n is None or v not in ("resume", "next")):
+        return {"block": False, "reason": f"#{n} 판정 {v or '모름'}" if n else "활성 일감 없음"}
     with _locked(root):
         data = _load(root)
-        last = data["prompts"][-1] if data["prompts"] else None
-        waiting = [q for q in data["questions"] if q["issue_id"] == n and q["status"] == "open"
-                   and (last is None or last["at"] < q["at"])]
-        if waiting:
-            return {"block": False, "reason": f"#{n} 답 대기 질문 {waiting[-1]['stage']}"}
-        if last and any(w in last["text"].casefold() for w in STOP_WORDS):
-            return {"block": False, "reason": f"#{n} 사용자 멈춤 지시"}
+        last = next((p for p in reversed(data["prompts"]) if session and p.get("session") == session), None)
+        question = next((q for q in reversed(data["questions"]) if session and q.get("session") == session), None)
+        if question and question["status"] == "stopped" and last and question.get("prompt_id") == last["id"]:
+            return {"block": False, "reason": f"#{question['issue_id']} 사용자 멈춤 지시"}
+        if (question and question["status"] == "open" and (last is None or last["at"] < question["at"])
+                and (question["stage"] in GATED or question["issue_id"] == n)):
+            return {"block": False, "reason": f"#{question['issue_id']} 답 대기 질문 {question['stage']}"}
+        pending = (question and question["stage"] in GATED and last and last["at"] > question["at"]
+                   and question["status"] in ("open", "followup_required"))
+        if pending:
+            n = question["issue_id"]
+            if last["text"].strip().casefold() in STOP_WORDS:
+                return {"block": False, "reason": f"#{n} 사용자 멈춤 지시"}
+            v, tasks = "interview", []
+            reason = f"[AX 멈춤 판정] #{n} {question['stage']} 인터뷰에 같은 세션의 미처리 답변이 있음"
+        else:
+            if n is None:
+                return {"block": False, "reason": "활성 일감 없음"}
+            if v not in ("resume", "next"):
+                return {"block": False, "reason": f"#{n} 판정 {v or '모름'}"}
+            if last and any(w in last["text"].casefold() for w in STOP_WORDS):
+                return {"block": False, "reason": f"#{n} 사용자 멈춤 지시"}
+            reason = (f"[AX 멈춤 판정] #{n} 일감 잠금 활성 · plan_start 판정 {v} · 대상 태스크 "
+                      f"{', '.join(tasks) or '-'} · 답 대기 질문 없음 · 실패 장부 stop 아님 · 사용자 멈춤 지시 없음")
         blocks = data.setdefault("stop_blocks", {})
-        key = str(session or "-")[:80]
+        key = session or "-"
         count = int(blocks.get(key, 0)) + 1
         if count > MAX_BLOCKS:
             blocks[key] = 0
@@ -348,9 +363,8 @@ def stop_check(root, *, active_issue, verdict: dict | None, session: str = "") -
             return {"block": False, "reason": f"#{n} 연속 차단 상한 {MAX_BLOCKS} — 통과(기록됨)", "overflow": True}
         blocks[key] = count
         _save(root, data)
-    reason = (f"[AX 멈춤 판정] #{n} 일감 잠금 활성 · plan_start 판정 {v} · 대상 태스크 {', '.join(tasks) or '-'} · "
-              f"답 대기 질문 없음 · 실패 장부 stop 아님 · 사용자 멈춤 지시 없음 ({count}/{MAX_BLOCKS})")
-    return {"block": True, "reason": reason, "issue_id": n, "verdict": v, "tasks": tasks}
+    return {"block": True, "reason": f"{reason} ({count}/{MAX_BLOCKS})", "issue_id": n,
+            "verdict": v, "tasks": tasks, "session_bound": bool(pending)}
 
 
 def reset_stop_blocks(root, session: str = "") -> None:
