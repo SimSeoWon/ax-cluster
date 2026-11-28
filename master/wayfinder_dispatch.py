@@ -8,7 +8,7 @@ from . import auth, issue_lock, map_block, plan_block, plan_start, spec_block, w
 from .work import runner
 
 
-def _plan_problem(issue: dict, *, rework: bool) -> str:
+def plan_problem(issue: dict, *, rework: bool) -> str:
     body = issue.get("description") or ""
     try:
         spec = spec_block.parse(body)
@@ -68,7 +68,7 @@ def candidates(root_id: int, node_ids, *, rm=None, lock_root=None, registered_wo
             elif issue.get("status") == wayfinder.DONE:
                 why = "이미 마감된 일감이다"
             else:
-                why = _plan_problem(issue, rework=rework)
+                why = plan_problem(issue, rework=rework)
         if why:
             waiting.append({"id": node_id, "why": why})
         else:
@@ -121,7 +121,7 @@ def reserve_worker(lock_root, root_id: int, issue_id: int, facts, *, mode: str, 
         if pick.chosen is None:
             return {"ok": False, "why": pick.summary}
         worker = pick.chosen
-        result = issue_lock.reserve_node(lock_root, issue_id, root_id=root_id, worker=worker.host)
+        result = issue_lock.reserve_node(lock_root, issue_id, root_id=root_id, worker=worker.host, family=mode)
         if result.get("ok"):
             return {"ok": True, "worker": worker, "record": result["record"]}
         if result.get("reason") != "worker_busy":

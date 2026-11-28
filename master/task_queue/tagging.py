@@ -50,6 +50,8 @@ POLICY = {
     # 태그 대신 마스터가 서명한 티켓 번호로 확인한다. OPEN은 인증을 생략한다는 뜻이 아니다.
     "GET /api/v1/wayfinder/issue/{issue_id}":        OPEN,
     "POST /api/v1/wayfinder/issue/{issue_id}/note":  OPEN,
+    "POST /api/v1/wayfinder/issue/{issue_id}/start": OPEN,
+    "POST /api/v1/wayfinder/issue/{issue_id}/submit": OPEN,
 
     # work 등재 — [중요] **여기가 스탬프의 출처다.** 태그가 이후 모든 STAMP 표면을 결정한다
     "POST /api/v1/works":                           MOUNT,

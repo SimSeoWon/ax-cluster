@@ -6,6 +6,17 @@ class NodeTicketNoteReq(BaseModel):
     model_config = ConfigDict(extra="forbid")
     notes: StrictStr = Field(min_length=1)
 
+
+class NodeTicketStartReq(BaseModel):
+    """`#1050` T2 — 착수는 입력이 없다. 기준 리비전·브랜치·작성 계열은 서버가 정한다."""
+    model_config = ConfigDict(extra="forbid")
+
+
+class NodeTicketSubmitReq(BaseModel):
+    """`#1050` T2 — 워커는 검증 요약만 보낸다. 범위(해시)는 서버가 Gitea 에서 구한다."""
+    model_config = ConfigDict(extra="forbid")
+    summary: StrictStr = Field(min_length=1)
+
 # ─────────────────────────────────────────
 # 상수
 # ─────────────────────────────────────────

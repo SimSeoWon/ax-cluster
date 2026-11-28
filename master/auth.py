@@ -497,7 +497,8 @@ class BearerAuthMiddleware:
             if grant is None:
                 return await self._deny(send, challenge=b'Bearer realm="ax-cluster"')
             base = f"{NODE_TICKET_PATH}/{grant.issue_id}"
-            if (method, path) not in (("GET", base), ("POST", f"{base}/note")):
+            if (method, path) not in (("GET", base), ("POST", f"{base}/note"), ("POST", f"{base}/start"),
+                                      ("POST", f"{base}/submit")):
                 return await self._deny(send, status=403, why=b"forbidden (scope)",
                                         challenge=b'Bearer realm="ax-cluster"')
             scope.setdefault("state", {})["node_ticket_grant"] = grant

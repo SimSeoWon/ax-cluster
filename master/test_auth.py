@@ -115,8 +115,8 @@ def main() -> int:
         for method, path, credential, expected in (
             ("GET", base, grant, 200),
             ("POST", base + "/note", grant, 200),
-            ("POST", base + "/start", grant, 403),
-            ("POST", base + "/submit", grant, 403),
+            ("POST", base + "/start", grant, 200),
+            ("POST", base + "/submit", grant, 200),
             ("GET", f"{NODE_TICKET_PATH}/1038", grant, 403),
             ("POST", f"{NODE_TICKET_PATH}/1038/submit", grant, 403),
             ("PATCH", base, grant, 403),
@@ -135,7 +135,7 @@ def main() -> int:
     with patch("master.auth.time.time", return_value=200):
         status, _, _ = asyncio.run(call(app, base, headers=auth_headers(grant)))
         check("만료된 발주 권한 거절", status == 401, str(status))
-    check("발급 때 서명된 워커·배정이 앱에 전달된다", seen == [("worker-2", assignment_id)] * 2)
+    check("발급 때 서명된 워커·배정이 앱에 전달된다", seen == [("worker-2", assignment_id)] * 4)
 
     print("[1] 토큰 생성·적재")
     p = _TMP / "cfg" / "token"

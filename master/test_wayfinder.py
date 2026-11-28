@@ -1183,6 +1183,9 @@ def test_distributed_dispatch_preflight():
         check("발주 예약: 점유 중인 워커를 빼고 두 번째 등록 워커 선택",
               first["ok"] and second["ok"] and first["worker"].host != second["worker"].host)
         check("발주 예약: 같은 노드를 거듭 발주할 수 없다", not duplicate["ok"], str(duplicate))
+        check("#1050 발주 예약은 지휘자 모드를 배정의 작성 계열로 남긴다",
+              first["record"].get("family") == "codex" and second["record"].get("family") == "codex",
+              str(first["record"]))
         test_master_token = "test-master-" + "a" * auth.MIN_TOKEN_LEN
 
         def run_ticket(worker, ticket, *, assignment_id, grant, mode, on_exit):

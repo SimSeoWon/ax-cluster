@@ -95,7 +95,8 @@ def test_models_carry_the_tag() -> None:
             if n.endswith("Req") and hasattr(getattr(M, n), "model_fields")}
     without = sorted(n for n in need if "project" not in getattr(M, n).model_fields)
     check("[중요] 태그 없는 모델은 명시된 OPEN 표면에 한한다",
-          without == ["AdminResetReq", "DirectiveReq", "NodeTicketNoteReq"], str(without))
+          without == ["AdminResetReq", "DirectiveReq", "NodeTicketNoteReq", "NodeTicketStartReq",
+                      "NodeTicketSubmitReq"], str(without))
     check("기본값은 빈 문자열이다 (하위 호환 — 안 보내면 마운트로 해석)",
           M.ClaimReq(worker_id="w").project == "")
 
@@ -702,6 +703,136 @@ def test_wayfinder_node_ticket_live() -> None:
                   current.status_code == 200 and len(notes) == 2 and "worker-3" in notes[-1]["notes"], current.text)
 
 
+def test_wayfinder_node_start_submit_live() -> None:
+    """`#1050` T2 — 실제 앱·실제 git 저장소로 원격 착수·결과 제출을 돈다. Redmine 만 대역이다.
+
+    작성 계열은 배정의 family(발주 지휘자 모드)에서만 오고, 커밋 범위는 서버가 저장소에서 직접 구한다.
+    """
+    import subprocess
+    import tempfile
+    import time
+    from unittest.mock import patch
+
+    from client.runtime import client_mcp
+    from master import issue_infra, issue_lock, plan_block, redmine, spec_block
+    from master.auth import auth_headers, issue_node_ticket_grant
+
+    iid, root_id = 1050, 1008
+    base = f"/api/v1/wayfinder/issue/{iid}"
+    spec = "\n".join(f"## {h}\n승인된 내용" for h in ("문제", "분류", "관측", "범위", "완료 조건", "열린 결정"))
+    approved = plan_block.append(
+        spec_block.put(f"노드\n\n<!-- ax:node v=1 root={root_id} type=작업 -->\n", spec),
+        [plan_block.IssuePlanTask("T1", "대기", "구현")],
+        checklist=[plan_block.IssuePlanCheck("C1", "미확인", "검사")])
+    state = {"description": approved}
+    notes = []
+
+    def sender(method, url, payload=None):
+        if method == "PUT":
+            assert set(payload["issue"]) == {"notes"}, payload
+            notes.append(payload["issue"]["notes"])
+            return {}
+        return {"issue": {"id": iid, "parent": {"id": root_id}, "description": state["description"],
+                          "journals": []}}
+
+    def run(*args, cwd):
+        return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+
+    with tempfile.TemporaryDirectory(prefix="ax-node-start-test-") as tmp:
+        tmp = Path(tmp)
+        bare, work = tmp / "repo.git", tmp / "work"
+        run("init", "--bare", "-b", "main", str(bare), cwd=tmp)
+        run("clone", str(bare), str(work), cwd=tmp)
+        for key, value in (("user.name", "t"), ("user.email", "t@example.invalid")):
+            run("config", key, value, cwd=work)
+        (work / "a.txt").write_text("a\n")
+        run("add", "a.txt", cwd=work)
+        run("commit", "-m", "기준", cwd=work)
+        run("push", "origin", "HEAD:main", cwd=work)
+        main_tip = run("rev-parse", "HEAD", cwd=work)
+        git = lambda *a: issue_infra._run_git(str(bare), *a)
+
+        c, master, _, _ = _live_queue(tmp)
+        lock_root = tmp / "node-locks"
+
+        def grant_for(record):
+            return auth_headers(issue_node_ticket_grant(master, iid, record["worker"],
+                                                        assignment_id=record["assignment_id"],
+                                                        expires_at=int(time.time()) + 60))
+
+        with patch.object(issue_lock, "default_root", return_value=lock_root), \
+                patch.object(issue_infra, "span_source", return_value=(git, str(bare), "main")), \
+                patch.object(redmine, "api_key", return_value="test-key"), \
+                patch.object(redmine, "_request", side_effect=lambda method, url, _key, payload=None, **kw:
+                             sender(method, url, payload)):
+            bare_rec = issue_lock.reserve_node(lock_root, iid, root_id=root_id, worker="worker-2")["record"]
+            res = c.post(base + "/start", headers=grant_for(bare_rec), json={})
+            check("#1050 작성 계열 없는 배정은 착수 거절 · 노트 0",
+                  res.status_code == 409 and "family" in res.text and not notes, res.text)
+            for to in (issue_lock.NODE_REVIEW, "finished"):
+                issue_lock.advance_node_assignment(lock_root, iid, assignment_id=bare_rec["assignment_id"],
+                                                   to=to, by="master", why="검사 정리")
+
+            rec = issue_lock.reserve_node(lock_root, iid, root_id=root_id, worker="worker-2",
+                                          family="codex")["record"]
+            H = grant_for(rec)
+            api = lambda method, path, payload: c.request(method, path, headers=H, json=payload).json()
+            res = c.post(base + "/start", headers=H, json={"family": "claude"})
+            check("#1050 착수 입력에 자기신고 계열을 실으면 거절", res.status_code == 422 and not notes, res.text)
+            state["description"] = spec_block.put(f"<!-- ax:node v=1 root={root_id} type=작업 -->\n", spec)
+            res = c.post(base + "/start", headers=H, json={})
+            check("#1050 승인 플랜이 없으면 착수 거절 · 노트 0",
+                  res.status_code == 409 and "plan" in res.text and not notes, res.text)
+            state["description"] = approved
+
+            res = c.post(base + "/submit", headers=H, json={"summary": "검사 통과"})
+            check("#1050 착수 전 제출 거절", res.status_code == 409 and not notes, res.text)
+            started = client_mcp.dispatch_tool("wayfinder_node_start", {"issue_id": iid}, api=api)
+            branch = f"wayfinder/{root_id}/n{iid}"
+            check("#1050 착수: 서버가 정한 브랜치·main 기준 리비전·배정 계열",
+                  started == {"ok": True, "already": False, "issue_id": iid, "branch": branch,
+                              "start_rev": main_tip, "family": "codex"} and len(notes) == 1
+                  and "작성 계열 codex" in notes[0] and branch in notes[0], str(started))
+            again = client_mcp.dispatch_tool("wayfinder_node_start", {"issue_id": iid}, api=api)
+            check("#1050 같은 배정의 재착수는 처음 값 · 노트 추가 0",
+                  again["already"] and again["start_rev"] == main_tip and len(notes) == 1, str(again))
+
+            res = c.post(base + "/submit", headers=H, json={"summary": "검사 통과"})
+            check("#1050 브랜치를 push 하기 전 제출 거절", res.status_code == 409 and len(notes) == 1, res.text)
+            run("switch", "-c", branch, main_tip, cwd=work)
+            for name in ("b.txt", "c.txt"):
+                (work / name).write_text(name)
+                run("add", name, cwd=work)
+                run("commit", "-m", f"{name} 추가", cwd=work)
+            run("push", "origin", branch, cwd=work)
+            want = run("rev-list", "--reverse", f"{main_tip}..HEAD", cwd=work).split()
+            res = c.post(base + "/submit", headers=H, json={"summary": "검사 통과", "hashes": want})
+            check("#1050 제출에 자기신고 해시를 실으면 거절", res.status_code == 422 and len(notes) == 1, res.text)
+            out = client_mcp.dispatch_tool("wayfinder_node_submit",
+                                           {"issue_id": iid, "summary": "test_x 3/3 rc0"}, api=api)
+            stored = issue_lock.node_assignments(lock_root)[iid]
+            check("#1050 제출: 범위를 저장소에서 구하고 배정 결과에 계열·범위·요약을 남긴다",
+                  out.get("hashes") == want and out.get("end") == want[-1] and out.get("family") == "codex"
+                  and stored["result"]["hashes"] == want and stored["result"]["authors"] == ["codex"]
+                  and stored["result"]["summary"] == "test_x 3/3 rc0" and stored["state"] == issue_lock.NODE_RUNNING
+                  and len(notes) == 2 and "커밋 2건" in notes[1] and "test_x 3/3 rc0" in notes[1], str(out))
+
+            for to in (issue_lock.NODE_REVIEW, issue_lock.NODE_REWORK):
+                issue_lock.advance_node_assignment(lock_root, iid, assignment_id=rec["assignment_id"],
+                                                   to=to, by="master", why="검사")
+            new = issue_lock.reserve_node(lock_root, iid, root_id=root_id, worker="worker-3",
+                                          family="claude")["record"]
+            stale = [c.post(base + suffix, headers=H, json=body).status_code
+                     for suffix, body in (("/start", {}), ("/submit", {"summary": "늦은 제출"}))]
+            check("#1050 재배정 뒤 이전 권한의 착수·제출은 쓰기 0",
+                  stale == [403, 403] and len(notes) == 2, str(stale))
+            H3 = grant_for(new)
+            res = c.post(base + "/start", headers=H3, json={})
+            check("#1050 재작업 착수는 남은 노드 브랜치의 main 갈림점에서 이어 쓴다",
+                  res.status_code == 200 and res.json()["start_rev"] == main_tip
+                  and res.json()["family"] == "claude" and len(notes) == 3, res.text)
+
+
 if __name__ == "__main__":
     for fn in (test_server_actually_compiles, test_every_route_declared, test_undeclared_is_an_error,
                test_models_carry_the_tag, test_reject_shape,
@@ -709,7 +840,8 @@ if __name__ == "__main__":
                test_gates_are_actually_wired, test_claim_filters_by_project,
                test_untagged_is_rejected_on_write_surfaces, test_path_normalization,
                test_senders_are_wired, test_usage_route_live, test_ledger_routes_live, test_issue_routes_declared,
-               test_issue_routes_live, test_wayfinder_node_ticket_live):
+               test_issue_routes_live, test_wayfinder_node_ticket_live,
+               test_wayfinder_node_start_submit_live):
         fn()
     print(f"{'OK' if not FAIL else 'FAIL'} test_tagging: {PASS}/{PASS + FAIL} 통과")
     sys.exit(1 if FAIL else 0)

@@ -264,11 +264,45 @@ def t_node_write_guard(tmp):
         check("쓰기 종료 뒤 새 배정으로 교체", second["ok"] and second["record"]["worker"] == "b")
 
 
+def t_node_start_submit(tmp: Path):
+    """`#1050` T2 — 착수·제출은 현재 실행 배정·같은 워커에만 쓰고, 계열은 배정에서만 온다."""
+    check("알 수 없는 작성 계열 예약 거절",
+          IL.reserve_node(tmp, 1050, root_id=1008, worker="a", family="agy")["reason"] == "invalid")
+    rec = IL.reserve_node(tmp, 1050, root_id=1008, worker="a", family="claude")["record"]
+    aid, rev = rec["assignment_id"], "1" * 40
+    check("다른 워커 이름의 착수 거절",
+          IL.start_node_work(tmp, 1050, assignment_id=aid, worker="b", start_rev=rev,
+                             branch="wayfinder/1008/n1050")["reason"] == "stale_assignment")
+    check("착수 전 제출 거절",
+          IL.submit_node_result(tmp, 1050, assignment_id=aid, worker="a", end="2" * 40, hashes=["2" * 40],
+                                subjects=["s"], summary="ok")["reason"] == "not_started")
+    started = IL.start_node_work(tmp, 1050, assignment_id=aid, worker="a", start_rev=rev,
+                                 branch="wayfinder/1008/n1050")
+    again = IL.start_node_work(tmp, 1050, assignment_id=aid, worker="a", start_rev="3" * 40, branch="x")
+    check("두 번째 착수는 처음 기록 유지", started["ok"] and again["already"]
+          and again["record"]["start_rev"] == rev and again["record"]["branch"] == "wayfinder/1008/n1050")
+    check("빈 요약 제출 거절",
+          IL.submit_node_result(tmp, 1050, assignment_id=aid, worker="a", end="2" * 40, hashes=["2" * 40],
+                                subjects=["s"], summary=" ")["reason"] == "invalid")
+    for n in (1, 2):
+        got = IL.submit_node_result(tmp, 1050, assignment_id=aid, worker="a", end=str(n + 1) * 40,
+                                    hashes=[str(n + 1) * 40], subjects=["s"], summary=f"r{n}")
+    stored = IL.node_assignments(tmp)[1050]
+    check("다시 제출하면 마지막 제출이 기준 · 계열은 배정 값",
+          got["ok"] and stored["submissions"] == 2 and stored["result"]["summary"] == "r2"
+          and stored["result"]["authors"] == ["claude"] and stored["result"]["base"] == rev)
+    IL.advance_node_assignment(tmp, 1050, assignment_id=aid, to=IL.NODE_REVIEW, by="master", why="종료")
+    check("검수 대기로 넘어간 배정은 제출 거절",
+          IL.submit_node_result(tmp, 1050, assignment_id=aid, worker="a", end="4" * 40, hashes=["4" * 40],
+                                subjects=["s"], summary="late")["reason"] == "stale_assignment")
+
+
 def main() -> int:
     for fn in (t_acquire_free, t_same_issue_already, t_busy_names_holder, t_pause_cycle,
                t_pause_refusals, t_release, t_corrupt_not_overwritten,
                t_concurrent_processes, t_concurrent_threads, t_history_cap, t_note_author,
-               t_node_assignments, t_node_assignment_races, t_node_write_guard):
+               t_node_assignments, t_node_assignment_races, t_node_write_guard,
+               t_node_start_submit):
         run(fn)
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_issue_lock: {PASS}/{total} 통과")

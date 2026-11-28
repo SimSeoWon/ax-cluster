@@ -29,7 +29,7 @@ from .models import (
     ClaimReq, HeartbeatReq, SubmitReq, SubmitFailReq, VerifyReq, CancelReq,
     AdminResetReq,
     WorkerPollReq, DirectiveReq, WorkPatchReq, AntiPatternNotifyReq, RedmineNoteReq,
-    NodeTicketNoteReq, RedmineIssueReq, RedmineLinkCommitReq, RedmineVersionReq, RedmineWikiReq,
+    NodeTicketNoteReq, NodeTicketStartReq, NodeTicketSubmitReq, RedmineIssueReq, RedmineLinkCommitReq, RedmineVersionReq, RedmineWikiReq,
     RedmineVersionPatchReq, RedmineVersionDeleteReq,
     WriterSignalReq, HistoryReq, AliasReq, NotAClassReq, RecipeSearchReq, \
     HistorySearchReq, FixStatusReq, FixCandidatesDismissReq, UsageReq
@@ -813,6 +813,94 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
             if result.startswith("[주의]"):
                 raise HTTPException(502, "node ticket note update failed")
             return {"ok": True, "issue_id": issue_id, "worker": worker}
+
+    # `#1050` T2 — 현재 배정의 원격 착수·결과 제출. 작성 계열은 발주 기록(배정의 family), 범위는 Gitea 에서
+    # 서버가 직접 구한다(`#933` 과 같은 이유 — 보고된 해시를 믿지 않는다). 둘 다 노드 잠금 안에서 쓴다.
+    def node_git():
+        from .. import issue_infra
+        from ..work.runner import SELF_PROJECT
+
+        try:
+            git, _, main = issue_infra.span_source(SELF_PROJECT)
+        except issue_infra.SpanError:
+            raise HTTPException(502, "node repository lookup failed")
+        return git, main
+
+    def node_branch(assignment) -> str:
+        return f"wayfinder/{assignment['root_id']}/n{assignment['issue_id']}"
+
+    @app.post("/api/v1/wayfinder/issue/{issue_id}/start")
+    def node_ticket_start_ep(request: Request, issue_id: int, req: NodeTicketStartReq):
+        from .. import issue_lock, wayfinder_dispatch
+        from ..redmine import update_issue
+
+        with node_ticket(request, issue_id) as (lock_root, assignment, issue):
+            if assignment.get("start_rev"):
+                return {"ok": True, "already": True, "issue_id": issue_id, "branch": assignment["branch"],
+                        "start_rev": assignment["start_rev"], "family": assignment.get("family", "")}
+            problem = wayfinder_dispatch.plan_problem(issue, rework=bool(assignment.get("rework")))
+            if problem:
+                raise HTTPException(409, f"approved plan required: {problem}")
+            if assignment.get("family") not in issue_lock.NODE_FAMILIES:
+                raise HTTPException(409, "assignment has no conductor family")
+            git, main = node_git()
+            branch = node_branch(assignment)
+            rc, existing = git("rev-parse", "--verify", "--quiet", f"refs/heads/{branch}^{{commit}}")
+            if rc == 0:   # 재작업 — 남아 있는 노드 브랜치를 이어 쓴다. 기준은 main 과의 갈림점이다
+                rc, start_rev = git("merge-base", f"refs/heads/{main}", existing.strip())
+            else:
+                rc, start_rev = git("rev-parse", "--verify", f"refs/heads/{main}^{{commit}}")
+            start_rev = start_rev.strip().lower()
+            if rc != 0 or len(start_rev) != 40:
+                raise HTTPException(502, "node base revision lookup failed")
+            result = update_issue(issue_id, notes=(
+                f"웨이파인더 원격 착수 — 워커 {assignment['worker']} · 배정 {assignment['assignment_id']} · "
+                f"작성 계열 {assignment['family']} · 기준 `{start_rev[:12]}` · 브랜치 `{branch}`"))
+            if result.startswith("[주의]"):
+                raise HTTPException(502, "node ticket note update failed")
+            got = issue_lock.start_node_work(lock_root, issue_id, assignment_id=assignment["assignment_id"],
+                                             worker=assignment["worker"], start_rev=start_rev, branch=branch)
+            if not got["ok"]:
+                raise HTTPException(409, got["why"])
+            rec = got["record"]
+            return {"ok": True, "already": got["already"], "issue_id": issue_id, "branch": rec["branch"],
+                    "start_rev": rec["start_rev"], "family": rec["family"]}
+
+    @app.post("/api/v1/wayfinder/issue/{issue_id}/submit")
+    def node_ticket_submit_ep(request: Request, issue_id: int, req: NodeTicketSubmitReq):
+        from .. import issue_infra, issue_lock
+        from ..redmine import update_issue
+
+        summary = req.summary.strip()
+        if not summary:
+            raise HTTPException(422, "summary must not be blank")
+        with node_ticket(request, issue_id) as (lock_root, assignment, _):
+            if not assignment.get("start_rev"):
+                raise HTTPException(409, "node work has not been started")
+            git, _ = node_git()
+            branch = assignment["branch"]
+            rc, end = git("rev-parse", "--verify", "--quiet", f"refs/heads/{branch}^{{commit}}")
+            end = end.strip().lower()
+            if rc != 0 or len(end) != 40:
+                raise HTTPException(409, f"branch {branch} is not pushed")
+            try:
+                span = issue_infra.verify_span(git, base=assignment["start_rev"], end=end, branch=branch)
+            except issue_infra.SpanError as error:
+                raise HTTPException(409 if error.kind == "mismatch" else 502, f"node range rejected: {error.why}")
+            commits = "\n".join(f"- `{h[:12]}` {s}" for h, s in zip(span["hashes"], span["subjects"]))
+            result = update_issue(issue_id, notes=(
+                f"웨이파인더 결과 제출 — 워커 {assignment['worker']} · 배정 {assignment['assignment_id']} · "
+                f"작성 계열 {assignment['family']} · 범위 `{assignment['start_rev'][:12]}..{end[:12]}` "
+                f"(커밋 {len(span['hashes'])}건) · 브랜치 `{branch}`\n{commits}\n\n검증 요약(워커):\n{summary}"))
+            if result.startswith("[주의]"):
+                raise HTTPException(502, "node ticket note update failed")
+            got = issue_lock.submit_node_result(
+                lock_root, issue_id, assignment_id=assignment["assignment_id"], worker=assignment["worker"],
+                end=end, hashes=span["hashes"], subjects=span["subjects"], summary=summary)
+            if not got["ok"]:
+                raise HTTPException(409, got["why"])
+            return {"ok": True, "issue_id": issue_id, "branch": branch, "base": assignment["start_rev"],
+                    "end": end, "hashes": span["hashes"], "family": assignment["family"]}
 
     @app.post("/api/v1/redmine/issue")
     def redmine_create_issue_ep(req: RedmineIssueReq):

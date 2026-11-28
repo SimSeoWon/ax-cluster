@@ -1523,6 +1523,17 @@ TOOLS = [
      "inputSchema": {"type": "object", "required": ["issue_id", "notes"], "additionalProperties": False,
                      "properties": {"issue_id": {"type": "integer", "minimum": 1},
                                     "notes": {"type": "string", "minLength": 1}}}},
+    {"name": "wayfinder_node_start",
+     "description": "배정받은 웨이파인더 노드 일감의 원격 착수를 기록하고 작업 브랜치·기준 리비전을 받는다. "
+                    "승인된 플랜이 있어야 통과한다. 같은 배정에서 다시 부르면 처음 값을 돌려준다.",
+     "inputSchema": {"type": "object", "required": ["issue_id"], "additionalProperties": False,
+                     "properties": {"issue_id": {"type": "integer", "minimum": 1}}}},
+    {"name": "wayfinder_node_submit",
+     "description": "배정받은 웨이파인더 노드 일감의 결과를 제출한다. 작업 브랜치를 push 한 뒤 부른다 — "
+                    "커밋 범위는 마스터가 저장소에서 직접 구하고, summary 에는 검증 결과 요약을 적는다.",
+     "inputSchema": {"type": "object", "required": ["issue_id", "summary"], "additionalProperties": False,
+                     "properties": {"issue_id": {"type": "integer", "minimum": 1},
+                                    "summary": {"type": "string", "minLength": 1}}}},
     {"name": "redmine_meta",
      "description": "이 레드마인의 상태·트래커·우선순위·마일스톤 카탈로그. 상태 이름을 추측하지 "
                     "말고 여기서 확인한다 — 이 환경은 한국어이고 「반려」에 해당하는 상태가 없다. "
@@ -2127,22 +2138,31 @@ def tool_manage_project(api, name: str, args: dict) -> dict:
     return api("POST", MANAGEMENT_ROUTES[name], payload)
 
 
+# 노드 티켓 도구 → (8101 경로 접미사, 본문 키). 접미사가 없으면 GET 조회다 (`#1037`·`#1050` T2).
+NODE_TICKET_TOOLS = {
+    "wayfinder_get_node_ticket": ("", ""),
+    "wayfinder_append_node_note": ("note", "notes"),
+    "wayfinder_node_start": ("start", ""),
+    "wayfinder_node_submit": ("submit", "summary"),
+}
+
+
 def dispatch_tool(name: str, args: dict, *, api=None, papi=None, cache=None,
                   root: Path | None = None) -> dict:
     """도구 실행. `api`/`papi`/`cache` 주입은 테스트 자리 — 실전은 config·token 에서 만든다."""
     args = args or {}
-    if name in ("wayfinder_get_node_ticket", "wayfinder_append_node_note"):
+    if name in NODE_TICKET_TOOLS:
         issue_id = args.get("issue_id")
-        append = name == "wayfinder_append_node_note"
-        if (set(args) != ({"issue_id", "notes"} if append else {"issue_id"})
+        suffix, text_key = NODE_TICKET_TOOLS[name]
+        if (set(args) != ({"issue_id", text_key} if text_key else {"issue_id"})
                 or type(issue_id) is not int or issue_id <= 0):
             raise ClientError("노드 일감 번호와 도구에 정의된 인자만 전달한다")
-        notes = args.get("notes")
-        if append and (not isinstance(notes, str) or not notes.strip()):
-            raise ClientError("검증 노트가 비었다")
-        path = f"/api/v1/wayfinder/issue/{issue_id}" + ("/note" if append else "")
-        method = "POST" if append else "GET"
-        payload = {"notes": notes} if append else None
+        text = args.get(text_key) if text_key else None
+        if text_key and (not isinstance(text, str) or not text.strip()):
+            raise ClientError("검증 노트가 비었다" if text_key == "notes" else "검증 요약이 비었다")
+        path = f"/api/v1/wayfinder/issue/{issue_id}" + (f"/{suffix}" if suffix else "")
+        method = "POST" if suffix else "GET"
+        payload = ({text_key: text} if text_key else {}) if suffix else None
         if api is not None:
             return api(method, path, payload)
         grant = os.environ.get("AX_NODE_TICKET_GRANT", "").strip()

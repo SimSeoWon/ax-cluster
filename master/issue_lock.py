@@ -23,6 +23,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import re
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -34,6 +35,7 @@ LOCK_NAME = ".issue_lock.lock"
 HISTORY_CAP = 50
 RELEASE_OPS = ("complete", "cancel", "finish")
 NODE_RUNNING, NODE_REVIEW, NODE_REWORK = "running", "review", "rework"
+NODE_FAMILIES = ("codex", "claude")   # `#1050` T2 — 노드 배정의 작성 계열(발주 지휘자 모드)
 
 
 class IssueLockError(RuntimeError):
@@ -314,11 +316,17 @@ def release(root, issue_id, *, op: str, by: str = "", why: str = "", logf=None) 
     return {"ok": True, "issue_id": n, "op": op, "was": was, "record": dict(rec), "log": [line]}
 
 
-def reserve_node(root, issue_id: int, *, root_id: int, worker: str, logf=None) -> dict:
-    """마스터가 발주 조건을 확인한 노드를 예약한다. 발주·SSH 호출은 이 함수 밖에서 한다."""
+def reserve_node(root, issue_id: int, *, root_id: int, worker: str, family: str = "", logf=None) -> dict:
+    """마스터가 발주 조건을 확인한 노드를 예약한다. 발주·SSH 호출은 이 함수 밖에서 한다.
+
+    `family` (`#1050` T2) 는 발주한 워커 지휘자 모드(`codex`/`claude`)다 — 작성 계열은 서버가 정한 이 값에서만
+    온다(워커 자기신고를 받지 않는다). 비우면 기록하지 않고, 그 배정은 원격 착수가 거절된다.
+    """
     if (type(issue_id) is not int or type(root_id) is not int or min(issue_id, root_id) <= 0
             or issue_id == root_id or not isinstance(worker, str) or not worker.strip()):
         return _refuse(logf, issue_id, "reserve_node", "invalid", "노드 번호·Root 번호·워커가 필요하다")
+    if family not in ("",) + NODE_FAMILIES:
+        return _refuse(logf, issue_id, "reserve_node", "invalid", f"작성 계열은 {'/'.join(NODE_FAMILIES)} 중 하나다")
     worker = worker.strip()
     with node_guard(root, issue_id), _locked(root):
         data = _load(root)
@@ -336,6 +344,10 @@ def reserve_node(root, issue_id: int, *, root_id: int, worker: str, logf=None) -
                                holder=rec["issue_id"])
         rec = {"issue_id": issue_id, "root_id": root_id, "worker": worker, "assignment_id": uuid4().hex,
                "state": NODE_RUNNING, "updated": _now()}
+        if family:
+            rec["family"] = family
+        if prev:
+            rec["rework"] = True
         nodes[key] = rec
         _record(data, "reserve_node", issue_id, worker, rec["assignment_id"])
         _save(root, data)
@@ -375,3 +387,62 @@ def _advance_node_assignment(root, issue_id: int, *, assignment_id: str, to: str
         _record(data, f"node_{to}", issue_id, by, why)
         _save(root, data)
     return {"ok": True, "record": updated, "log": [_emit(logf, issue_id, "advance_node", to)]}
+
+
+def _current_running(data, issue_id: int, assignment_id: str, worker: str):
+    rec = data.get("node_assignments", {}).get(str(issue_id))
+    if (rec is None or rec["assignment_id"] != assignment_id or rec["worker"] != worker
+            or rec["state"] != NODE_RUNNING):
+        return None
+    return rec
+
+
+def start_node_work(root, issue_id: int, *, assignment_id: str, worker: str, start_rev: str, branch: str,
+                    logf=None) -> dict:
+    """현재 배정의 원격 착수(`#1050` T2) — 기준 리비전·브랜치를 배정에 남긴다. 호출자가 `node_guard` 를 쥔다.
+
+    같은 배정의 두 번째 착수는 처음 값을 그대로 돌려준다(`already`). 작성 계열이 없는 배정은 거절한다.
+    """
+    if not re.fullmatch(r"[0-9a-f]{40}", start_rev or "") or not branch:
+        return _refuse(logf, issue_id, "node_start", "invalid", "기준 리비전(40자리)과 브랜치가 필요하다")
+    with _locked(root):
+        data = _load(root)
+        rec = _current_running(data, issue_id, assignment_id, worker)
+        if rec is None:
+            return _refuse(logf, issue_id, "node_start", "stale_assignment", "현재 실행 중인 배정이 아니다")
+        if rec.get("family") not in NODE_FAMILIES:
+            return _refuse(logf, issue_id, "node_start", "no_family", "배정에 작성 계열이 없다 — 발주 기록을 확인한다")
+        if rec.get("start_rev"):
+            return {"ok": True, "already": True, "record": dict(rec),
+                    "log": [_emit(logf, issue_id, "node_start", "이미 착수 — 처음 기록 유지")]}
+        rec.update(start_rev=start_rev, branch=branch, started_at=_now(), updated=_now())
+        _record(data, "node_start", issue_id, worker, f"{assignment_id} {branch} {start_rev[:12]}")
+        _save(root, data)
+    return {"ok": True, "already": False, "record": dict(rec),
+            "log": [_emit(logf, issue_id, "node_start", f"{worker} · {branch} · 기준 {start_rev[:12]}")]}
+
+
+def submit_node_result(root, issue_id: int, *, assignment_id: str, worker: str, end: str, hashes, subjects,
+                       summary: str, logf=None) -> dict:
+    """현재 배정의 결과 제출(`#1050` T2). 범위는 호출자가 git 에서 구한 값이다. 호출자가 `node_guard` 를 쥔다.
+
+    실행 중인 배정에서는 다시 제출하면 마지막 제출이 기준이 된다(`submissions` 로 횟수를 남긴다).
+    """
+    if not re.fullmatch(r"[0-9a-f]{40}", end or "") or not hashes or len(hashes) != len(subjects) \
+            or not isinstance(summary, str) or not summary.strip():
+        return _refuse(logf, issue_id, "node_submit", "invalid", "끝 커밋·해시·제목·검증 요약이 필요하다")
+    with _locked(root):
+        data = _load(root)
+        rec = _current_running(data, issue_id, assignment_id, worker)
+        if rec is None:
+            return _refuse(logf, issue_id, "node_submit", "stale_assignment", "현재 실행 중인 배정이 아니다")
+        if not rec.get("start_rev"):
+            return _refuse(logf, issue_id, "node_submit", "not_started", "원격 착수 기록이 없다")
+        result = {"base": rec["start_rev"], "end": end, "branch": rec["branch"], "hashes": list(hashes),
+                  "subjects": list(subjects), "authors": [rec["family"]], "summary": summary.strip(),
+                  "at": _now()}
+        rec.update(result=result, submissions=int(rec.get("submissions") or 0) + 1, updated=_now())
+        _record(data, "node_submit", issue_id, worker, f"{assignment_id} {end[:12]} {len(hashes)}건")
+        _save(root, data)
+    return {"ok": True, "record": dict(rec),
+            "log": [_emit(logf, issue_id, "node_submit", f"{worker} · {end[:12]} · 커밋 {len(hashes)}건")]}

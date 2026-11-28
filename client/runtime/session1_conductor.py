@@ -177,9 +177,13 @@ SELF_REPO_NOTE = (
 NODE_TICKET_INSTRUCTION = (
     "Read Wayfinder ticket {issue_id} using ax-client wayfinder_get_node_ticket. "
     "Use its approved specification, tasks, and verification checklist as the work instructions. "
-    "Make code changes only in the assigned issue worktree. If a required worktree or permission "
-    "is missing, record the blocker. Use wayfinder_append_node_note on the same ticket to record "
-    "what you did, each verification result, and any remaining problems and changes needed. "
+    "Call wayfinder_node_start for the ticket before changing code; it returns branch and start_rev. "
+    "Run git fetch origin. If origin has that branch, switch to it; otherwise create it at start_rev. "
+    "Make code changes only on that branch, commit them, and push the branch to origin. "
+    "Then call wayfinder_node_submit with a summary of each verification result. "
+    "Afterwards switch the checkout back to main. If a step or permission is missing, record the blocker. "
+    "Use wayfinder_append_node_note on the same ticket to record what you did and any remaining "
+    "problems and changes needed. Do not change plan task states; report them in notes. "
     "Keep the ticket open for review. Keep the ticket grant out of notes and output."
 )
 
