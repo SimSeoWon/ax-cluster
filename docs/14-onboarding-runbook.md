@@ -216,6 +216,14 @@ AX_PROJECTS_ROOT=$PWD .venv/bin/python -m master.client update --all   # 등록 
 `check`는 선언된 관리 훅 항목이 실제 등록됐는지 대조하며, 등록 누락이나 깨진 JSON은 실패다.
 파일 해시가 같다는 사실만으로 훅이 실행된다고 판단하지 않는다.
 
+`#1040`의 일감 인터뷰·플랜용 관리 훅은 일반 프로젝트와 `kind: code` 프로젝트의 요청자에게
+배달·등록된다. `plan`과 `check`에서 `.claude/settings.json`의 `UserPromptSubmit`에
+`prompt_ledger.py`, `Stop`에 `stop_gate.py`가 등록되는지 확인한다.
+`prompt_ledger.py`는 사용자의 실제 입력 원문을 마스터 입력 장부에 기록한다. 표준 출력은 없으며
+기록에 실패해도 입력은 통과한다. `stop_gate.py`는 관문이 켜진 프로젝트에서 해당 일감을 다룬
+세션에 적용된다. 서버가 `resume`으로 판정했는데 사유 없이 턴을 끝내면 종료를 막고,
+서버 판정에 실패하면 통과시킨다.
+
 `check`는 그 밖에도 네 가지를 대조한다.
 - Windows에서는 Python 절대경로를 확인한다. 경로를 못 찾았으면 Codex 로컬 도구를 실행할 수 없으므로 실패다.
 - 워커 클론이 원격에서 지운 브랜치의 원격추적 ref를 남기지 않는지 본다(`fetch_prune`, `#787`).

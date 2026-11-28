@@ -225,8 +225,9 @@ ax-cluster/
 │   ├── verdict.py              층2 판정 계약 (fail-closed)
 │   ├── layer3_verify.py        층3 게이트 — UE5 빌드·RunTests 로그
 │   ├── wayfinder.py            웨이파인더 맵 코어 (#982·#1000) — Root 지도·Frontier·노드 제안/등록·안개 편집·Root 마감
-│   ├── map_block.py            Root 본문 지도 영역(ax:map)·노드 표지(ax:node) 파서/렌더러 (#982)
-│   ├── map_diagram.py          노드 표 → blocks 깊이별 ASCII 박스 다이어그램(<pre>) 생성 (#982)
+│   ├── map_block.py            Root 본문 지도 영역(ax:map)·노드 표지(ax:node) 파서/렌더러. 일감 번호와 예정 키 지원 (#982·#1036)
+│   ├── map_diagram.py          노드 표의 선행 관계 깊이별 ASCII 박스 다이어그램(<pre>) 생성 (#982)
+│   ├── wayfinder_dispatch.py   웨이파인더 분산 사이클에서 발주할 노드와 워커 선택
 │   ├── interview.py            착수 전 인터뷰 단계 판정·분류별 가이드·wayfinder 발동 질문 (#960·#982)
 │   ├── spec_block.py           이슈 본문 스펙 영역(ax:spec, #911 6항목) 읽기/쓰기 (#960)
 │   ├── plan_proposal.py        플랜 제안 → 동의 → 등록 및 자율성(autonomy)·완료 체크리스트 (#963)
@@ -252,7 +253,7 @@ ax-cluster/
 |---|---|---|
 | 작업 큐 | 8101 | `ax-task-queue.service` |
 | 추론 브로커 | 8102 | `ax-broker.service` |
-| 프로젝트 레지스트리 (MCP) + **웹 UI** | 8103 | `ax-projects.service` (`/`·`/ontology`·`/cluster`·`/commit-flow`·`/rag-logs`·`/reviews`·`/usage`·`/onboarding`) |
+| 프로젝트 레지스트리 (MCP) + **웹 UI** | 8103 | `ax-projects.service` (`/`·`/ontology`·`/cluster`·`/commit-flow`·`/rag-logs`·`/reviews`·`/reports`·`/usage`·`/onboarding`) |
 | ↳ 지휘 제어 표면 | 8103 | `/control/*` — **요청자 토큰 전용** (무인증 401 · 워커 403) |
 | 색인기 | — | `ax-indexer.path`(inotify) → `ax-indexer.service` |
 | 리뷰 큐 소비자 | — | `ax-review-queue.timer`(10분) → `ax-review-queue.service` |
@@ -335,8 +336,9 @@ journalctl -u ax-indexer -n 30 --no-pager                # push → 트윈 성�
 일감 번호(관측 연결)로 조회한다. 기간은 **로그 기록일 기준**이며, 저장 시각에 기록된 시간대의 날짜를 사용한다(현재 서버 기록은 KST, +09:00).
 상세에는 **사용자 원문 → LLM 검색 질의 → 확장·실제 검색어 → 당시 반환 결과**가 연결된다.
 한 요청의 여러 검색을 모아 볼 수 있고, 반환 순위·본문·채널 점수를 당시 스냅샷으로 확인한다(`#837`).
-각 검색의 상세 링크는 같은 요청에 연결된 검색들을 보여 준다. 선택한 검색이 관련 검색 목록의 현재
-페이지에 없으면 별도로 표시하며, 목록 건수에는 추가하지 않는다.
+상세 링크를 열면 같은 요청에 연결된 검색들을 보여 준다. 요청 ID가 없는 기록은 선택한 검색 한 건만
+표시한다. 선택한 검색이 관련 검색 목록의 현재 페이지에 없으면 별도로 표시하며, 목록 건수에는
+추가하지 않는다.
 현재 문서를 다시 검색하거나 읽지는 않는다. 이전 형식 로그는 당시 반환 본문 전체가 미수집이므로,
 보관된 결과 식별자·점수만 표시한다.
 
@@ -355,12 +357,29 @@ journalctl -u ax-indexer -n 30 --no-pager                # push → 트윈 성�
 자료를 대조한다. 현재 단계에서 검색 가중치·형태소 분석기·trigram·별칭을 자동 조정하지 않는다.
 보존·배포 후 확인 방법은 [온보딩 런북](docs/14-onboarding-runbook.md#rag-검색-로그-확인)을 참고한다.
 
+## 웨이파인더
+
+마스터 세션에서 탐색형 일감은 [`ax-wayfinder`](master/skills/ax-wayfinder/SKILL.md)로 진행한다.
+Root 지도는 목적지와 선행 조건 없이 바로 집을 수 있는 첫 노드 하나 이상으로 시작한다(`#1028`).
+지도 미리보기를 확인하고 동의한 뒤 등록한다. 이후 드러난 작업도 제안과 사용자 동의를 거쳐 지도에 붙인다.
+
+지도에 등록한 노드는 예정 키 `P1`, `P2` 등으로 표시한다(`#1036`). Frontier 노드를 선점하면 Root 직속
+Redmine 일감과 선행 `blocks` 관계를 만들고, 지도에서 예정 키와 해당 키를 가리키는 부모·선행 참조를
+일감 번호로 바꾼다. 단독 처리에서는 선점 응답의 일감 번호로 `ax-plan` 흐름을 시작한다.
+
+분산 발주에서는 `wayfinder_claim_tool`의 `prepare_only=True`로 티켓을 준비하고, 담당 없이 Frontier에
+둔 상태에서 착수 전 인터뷰로 명세·태스크·개발 완료 체크리스트를 확정한다. `wayfinder_dispatch_preview_tool`로
+대상과 예상 워커, 대기 사유를 확인한 뒤 사용자가 실제 발주를 요청하면 `wayfinder_dispatch_tool`에 요청 원문을
+전달한다. Root 마감은 모든 노드가 완료되고 안개가 모두 해소된 뒤 사용자 동의로 진행한다.
+
 ## 운영 문서 최신화
 
 등록한 README·CLAUDE·AGENTS·온보딩·인수인계 문서는 `master.doc_sync`의
 **계획 → LLM 수정안 → 검증·승인 적용**으로 갱신한다. 원문·근거·등록 목록을 대조하며
 보호 문서에는 별도 승인이 필요하다. 수정안 생성(`draft`)은 `--project`로 지정한 마운트 프로젝트에
-LLM 사용량을 기록하며, `--out`에는 아직 없는 새 파일만 지정할 수 있다(기존 파일을 덮지 않는다).
+LLM 사용량을 기록하며, `--out`에는 이미 존재하는 디렉터리 아래의 새 파일 경로를 지정한다. LLM 응답을
+해석하지 못해 응답 원문이 반환된 경우 `<출력 경로>.raw.txt`에 원문 저장을 시도한다. 두 파일 모두
+기존 파일을 덮지 않는다.
 `plan`·`draft`는 `--id`를 반복 지정해 문서를 선택하거나, `--since`·`--until`로 영향 문서 탐지의
 커밋 범위를 지정할 수 있다(`--since` 지정 시 `--until` 기본값은 HEAD).
 [등록 목록과 사용법](docs/document-sync.md)을 참고한다.
@@ -387,6 +406,7 @@ LLM 사용량을 기록하며, `--out`에는 아직 없는 새 파일만 지정�
 | `plan_start` · `interview_step` · `interview_spec` · `plan_propose` · `plan_set` · `plan_transition` · `plan_autonomy` | 착수 전 인터뷰(`ax:spec`) → 플랜 제안·동의 등록(`ax:plan`) → 태스크 상태 전이(`#826`·`#960`·`#963`) |
 | `issue_start` · `issue_finish` · `issue_pause` · `issue_cancel` | 일감 브랜치(`issue/<N>`) 시작·잠금(`#883`)·마감 추적·노드 마감 시 Root 맵 자동 갱신(`#879`·`#982`) |
 | `wayfinder_create` · `wayfinder_status` · `wayfinder_sync` · `wayfinder_propose` · `wayfinder_register` · `wayfinder_edit_propose` · `wayfinder_edit_apply` · `wayfinder_claim` · `wayfinder_verified` · `wayfinder_close` | 탐색형 큰 일감의 웨이파인더 맵(`ax-wayfinder`, `#982`·`#1000`) — Root 지도·Frontier·새 노드 제안/등록(안개 졸업·형제 중복·재검증 B)·안개/범위 밖/목적지 편집·Root 마감 사람 게이트 |
+| `wayfinder_dispatch_preview` · `wayfinder_dispatch` | 웨이파인더 분산 사이클의 발주 미리보기와 사용자 승인 발주 |
 | `rag_label` · `rag_labels` | RAG 검색 유용성 평가 라벨 기록·조회(`#855`·`#980`) |
 
 **규약**: `[대괄호]`는 **클래스에만** 쓴다. 미등록이면 마스터가 후보를 돌려주고, 작업장
