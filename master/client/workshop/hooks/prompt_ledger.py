@@ -21,7 +21,8 @@ import sys
 from pathlib import Path
 
 HTTP_TIMEOUT_SEC = 5
-REPO_CLIENT = Path(__file__).resolve().parents[3] / "client" / "runtime"
+# 이 파일은 <저장소>/master/client/workshop/hooks/ 에 있다 → parents[4] 가 저장소 루트(`#1049` — parents[3] 은 master/ 였다)
+REPO_CLIENT = Path(__file__).resolve().parents[4] / "client" / "runtime"
 
 
 def _args(argv: list[str]) -> dict:

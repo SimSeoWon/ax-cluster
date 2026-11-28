@@ -57,6 +57,60 @@ def run(root: Path, payload, mode: str = "ok", extra=(), hook: Path = HOOK) -> t
     return p, (json.loads(calls.read_text(encoding="utf-8")) if calls.is_file() else {})
 
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def t_repo_client_path(tmp: Path) -> None:
+    """[중요] `#1049` — 배달 클라가 없는 루트(마스터)에서 **저장소 클라를 실제로 불러** 8101 까지 가는가.
+
+    종전 검사는 rc 0(fail-open)만 봐서 저장소 경로 오류(parents[3])를 통과시켰다. 여기서는 진짜 저장소
+    `client/runtime/client_mcp.py` 를 쓰고, 그 클라가 읽는 `.ax/config.json` 만 가짜 8101(로컬 HTTP)로 돌려
+    **호출 기록**으로 판정한다.
+    """
+    import http.server
+    import threading
+    hits: list = []
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):                              # noqa: N802
+            body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            hits.append((self.path, json.loads(body or b"{}"), self.headers.get("Authorization", "")))
+            out = json.dumps({"ok": True, "block": False, "reason": "test"}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out)))
+            self.end_headers()
+            self.wfile.write(out)
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        r = tmp / "master-root"
+        (r / ".ax").mkdir(parents=True)
+        port = srv.server_port                          # 실제 클라 설정과 같은 모양(master.host · services)
+        (r / ".ax" / "config.json").write_text(json.dumps({"project": "AXCluster", "master": {
+            "host": "127.0.0.1", "services": {"task_queue": port, "projects": port}}}), encoding="utf-8")
+        (r / ".ax" / "token").write_text("t" * 40, encoding="utf-8")
+        env = {"PATH": "/usr/bin:/bin", "PYTHONIOENCODING": "utf-8"}
+        for hook, payload, path in (
+                (HOOK, {"prompt": "저장소 클라 실호출", "session_id": "s-repo"}, "/api/v1/interview/prompt"),
+                (STOP, {"session_id": "s-repo", "stop_hook_active": False}, "/api/v1/interview/stop")):
+            before = len(hits)
+            p = subprocess.run([sys.executable, "-I", str(hook), "--root", str(r), "--source", "claude"],
+                               input=json.dumps(payload, ensure_ascii=False), capture_output=True, text=True,
+                               env=env, timeout=30)
+            got = hits[before:]
+            check(f"[중요] #1049 {hook.name} — 저장소 클라로 가짜 8101 에 {path} 호출 기록",
+                  p.returncode == 0 and len(got) == 1 and got[0][0].startswith(path)
+                  and got[0][1].get("project") == "AXCluster" and got[0][2] == "Bearer " + "t" * 40,
+                  f"rc={p.returncode} stderr={p.stderr[:200]} hits={got}")
+    finally:
+        srv.shutdown()
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory(prefix="ax-hook-") as d:
         root = Path(d)
@@ -119,6 +173,9 @@ def main() -> int:
         bare.mkdir()
         p, _ = run(bare, {"prompt": "y"})
         check("배달 클라가 없으면 저장소 클라로(마스터) — 실패해도 rc 0", p.returncode == 0, p.stderr)
+        check("[중요] #1049 — 저장소 클라 경로가 실제로 있다", (REPO_ROOT / "client" / "runtime" / "client_mcp.py").is_file()
+              and "클라가 없다" not in p.stderr, p.stderr)
+        t_repo_client_path(root)
     total = PASS + FAIL
     print(f"{'OK' if not FAIL else 'FAIL'} test_prompt_ledger_hook: {PASS}/{total} 통과")
     return 1 if FAIL else 0
