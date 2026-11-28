@@ -662,6 +662,39 @@ def test_master_hooks() -> None:
             check(f"#1040 {why} → 덮지 않는다", why in got, got)
 
 
+def test_foreign_table_inside_block_1061() -> None:
+    """`#1061` — Codex `/hooks` 승인이 관리 블록 END 앞에 붙인 `[hooks.state.*]` 를 걷지 않고 보존한다."""
+    import tomli
+    p = _paths(Path("/t"))
+    e = ml.entry_for(p)
+    base, _ = ml.codex_text("model = \"gpt-5\"\n", e, ("redmine_meta",))
+    hooks = ('[hooks.state]\n\n[hooks.state."/h/hooks.json:user_prompt_submit:0:0"]\n'
+             'trusted_hash = "sha256:aa"\nenabled = true\n\n'
+             '[hooks.state."/h/hooks.json:stop:0:0"]\ntrusted_hash = "sha256:bb"\n')
+    inj = base.replace(ml.CODEX_END, hooks + ml.CODEX_END)
+    want = tomli.loads(inj)["hooks"]
+    try:
+        new, removed = ml.codex_text(inj, e, ("redmine_meta", "wayfinder_node_start"))
+    except ml.MasterLocalError as err:
+        check("#1061 블록 안 hooks.state — 거절하지 않는다", False, str(err))
+        return
+    d = tomli.loads(new)
+    check("#1061 hooks.state 파싱 결과 그대로", d.get("hooks") == want, str(d.get("hooks")))
+    check("#1061 새 도구 승인 반영", "wayfinder_node_start" in ml.codex_approvals(new))
+    block = new.partition(ml.CODEX_BEGIN)[2].partition(ml.CODEX_END)[0]
+    check("#1061 hooks.state 는 관리 블록 밖", "hooks.state" not in block and "hooks.state" in new)
+    check("#1061 최상위 보존", d.get("model") == "gpt-5")
+    check("#1061 보존 사실을 보고", any("남의 표" in r for r in removed), str(removed))
+    again, removed2 = ml.codex_text(new, e, ("redmine_meta", "wayfinder_node_start"))
+    check("#1061 멱등 — 두 번째는 같은 본문", again == new)
+    check("#1061 두 번째는 옮길 것이 없다", not any("남의 표" in r for r in removed2), str(removed2))
+    # 블록 안에 남의 표만 있고 ax-client 하위 표가 그 뒤에 오는 모양도 — 남의 표만 남는다
+    mixed = base.replace(f"[mcp_servers.{ml.SERVER}.tools.redmine_meta]",
+                         '[x.y]\nk = 1\n\n' + f"[mcp_servers.{ml.SERVER}.tools.redmine_meta]")
+    got, _ = ml.codex_text(mixed, e, ("redmine_meta",))
+    check("#1061 블록 중간의 남의 표도 보존", tomli.loads(got).get("x") == {"y": {"k": 1}})
+
+
 def main() -> int:
     before = _live_config()
     try:
@@ -672,7 +705,7 @@ def main() -> int:
                    test_token_never_printed, test_apply_writes_root_and_files, test_agy_permissions, test_969_master_local_checks,
                    test_cli_wiring, test_claude_skills_sync_and_check,
                    test_apply_refuses_cli_outside_real_config, test_live_config_guard_detects_change,
-                   test_master_hooks):
+                   test_master_hooks, test_foreign_table_inside_block_1061):
             fn()
     finally:
         # `#930` — 임시 경로만 보는 검사는 통과해도 실제 설정이 망가진 것을 못 본다

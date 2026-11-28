@@ -268,9 +268,22 @@ def _strip_codex_entry(text: str, name: str) -> tuple:
         if CODEX_END not in rest:
             # R54-3: 끝 표시가 시작보다 앞에 있다 — 어디까지가 관리 블록인지 모르니 덮지 않는다
             raise MasterLocalError("config.toml 의 관리 블록 표시 순서가 어긋났다 — 덮지 않는다(사람이 확인할 것)")
-        after = rest.split(CODEX_END, 1)[1]
-        text = before.rstrip("\n") + "\n" + after.lstrip("\n")
+        block, after = rest.split(CODEX_END, 1)
+        # `#1061` — 관리 블록 안에 끼어든 **남의 표**(Codex `/hooks` 승인이 END 앞에 붙인 `[hooks.state.*]` 등)는
+        # 걷지 않고 블록 자리(앞)에 남긴다. 블록의 머리 없는 줄(생성기 주석)과 `[mcp_servers.<name>…]` 만 관리 대상이다.
+        kept: list = []
+        foreign = False
+        for line in block.splitlines():
+            key = _header_key(line)
+            if key is not None:
+                foreign = key[:2] != ["mcp_servers", name]
+            if foreign:
+                kept.append(line)
+        rescued = "\n".join(kept).strip("\n")
+        text = (before.rstrip("\n") + "\n" + (rescued + "\n\n" if rescued else "") + after.lstrip("\n"))
         removed.append("관리 블록(이전 master-local 출력)")
+        if rescued:
+            removed.append(f"[주의] 관리 블록 안의 남의 표 {sum(_header_key(ln) is not None for ln in kept)}개는 블록 밖으로 옮겨 보존")
     lines = text.splitlines()
     out: list = []
     inside = False
