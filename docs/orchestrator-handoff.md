@@ -1,16 +1,28 @@
 # 현재 AX 작업 인수인계
 
-> #1061 마감 뒤 체크포인트(Claude, 2026-11-28). main `5aee761`에 #1061(master-local 이 Codex /hooks 승인을 보존 · 마감 정리에 마스터 승인 정렬)을 반영하고 「완료」·100으로 닫았다. 일감 잠금은 해제됐다.
-> `issue_wrapup 1061`: 상주 셋 다 최신 — 재기동 대상 없음 → 인수인계 대기 rc 2. 이 인계 커밋 push 뒤 같은 명령이 배달 → ⑥-2 마스터 정렬(`master-local --apply`·`--check`, 첫 운영 실측) → 기록을 잇는다(결과는 #1061 마감 노트).
-> 결과·근거의 정본은 Redmine과 reports/다. 이 문서는 현재 작업·남은 관측·다음 행동 한 벌만 유지한다.
+> 토큰 소진 직전 체크포인트(Claude, 2026-11-28 22:2x). main `277bfea` 그대로 · 열린 일감 잠금 없음(#1062 **보류**).
+> 다음 지휘자는 아래 「지금 할 일」부터. 결과·근거의 정본은 Redmine 노트와 reports/다.
 
-## #1061 마감 — master-local 의 Codex /hooks 승인 보존 · 마감 정렬
+## 지금 할 일 — #1065 → #1062(P5) 재측정
 
-- 커밋 `4c1f0b0`(T1 관리 블록 안 남의 표 보존 · test_client_master_local 147/147) · `7c1ec7d`(T2·T3 wrapup ⑥-2 · test_issue_wrapup 55/55 · §1.9·ax-plan) · `5aee761`(리포트 229).
-- 원인: Codex `/hooks` 승인 `[hooks.state.*]` 가 관리 블록 END 앞(블록 안)에 들어가 `_strip_codex_entry` 가 함께 걷으려 했다 → 보증이 `--apply` 거절 → #1050 신규 도구 2개 승인 누락(`--check` FAIL 13/15).
-- C1·C3 충족 · C2(운영 `--apply`·`--check` 15/15 · hooks.state 키 전후 동일)·C4(공식 통합) 제외 — 이 인계 커밋 뒤 wrapup 에서 잰다.
-  정렬 전 hooks.state 키 2개·요약 해시를 scratchpad 에 남겼다(값 없음) — 마감 노트에서 전후 대조.
-- 이 커밋이 `test_handoff_size`(마감 절 2건 누적 — c8b9ed0)를 한 벌로 덮어써 고친다(사용자 결정 1df912782660).
+- 🔴 **#1065**(새 버그, 마일스톤 8 - 버그/개선): 웨이파인더 노드 발주에서 Codex 워커의 ax-client MCP 에 티켓 권한
+  `AX_NODE_TICKET_GRANT` 가 닿지 않아 `wayfinder_get_node_ticket` 이 「노드 일감 발주 권한이 없다」(`client/runtime/client_mcp.py:2170`)로
+  거절된다. 런처는 codex 프로세스 env 에 싣지만(`session1_conductor.py:625` · `runner.py:881`) 배달된 `.codex/config.toml`
+  `[mcp_servers.ax-client]` 에 `env_vars` 가 없다 — **가설, 워커에서 실측부터**. 둘째: 착수 없는 rc 0 이 「검수 대기」로 넘어간다.
+  착수 전 인터뷰부터(`ax-plan`) — 아직 스펙·플랜 없음.
+- **#1062 = #1008 P5**(검증, 보류 · 브랜치 `issue/1062` @277bfea · 커밋 0): 스펙·플랜 등록(T1~T5 · C1~C6). T1~T3 완료, T4 차단(#1065), T5 대기.
+  1차 실발주(22:15:54): .43→#1063 · .2→#1064 · 둘 다 rc 0 · 착수 0 · Gitea `wayfinder/*` 0 → 판정 **1차 불통과**(①만 형식 통과).
+  재개 = `issue_start_tool(1062)` → #1065 반영·배달 뒤 `wayfinder_dispatch_preview` → 사용자 발주 요청 → `wayfinder_dispatch_tool(confirm)`.
+- 재료 노드 **#1063**(wayfinder_status 배정 시각·경과, `master/wayfinder.py`) · **#1064**(sweep `AX_PROJECTS_ROOT` 경고, `master/sweep.py`):
+  스펙·플랜 승인됨 · 배정은 rework(재작업 대기, 근거 노트) — 다음 사이클에 같은 티켓으로 다시 발주한다.
+- 관측 메모: `.43` 체크아웃 main `dfd9c24`(운영 `277bfea` 보다 뒤) — 재발주 때 워커가 서버 start_rev 로 브랜치를 만드는지 본다.
+  `.2` janus 콘솔 세션 활성(22:15 기준). 워커 모드 codex. `.43` codex 가 `get_orchestration` 을 불러 403(워커 토큰) — 무해.
+
+## 참고 — 오늘 main 에 반영된 것
+
+- `5aee761`(#1061) master-local 이 Codex `/hooks` 승인(hooks.state)을 보존 · wrapup ⑥-2 마스터 정렬. 운영 `--check` 15/15.
+- `71bbb99`(#1059) wrapup 상주별 재기동 대기(운영 실측은 재기동 있는 다음 마감).
+- 인터뷰 진행 중 멈춤 관문(Stop 훅)이 「스펙 쓴 턴은 멈춘다」 규칙과 부딪힌다 — #1062 잠금 중이면 재료 티켓 스펙 기록 턴에도 계속을 요구했다(관찰, 미등록).
 
 ## 이어지는 관측 — #1050·#1059
 
