@@ -1299,6 +1299,22 @@ def interview_ask_tool(issue_id: int, stage: str, question: str, recommended: st
 
 
 @mcp.tool()
+def check_result_tool(issue_id: int, check: str, rc: int, paths: list[str] | None = None, summary: str = "") -> str:
+    """일감 작업 중 돌린 검사 결과를 실패 장부에 적는다 (`#1040` ③).
+
+    rc≠0 이면 열린 실패로 남고, 같은 `check` 를 rc 0 으로 다시 적으면 닫힌다. `paths` 는 실패가 가리키는 저장소
+    상대 경로다. 다음 `plan_start_tool` 판정이 이것을 읽는다 — 실패 경로가 전부 이번 일감 변경(시작 리비전 이후
+    커밋 + 미커밋) 안이면 resume(고치고 다시 검사), 밖이거나 경로를 모르면 stop(보고하고 멈춘다, 공용 규칙 §1.1).
+    """
+    from .. import interview_ledger as L
+    try:
+        return json.dumps(L.record_check(L.default_root(), issue_id, check, rc, paths=paths or [],
+                                         summary=summary), ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
 def interview_spec_tool(issue_id: int, content: str, user_answer: str, divergence: str = "",
                         divergence_reason: str = "") -> str:
     """착수 전 인터뷰의 마지막 — 확정 스펙(여섯 항목 제목)을 일감 본문의 스펙 영역(ax:spec)에 쓴다 (`#960`).

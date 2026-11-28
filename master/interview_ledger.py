@@ -72,19 +72,20 @@ def _now() -> str:
 def _load(root) -> dict:
     p = _path(root)
     if not p.exists():
-        return {"schema": SCHEMA, "questions": [], "prompts": []}
+        return {"schema": SCHEMA, "questions": [], "prompts": [], "failures": []}
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
         raise LedgerError(f"대화 장부를 못 읽었다 ({p}: {type(e).__name__}) — 덮어쓰지 않았다") from e
     if (not isinstance(data, dict) or data.get("schema") != SCHEMA
-            or not isinstance(data.get("questions"), list) or not isinstance(data.get("prompts"), list)):
+            or not isinstance(data.get("questions"), list) or not isinstance(data.get("prompts"), list)
+            or not isinstance(data.setdefault("failures", []), list)):
         raise LedgerError(f"대화 장부 형식이 아니다 ({p}) — 덮어쓰지 않았다")
     return data
 
 
 def _save(root, data: dict) -> None:
-    for key in ("questions", "prompts"):
+    for key in ("questions", "prompts", "failures"):
         if len(data[key]) > CAP:
             del data[key][:len(data[key]) - CAP]
     p = _path(root)
@@ -277,3 +278,49 @@ def check_answer(issue_id, stage: str, user_answer: str, *, divergence: str = ""
         return None
     return judge(default_root(project) if root is None else root, issue_id, stage, user_answer,
                  divergence=divergence, divergence_reason=divergence_reason)
+
+
+# ── 실패 장부 (③, T4) ─────────────────────────────────────────────────────────
+# 공용 규칙 §1.1(「실패하면 보고하고 멈춘다」)과 `plan_start` 의 resume 이 부딪혔다(#1039 00:35): 판정에 실패
+# 정보가 없어서 모델이 둘 중 하나를 골랐다. 여기 적힌 실패를 `plan_tools.start` 가 읽어 갈라 준다 —
+# 실패 경로가 **이번 일감의 변경**(시작 리비전 이후 커밋 + 미커밋) 안이면 resume(고치고 계속), 밖이거나
+# 경로를 모르면 stop(보고). [주의] 「미커밋만」으로 보면 00:35 사례(T1 에 커밋된 SKILL.md)가 stop 이 된다.
+
+def record_check(root, issue_id, check: str, rc: int, *, paths=(), summary: str = "") -> dict:
+    """검사 결과 한 건. rc 0 이면 같은 검사의 열린 실패를 닫고, 아니면 열린 실패로 남긴다(같은 검사는 교체)."""
+    n = int(issue_id)
+    name = _text(check, "검사 이름")
+    if isinstance(rc, bool) or not isinstance(rc, int):
+        raise LedgerError("rc 는 정수다")
+    clean = sorted({str(x).strip().lstrip("./") for x in (paths or []) if str(x).strip()})
+    with _locked(root):
+        data = _load(root)
+        closed = 0
+        for f in data["failures"]:
+            if f["issue_id"] == n and f["check"] == name and f["status"] == "open":
+                f["status"] = "passed" if rc == 0 else "replaced"
+                f["closed_at"] = _now()
+                closed += 1
+        if rc != 0:
+            data["failures"].append({"id": uuid4().hex[:12], "issue_id": n, "check": name, "rc": rc,
+                                     "paths": clean, "summary": (summary or "").strip()[:500], "at": _now(),
+                                     "status": "open"})
+        _save(root, data)
+    return {"ok": True, "issue_id": n, "check": name, "rc": rc, "closed": closed, "open": rc != 0}
+
+
+def open_failures(root, issue_id) -> list[dict]:
+    with _locked(root):
+        data = _load(root)
+    return [dict(f) for f in data["failures"] if f["issue_id"] == int(issue_id) and f["status"] == "open"]
+
+
+def split_failures(failures: list[dict], changed) -> tuple[list[dict], list[dict]]:
+    """(이번 일감 변경 안의 실패, 그 밖의 실패). 경로가 없거나 변경 목록을 모르면(`changed=None`) 밖으로 친다."""
+    if changed is None:
+        return [], list(failures)
+    changed = {str(c).strip().lstrip("./") for c in changed}
+    own, foreign = [], []
+    for f in failures:
+        (own if f["paths"] and all(p in changed for p in f["paths"]) else foreign).append(f)
+    return own, foreign

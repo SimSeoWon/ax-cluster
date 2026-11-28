@@ -27,6 +27,8 @@ AXCluster 일감만 고르지 못한다 — **모든 일감의 「작업중」 �
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import re
 from contextlib import contextmanager
 
@@ -110,7 +112,8 @@ def _write(issue_id, body: str, notes: str, updater) -> str:
     return str(out)
 
 
-def start(issue_id, *, project: str = "", getter=None, kind_of=None, active=None, materials=None) -> dict:
+def start(issue_id, *, project: str = "", getter=None, kind_of=None, active=None, materials=None,
+          failures=None, changes=None) -> dict:
     """시작 판정과 그 프로젝트의 7단계 표. `project` 를 비우면 마운트된 프로젝트다."""
     out = ST.start_issue(issue_id, getter=getter or _default_getter)
     if "error" in out:
@@ -139,7 +142,64 @@ def start(issue_id, *, project: str = "", getter=None, kind_of=None, active=None
         out["steps"] = [s.__dict__ for s in STEPS.steps_for_project(project, kind_of=kind_of)]
     except STEPS.StepError as e:
         out["steps"], out["steps_error"] = [], str(e)
+    _apply_failures(out, issue_id, project, failures, changes)
     return out
+
+
+def issue_changes(issue_id, project: str) -> list[str] | None:
+    """`#1040` — 이번 일감의 변경 파일(시작 리비전 이후 커밋 + 미커밋 + 새 파일). 모르면 None.
+
+    마스터 worktree 흐름(`requester: master`)만 안다 — `.33` 요청자 일감은 그 기계에 있으므로 None(→ stop).
+    """
+    import subprocess
+    from master import issue_lock as IL
+    from master.projects.config import Registry
+    try:
+        cfg = Registry.load().config_of(project)
+        wt_root = cfg.master_issue_worktree_root
+        lock = IL.current(IL.default_root(project))
+    except Exception:                                    # noqa: BLE001 — 모르면 None
+        return None
+    if not wt_root or not lock or lock.get("issue_id") != int(issue_id) or not lock.get("start_rev"):
+        return None
+    wt = Path(wt_root) / str(int(issue_id))
+    if not wt.is_dir():
+        return None
+    try:
+        diff = subprocess.run(["git", "-C", str(wt), "diff", "--name-only", lock["start_rev"]],
+                              capture_output=True, text=True, timeout=30, check=True).stdout
+        new = subprocess.run(["git", "-C", str(wt), "ls-files", "--others", "--exclude-standard"],
+                             capture_output=True, text=True, timeout=30, check=True).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return sorted({ln.strip() for ln in (diff + "\n" + new).splitlines() if ln.strip()})
+
+
+def _apply_failures(out: dict, issue_id, project: str, failures, changes) -> None:
+    """`#1040` ③ — 열린 실패가 있으면 resume/next 판정을 가른다. 실패 장부를 못 읽으면 판정은 그대로 둔다."""
+    if out.get("verdict") not in ST.OK_VERDICTS:
+        return
+    from master import interview_ledger as L
+    if failures is None:
+        try:
+            failures = L.open_failures(L.default_root(project), issue_id)
+        except Exception as e:                           # noqa: BLE001
+            out["failures_error"] = f"{type(e).__name__}: {e}"
+            return
+    if not failures:
+        return
+    changed = changes(issue_id, project) if callable(changes) else (
+        changes if changes is not None else issue_changes(issue_id, project))
+    own, foreign = L.split_failures(failures, changed)
+    out["failures"] = {"own": own, "foreign": foreign}
+    if foreign:
+        out.update(verdict="stop", ok=False, next_action=ST.NEXT_ACTION["stop"])
+        out["detail"] = [f"{f['check']} rc={f['rc']} — {', '.join(f['paths']) or '경로 모름'}"
+                         + (" (변경 목록 모름)" if changed is None else " (이번 일감 변경 밖)") for f in foreign]
+    else:
+        out["detail"] = list(out.get("detail") or []) + [
+            f"{f['check']} rc={f['rc']} — 이번 일감 변경({', '.join(f['paths'])})에서 난 실패: 고치고 다시 검사해 "
+            f"record_check 로 rc 0 을 남긴다" for f in own]
 
 
 def set_plan(issue_id, tasks: list, why: str, *, user_answer: str = "", getter=None, updater=None,

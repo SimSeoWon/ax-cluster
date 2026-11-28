@@ -191,9 +191,47 @@ def t_set_plan_gate(root):
           in iss.writes[-1][1], iss.writes[-1][1][-160:])
 
 
+def t_failures(root):
+    """T4 — 실패 장부와 plan_start 판정 갈림(00:35 재현)."""
+    from master import plan_tools as PT
+    skill = "master/skills/ax-wayfinder/SKILL.md"
+    L.record_check(root, 1039, "integration", 1, paths=[skill], summary="test_skill_conventions 53/54")
+    fails = L.open_failures(root, 1039)
+    check("실패 장부 — 열린 실패 1", len(fails) == 1 and fails[0]["paths"] == [skill], str(fails))
+
+    def verdict(changed, failures=None):
+        out = {"verdict": "resume", "ok": True, "tasks": ["T4"], "detail": []}
+        PT._apply_failures(out, 1039, "AXCluster", L.open_failures(root, 1039) if failures is None else failures,
+                           changed)
+        return out
+
+    out = verdict([skill, "master/wayfinder_dispatch.py"])
+    check("[중요] 00:35 — 실패 경로가 이번 일감 변경(커밋분 포함) 안 → resume 유지",
+          out["verdict"] == "resume" and out["ok"] and "record_check" in out["detail"][-1], str(out))
+    out = verdict(["master/wayfinder_dispatch.py"])
+    check("[중요] 변경 밖 실패 → stop · ok False · §1.1 안내",
+          out["verdict"] == "stop" and out["ok"] is False and "§1.1" in out["next_action"], str(out))
+    out = PT._apply_failures(o := {"verdict": "resume", "ok": True}, 1039, "AXCluster", L.open_failures(root, 1039),
+                             lambda *_: None) or o
+    check("변경 목록 모름 → stop", out["verdict"] == "stop" and "모름" in out["detail"][0], str(out))
+    L.record_check(root, 1039, "noroute", 2, summary="경로 없음")
+    out = verdict([skill])
+    check("경로 없는 실패 → stop", out["verdict"] == "stop", str(out))
+    L.record_check(root, 1039, "integration", 0)
+    L.record_check(root, 1039, "noroute", 0)
+    check("rc 0 이 같은 검사의 실패를 닫는다", L.open_failures(root, 1039) == [])
+    out = verdict([skill])
+    check("열린 실패 없음 → 판정 그대로", out == {"verdict": "resume", "ok": True, "tasks": ["T4"], "detail": []},
+          str(out))
+    out = {"verdict": "plan_needed", "ok": False}
+    PT._apply_failures(out, 1039, "AXCluster", [{"check": "x", "rc": 1, "paths": []}], [])
+    check("resume·next 가 아니면 손대지 않는다", out == {"verdict": "plan_needed", "ok": False}, str(out))
+    check("rc bool 거절", "정수" in refused(L.record_check, root, 1, "c", True))
+
+
 def main() -> int:
     for fn in (t_ask_rules, t_judge_no_question, t_judge_fabricated, t_judge_2215, t_judge_pick_and_confidence,
-               t_affirm, t_open_questions, t_record_gate, t_set_plan_gate):
+               t_affirm, t_open_questions, t_record_gate, t_set_plan_gate, t_failures):
         with tempfile.TemporaryDirectory(prefix="ax-ledger-") as d:
             try:
                 fn(Path(d))
