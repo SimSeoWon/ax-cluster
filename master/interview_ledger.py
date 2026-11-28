@@ -8,14 +8,12 @@
                 — 단계마다 묻기 전에 등록한다. 추천 1번 필수 · 대안 0~3 · 확신도 0~100.
     입력 장부   record_prompt(text, session, source)
                 — `UserPromptSubmit` 훅이 사용자의 **실제 입력 원문**을 적는다(모델이 쓰지 않는다).
-    판정        judge(issue, stage, user_answer, divergence, divergence_reason)
-                — ① 그 단계의 질문이 있다 ② 답이 질문 **뒤** 실제 입력과 원문으로 같다
-                  ③ 답이 보기 선택이거나 명시적 긍정이다. 자유 의견이면 「수정 요청」으로 돌려준다.
-                — 확신도: 추천 선택·어긋남 없음이면 오르고, 보강·수정·뒤집기면 깎인다.
-                  어긋남 등급과 이유는 에이전트가 적고, 계산과 일관성 검사는 여기서 한다.
+    판정        assess_answer(issue, stage, user_answer, prompt_id, action, divergence, divergence_reason)
+                — 입력 훅의 현재 턴 ID로 같은 세션의 질문과 원문을 대조한다.
+                — 에이전트가 문맥을 해석해 확정, 후속 질문, 중단을 제출한다.
+                  장부는 판단 근거를 보존하고 확신도를 계산한다.
 
-[주의] 확신도 점수로 진행을 막지 않는다 — 에이전트 자기 평가라 검증할 수 없다(사용자 결정). 막는 것은
-검증할 수 있는 것(질문 등록 · 원문 일치 · 답의 형태 · 등급의 일관성)뿐이다.
+[주의] 확신도 점수로 진행을 막지 않는다. 장부는 질문 등록, 원문 일치, 선택지와 등급 일관성을 검증한다.
 [주의] 깎는 폭은 첫 값이다 — 실사용하며 고친다(사용자 결정, #1040 열린 결정).
 
 관문은 프로젝트 트윈 `config.yaml` 의 `interview_gate: enforce` 일 때만 켜진다(기본 꺼짐). 훅 배달이
@@ -26,7 +24,6 @@ from __future__ import annotations
 import fcntl
 import json
 import os
-import re
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -243,34 +240,6 @@ def assess_answer(root, issue_id, stage: str, user_answer: str, *, prompt_id: st
 
 # ── 답 판정 ──────────────────────────────────────────────────────────────────
 
-# 명시적 긍정 — 낱말이 **전부** 이 목록이어야 한다(「응 진행해」는 긍정, 「응 근데 …」는 자유 의견).
-_AFFIRM_WORDS = frozenset((
-    "응", "네", "넵", "예", "그래", "좋아", "좋습니다", "맞아", "맞습니다", "이대로", "그대로", "그렇게",
-    "확정", "확정해", "확정하자", "진행", "진행해", "진행하자", "등록", "등록해", "등록하자",
-    "기록", "기록해", "기록하자", "가자", "해", "해줘", "ok", "okay", "yes"))
-_WORD = re.compile(r"[가-힣A-Za-z]+")
-_PICK = re.compile(r"(?:^|[^0-9])([1-4])\s*번")
-
-
-def _affirm(answer: str) -> bool:
-    words = [w.casefold() for w in _WORD.findall(answer)]
-    return bool(words) and all(w in _AFFIRM_WORDS for w in words)
-
-
-def classify_answer(answer: str, n_alternatives: int) -> tuple[str, int]:
-    """답의 형태 → (`recommended`·`alternative`·`affirm`·`free`, 고른 번호 또는 0)."""
-    m = _PICK.search(answer)
-    if m:
-        k = int(m.group(1))
-        if k == 1:
-            return "recommended", 1
-        if k - 1 <= n_alternatives:
-            return "alternative", k
-    if _affirm(answer):
-        return "affirm", 1
-    return "free", 0
-
-
 def confidence_after(before: int, divergence: str) -> int:
     if divergence == NONE:
         return min(100, before + RAISE)
@@ -281,59 +250,19 @@ def confidence_after(before: int, divergence: str) -> int:
     return 0
 
 
-def judge(root, issue_id, stage: str, user_answer: str, *, divergence: str = "",
-          divergence_reason: str = "") -> dict:
-    """그 단계 질문에 대한 실제 답인지 판정하고 질문을 닫는다. 기록해도 되면 ok, 아니면 `LedgerError`.
-
-    자유 의견은 질문을 「수정 요청」으로 닫고(확신도 갱신) `LedgerError` — 에이전트는 반영해 다시 묻는다.
-    """
-    n = int(issue_id)
-    answer = _text(user_answer, "사용자 답")
-    if divergence not in DIVERGENCE:
-        raise LedgerError(f"어긋남 등급(divergence)을 적는다 — {list(DIVERGENCE)} 중 하나")
-    with _locked(root):
-        data = _load(root)
-        qs = [q for q in data["questions"] if q["issue_id"] == n and q["stage"] == stage and q["status"] == "open"]
-        if not qs:
-            raise LedgerError(f"#{n} {stage}: 등록된 질문이 없다 — interview_ask 로 먼저 묻고 실제 답을 받는다")
-        q = qs[-1]
-        match = [p for p in data["prompts"] if p["at"] > q["at"] and p["text"].strip() == answer]
-        if not match:
-            raise LedgerError(f"#{n} {stage}: 답이 질문 뒤 사용자의 실제 입력과 원문으로 같지 않다 — "
-                              "사용자가 입력한 문장을 그대로 넣는다")
-        kind, pick = classify_answer(answer, len(q["alternatives"]))
-        if kind in ("alternative", "free") and divergence == NONE:
-            raise LedgerError(f"#{n} {stage}: 추천 1번이 아닌 답({kind})에 「어긋남 없음」을 적을 수 없다")
-        if divergence != NONE and not (divergence_reason or "").strip():
-            raise LedgerError(f"#{n} {stage}: 어긋남 {DIVERGENCE[divergence]} — 이유(divergence_reason)를 적는다")
-        after = confidence_after(q["confidence"], divergence)
-        q.update(status="revision" if kind == "free" else "answered", answered_at=_now(),
-                 prompt_id=match[-1]["id"], kind=kind, pick=pick, divergence=divergence,
-                 divergence_reason=(divergence_reason or "").strip(), confidence_after=after)
-        _save(root, data)
-    line = (f"확신도 {q['confidence']} → {after} · {DIVERGENCE[divergence]}"
-            + (f" — {q['divergence_reason']}" if q["divergence_reason"] else "")
-            + f" · 답 형태 {kind}" + (f" {pick}번" if pick else ""))
-    if kind == "free":
-        raise LedgerError(f"#{n} {stage}: 보기 선택·명시적 긍정이 아니다 — 수정 요청으로 반영해 결과를 다시 "
-                          f"보이고 새로 묻는다 ({line})")
-    return {"ok": True, "question_id": q["id"], "kind": kind, "pick": pick, "confidence_before": q["confidence"],
-            "confidence_after": after, "note_line": line}
-
-
 def check_answer(issue_id, stage: str, user_answer: str, *, divergence: str = "", divergence_reason: str = "",
-                 project: str = "", root=None, enabled=None) -> dict | None:
-    """기록 도구(인터뷰 단계·스펙 영역·플랜 등록)가 **쓰기 직전에** 부른다. 관문이 꺼졌으면 None(종전 동작).
-
-    켜졌으면 `judge` 결과(확신도 줄 포함) — 거절이면 `LedgerError`. 판정은 질문을 닫으므로 다른 검사를 다
-    통과한 뒤에 부른다.
-    """
+                 project: str = "", root=None, enabled=None, answer_context: dict | None = None) -> dict | None:
+    """관문이 켜진 프로젝트에서 질문, 실제 원문, LLM의 해석을 대조한다."""
     if enabled is None:
         enabled = gate_enabled(project)
     if not enabled:
         return None
-    return judge(default_root(project) if root is None else root, issue_id, stage, user_answer,
-                 divergence=divergence, divergence_reason=divergence_reason)
+    if not isinstance(answer_context, dict):
+        raise LedgerError("현재 입력 ID와 답변 해석을 answer_context에 적는다")
+    return assess_answer(default_root(project) if root is None else root, issue_id, stage, user_answer,
+                         prompt_id=answer_context.get("prompt_id", ""), action=answer_context.get("action", ""),
+                         option=answer_context.get("option", 0), divergence=divergence,
+                         divergence_reason=divergence_reason)
 
 
 # ── 실패 장부 (③, T4) ─────────────────────────────────────────────────────────

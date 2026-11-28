@@ -204,7 +204,7 @@ def _apply_failures(out: dict, issue_id, project: str, failures, changes) -> Non
 
 def set_plan(issue_id, tasks: list, why: str, *, user_answer: str = "", getter=None, updater=None,
              events_path=None, caller: str = "", divergence: str = "", divergence_reason: str = "",
-             project: str = "", ledger_root=None, gate=None) -> dict:
+             project: str = "", ledger_root=None, gate=None, answer_context: dict | None = None) -> dict:
     """플랜을 만들거나 태스크를 추가·편집한다. `tasks` 는 **원하는 전체 목록**(표 순서)이다.
 
     각 항목: `id`·`goal` 필수, `target`·`deps`(목록 또는 「T1·T2」)·`check`·`steps`(조건부 단계 선언,
@@ -279,14 +279,17 @@ def set_plan(issue_id, tasks: list, why: str, *, user_answer: str = "", getter=N
                 judged = L.check_answer(issue_id, "plan", user_answer, divergence=divergence,
                                         divergence_reason=divergence_reason, project=project,
                                         root=ledger_root,
+                                        answer_context=answer_context,
                                         enabled=gate if gate is not None else (None if getter is None else False))
             except L.LedgerError as e:
                 raise PlanToolError(str(e)) from e
+        if judged and judged["status"] != "answered":
+            return {**judged, "issue_id": issue_id, "next": "plan"}
         added = [t.id for t in new_tasks if t.id not in old]
         summary = (f"플랜 {'갱신' if current else '등록'} — 추가 {', '.join(added) or '없음'}"
                    f" · 제거 {', '.join(t.id for t in dropped) or '없음'}\n사유: {why.strip()}"
                    + (f"\n최신 제안 대조 통과 — 체크리스트 {len(prop['checklist'])} · 자율성 {prop['autonomy']:g}"
-                      f"\n사용자 동의: {user_answer.strip()}" if prop is not None else "")
+                      f"\n사용자 동의: {user_answer}" if prop is not None else "")
                    + (f"\n확신도: {judged['note_line']}" if judged else ""))
         result = _write(issue_id, new_body, summary, updater or _default_updater)
         # #939 — 스펙 템플릿(docs/issue-spec.md) 누락 항목. 경고일 뿐 등록은 이미 끝났다.

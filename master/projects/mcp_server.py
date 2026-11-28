@@ -1220,7 +1220,7 @@ def plan_autonomy_tool(issue_id: int, value: float, why: str, tasks: list[dict] 
 
 @mcp.tool()
 def plan_set_tool(issue_id: int, tasks: list[dict], why: str, user_answer: str = "", divergence: str = "",
-                  divergence_reason: str = "") -> str:
+                  divergence_reason: str = "", answer_context: dict | None = None) -> str:
     """이슈 본문의 플랜 영역을 등록하거나 태스크를 추가·편집한다 (`#826`).
 
     `tasks` 는 원하는 **전체 목록**(표 순서): 항목마다 `id`·`goal` 필수, `target`·`deps`·`check`·
@@ -1229,13 +1229,16 @@ def plan_set_tool(issue_id: int, tasks: list[dict], why: str, user_answer: str =
     시작된 태스크는 뺄 수 없다. `why` 는 노트로 남는다(필수).
     `#963` — 새 플랜·제안 흐름 일감은 **최신 플랜 제안과 같은 목록**이고 `user_answer`(사용자 동의 원문)가 있어야
     등록된다. 체크리스트·자율성은 그 제안에서 온다.
+    `answer_context` 에 현재 입력 훅의 prompt_id, 문맥 판단 action(confirm/followup/stop),
+    보기 선택이면 option(1부터)을 쓴다. followup_required 이면 후속 질문을 등록한다.
     `divergence`·`divergence_reason`(`#1040`): 관문이 켜진 프로젝트에서 `user_answer` 가 질문 장부의 추천 1번과
     얼마나 어긋나는지 — none(어긋남 없음)·add(보강)·revise(수정)·flip(뒤집기)과 그 이유. 확신도는 서버가 계산한다.
     """
     from .. import plan_tools
     try:
         return json.dumps(plan_tools.set_plan(issue_id, tasks, why, user_answer=user_answer, divergence=divergence,
-                                              divergence_reason=divergence_reason), ensure_ascii=False)
+                                              divergence_reason=divergence_reason, answer_context=answer_context),
+                          ensure_ascii=False)
     except Exception as e:                               # noqa: BLE001
         return _fail(e)
 
@@ -1259,7 +1262,8 @@ def plan_transition_tool(issue_id: int, task_id: str, to: str, note: str = "", u
 
 @mcp.tool()
 def interview_step_tool(issue_id: int, step: str, result: str, user_answer: str, category: str = "",
-                        divergence: str = "", divergence_reason: str = "") -> str:
+                        divergence: str = "", divergence_reason: str = "",
+                        answer_context: dict | None = None) -> str:
     """착수 전 인터뷰 단계 하나를 일감 노트로 기록한다 (`#960`).
 
     `step`: classify(분류) · investigate(조사) · specify(명세) · reproduce(재현) · impact(파급 측정) — 순서 고정.
@@ -1267,13 +1271,16 @@ def interview_step_tool(issue_id: int, step: str, result: str, user_answer: str,
     `category` 는 분류 단계에서만 준다(분류 문서 이름: bug · modify · feature …). 순서를 건너뛰거나 분류 문서가
     적용하지 않는 단계는 거절되고, 적용하지 않는 단계의 건너뜀 노트는 이 도구가 남긴다. 응답의 `next` 가 다음 단계다
     (`spec` 이면 `interview_spec_tool`).
+    `answer_context` 에 현재 입력 훅의 prompt_id, 문맥 판단 action(confirm/followup/stop),
+    보기 선택이면 option(1부터)을 쓴다. followup_required 이면 후속 질문을 등록한다.
     `divergence`·`divergence_reason`(`#1040`): 관문이 켜진 프로젝트에서 `user_answer` 가 질문 장부의 추천 1번과
     얼마나 어긋나는지 — none(어긋남 없음)·add(보강)·revise(수정)·flip(뒤집기)과 그 이유. 확신도는 서버가 계산한다.
     """
     from .. import interview
     try:
         return json.dumps(interview.record(issue_id, step, result, user_answer, category=category,
-                                           divergence=divergence, divergence_reason=divergence_reason),
+                                           divergence=divergence, divergence_reason=divergence_reason,
+                                           answer_context=answer_context),
                           ensure_ascii=False)
     except Exception as e:                               # noqa: BLE001
         return _fail(e)
@@ -1317,18 +1324,21 @@ def check_result_tool(issue_id: int, check: str, rc: int, paths: list[str] | Non
 
 @mcp.tool()
 def interview_spec_tool(issue_id: int, content: str, user_answer: str, divergence: str = "",
-                        divergence_reason: str = "") -> str:
+                        divergence_reason: str = "", answer_context: dict | None = None) -> str:
     """착수 전 인터뷰의 마지막 — 확정 스펙(여섯 항목 제목)을 일감 본문의 스펙 영역(ax:spec)에 쓴다 (`#960`).
 
     파급 측정까지 모든 단계가 기록돼 있어야 열린다. 본문의 영역 밖 글자는 그대로 둔다. `user_answer` 는 요약을
     보인 뒤 받은 사용자 승인이다(필수). 스펙 영역이 생기면 `plan_start_tool` 판정이 `plan_needed` 가 된다.
+    `answer_context` 에 현재 입력 훅의 prompt_id, 문맥 판단 action(confirm/followup/stop),
+    보기 선택이면 option(1부터)을 쓴다. followup_required 이면 후속 질문을 등록한다.
     `divergence`·`divergence_reason`(`#1040`): 관문이 켜진 프로젝트에서 `user_answer` 가 질문 장부의 추천 1번과
     얼마나 어긋나는지 — none(어긋남 없음)·add(보강)·revise(수정)·flip(뒤집기)과 그 이유. 확신도는 서버가 계산한다.
     """
     from .. import interview
     try:
         return json.dumps(interview.write_spec(issue_id, content, user_answer, divergence=divergence,
-                                               divergence_reason=divergence_reason), ensure_ascii=False)
+                                               divergence_reason=divergence_reason, answer_context=answer_context),
+                          ensure_ascii=False)
     except Exception as e:                               # noqa: BLE001
         return _fail(e)
 

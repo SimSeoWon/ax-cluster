@@ -91,7 +91,7 @@ def render(step: str, category: str, *, result: str = "", user_answer: str = "",
     title = f"착수 전 인터뷰 — {LABELS[step]}"
     if skip_reason:
         return f"{head}\n{title} · 건너뜀\n\n사유: {skip_reason}"
-    out = f"{head}\n{title}\n\n## 결과\n\n{result.strip()}\n\n## 사용자 답\n\n{user_answer.strip()}"
+    out = f"{head}\n{title}\n\n## 결과\n\n{result.strip()}\n\n## 사용자 답\n\n{user_answer}"
     return out + (f"\n\n## 확신도\n\n{confidence}" if confidence else "")
 
 
@@ -217,7 +217,7 @@ def status(issue_id, *, getter=None, cats=None) -> dict:
 
 def record(issue_id, step: str, result: str, user_answer: str, *, category: str = "",
            getter=None, noter=None, cats=None, divergence: str = "", divergence_reason: str = "",
-           project: str = "", ledger_root=None, gate=None) -> dict:
+           project: str = "", ledger_root=None, gate=None, answer_context: dict | None = None) -> dict:
     """단계 하나를 기록한다. 적용하지 않는 뒤 단계는 건너뜀 노트로 이어서 남긴다.
 
     `category` 는 분류 단계에서만 받는다(다른 단계는 노트의 분류를 쓴다).
@@ -259,7 +259,9 @@ def record(issue_id, step: str, result: str, user_answer: str, *, category: str 
         log.append(f"[interview] #{issue_id} {step} 재기록 — 최신 노트가 기준, 뒤 단계 기록 무효")
     written = [step]
     judged = _ledger(issue_id, step, user_answer, divergence, divergence_reason, project, ledger_root,
-                     gate if gate is not None else (None if getter is _default_getter else False))
+                     gate if gate is not None else (None if getter is _default_getter else False), answer_context)
+    if judged and judged["status"] != "answered":
+        return {**judged, "issue_id": issue_id, "step": step, "next": step, "written": []}
     _note(issue_id, render(step, cat, result=result, user_answer=user_answer,
                            confidence=judged["note_line"] if judged else ""), noter)
     log.append(f"[interview] #{issue_id} {step} 기록 (분류 {cat})")
@@ -297,7 +299,7 @@ def record(issue_id, step: str, result: str, user_answer: str, *, category: str 
     return out
 
 
-def _ledger(issue_id, stage, user_answer, divergence, divergence_reason, project, root, gate):
+def _ledger(issue_id, stage, user_answer, divergence, divergence_reason, project, root, gate, answer_context):
     """`#1040` 관문 — 꺼졌으면 None. 거절은 `InterviewError`(사유 그대로)로 바꿔 같은 모양으로 돌려준다.
 
     [주의] 관문 설정(`interview_gate`)은 **실 Redmine 경로(getter 주입 없음)에서만** 읽는다. 가짜 getter 를 주입한
@@ -306,7 +308,8 @@ def _ledger(issue_id, stage, user_answer, divergence, divergence_reason, project
     from master import interview_ledger as L
     try:
         return L.check_answer(issue_id, stage, user_answer, divergence=divergence,
-                              divergence_reason=divergence_reason, project=project, root=root, enabled=gate)
+                              divergence_reason=divergence_reason, project=project, root=root, enabled=gate,
+                              answer_context=answer_context)
     except L.LedgerError as e:
         raise InterviewError(str(e)) from e
 
@@ -325,7 +328,7 @@ def _node_skip(body: str) -> str:
 
 def write_spec(issue_id, content: str, user_answer: str, *, getter=None, updater=None, cats=None,
                divergence: str = "", divergence_reason: str = "", project: str = "", ledger_root=None,
-               gate=None) -> dict:
+               gate=None, answer_context: dict | None = None) -> dict:
     """인터뷰 마지막 — 확정 스펙(여섯 항목)을 스펙 영역에 쓴다. 본문의 영역 밖 글자는 그대로 둔다.
 
     파급 측정까지 모든 단계(또는 건너뜀)가 노트로 있어야 열린다. `user_answer` 는 요약을 보인 뒤 받은
@@ -352,9 +355,11 @@ def write_spec(issue_id, content: str, user_answer: str, *, getter=None, updater
         raise InterviewError(str(e)) from e
     replaced = SB.exists(body)
     judged = _ledger(issue_id, "spec", user_answer, divergence, divergence_reason, project, ledger_root,
-                     gate if gate is not None else (None if getter is _default_getter else False))
+                     gate if gate is not None else (None if getter is _default_getter else False), answer_context)
+    if judged and judged["status"] != "answered":
+        return {**judged, "issue_id": issue_id, "next": "spec"}
     note = (f"[ax:interview-spec v={SB.FORMAT_VERSION}]\n착수 전 인터뷰 — 스펙 영역 "
-            f"{'갱신' if replaced else '기록'} (분류 {st.category})\n\n## 사용자 답\n\n{user_answer.strip()}"
+            f"{'갱신' if replaced else '기록'} (분류 {st.category})\n\n## 사용자 답\n\n{user_answer}"
             + (f"\n\n## 확신도\n\n{judged['note_line']}" if judged else ""))
     out = str(updater(issue_id, description=new_body, notes=note))
     if out.startswith("[주의]"):

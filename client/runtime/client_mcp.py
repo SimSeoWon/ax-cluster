@@ -997,6 +997,8 @@ def _with_divergence(payload: dict, args: dict) -> dict:
         value = str(args.get(key) or "").strip()
         if value:
             payload[key] = value
+    if args.get("answer_context") is not None:
+        payload["answer_context"] = args["answer_context"]
     return payload
 
 
@@ -1838,7 +1840,8 @@ TOOLS.extend([
                          "description": "최신 플랜 제안에 대한 사용자 동의 원문 — 새 플랜·제안 흐름 일감은 필수"},
          "divergence": {"type": "string", "enum": ["none", "add", "revise", "flip"],
                         "description": "#1040 — 답이 추천 1번과 얼마나 어긋나나(관문이 켜진 프로젝트)"},
-         "divergence_reason": {"type": "string"}}}},
+         "divergence_reason": {"type": "string"},
+         "answer_context": {"type": "object", "description": "현재 턴 prompt_id, 문맥 판단 action(confirm/followup/stop), 보기 선택이면 option"}}}},
     {"name": "plan_propose",
      "description": "플랜 확정의 첫 칸 — 태스크 목록·개발 완료 체크리스트·자율성 값(0~1, 비우면 지금 값 또는 0.5)을 "
                     "일감에 제안 노트로 남긴다. 본문은 바뀌지 않는다. 사용자가 동의하면 같은 목록과 user_answer 로 "
@@ -1873,7 +1876,8 @@ TOOLS.extend([
          "category": {"type": "string", "description": "classify 에서만 — bug · modify · feature …"},
          "divergence": {"type": "string", "enum": ["none", "add", "revise", "flip"],
                         "description": "#1040 — 답이 추천 1번과 얼마나 어긋나나(관문이 켜진 프로젝트)"},
-         "divergence_reason": {"type": "string"}}}},
+         "divergence_reason": {"type": "string"},
+         "answer_context": {"type": "object", "description": "현재 턴 prompt_id, 문맥 판단 action(confirm/followup/stop), 보기 선택이면 option"}}}},
     {"name": "interview_ask",
      "description": "사용자에게 묻기 전에 질문을 장부에 등록한다(#1040). stage: classify · investigate · specify · "
                     "reproduce · impact · spec · plan · decision. recommended 는 가장 추천하는 방안(필수), "
@@ -1889,7 +1893,7 @@ TOOLS.extend([
          "recommended": {"type": "string"},
          "alternatives": {"type": "array", "items": {"type": "string"}, "maxItems": 3},
          "confidence": {"type": "integer", "minimum": 0, "maximum": 100},
-         "gaps": {"type": "string"}}}},
+         "gaps": {"type": "string"}, "prompt_id": {"type": "string", "description": "현재 턴 입력 훅이 발급한 ID"}}}},
     {"name": "interview_spec",
      "description": "착수 전 인터뷰의 마지막 — 확정 스펙(여섯 항목 제목)을 일감 본문의 스펙 영역(ax:spec)에 쓴다. "
                     "모든 단계가 기록돼 있어야 열린다. 영역 밖 본문은 그대로 둔다. user_answer 는 요약에 대한 사용자 "
@@ -1900,7 +1904,8 @@ TOOLS.extend([
          "user_answer": {"type": "string"},
          "divergence": {"type": "string", "enum": ["none", "add", "revise", "flip"],
                         "description": "#1040 — 답이 추천 1번과 얼마나 어긋나나(관문이 켜진 프로젝트)"},
-         "divergence_reason": {"type": "string"}}}},
+         "divergence_reason": {"type": "string"},
+         "answer_context": {"type": "object", "description": "현재 턴 prompt_id, 문맥 판단 action(confirm/followup/stop), 보기 선택이면 option"}}}},
     {"name": "plan_transition",
      "description": "플랜 태스크 하나의 상태를 바꾼다 — 상태를 바꾸는 유일한 쓰기. to: 작업중 · 완료 · 차단 · "
                     "해당없음 · 대기. 완료는 근거(커밋 해시·검사 결과), 차단·해당없음은 사유가 note 에 필수다. "

@@ -122,10 +122,13 @@ PowerShell 기준 변수(체크아웃 루트에서):
    필수, `category` 는 분류 단계에서만). 「다르다」면 그 단계를 다시 기록한다 — 최신 노트가 기준이다. 응답의
    `next` 가 다음 단계다. 질문은 한 턴에 하나, 가설·추정 답을 먼저 보인다. 스펙 영역을 쓴 턴은 거기서 멈춘다.
    🔴 `#1040` — 묻기 **전에** `ax-client:interview_ask` 로 질문을 등록한다(stage · 추천 1번 필수 · 대안 0~3 ·
-   확신도 0~100, 70 미만이면 gaps). 「1. 추천 … 2. … 3. …」 로 묻고 보기 밖 채팅 답도 받는다. `user_answer` 는 사용자가
-   친 문장 **그대로**, `divergence` 는 추천 1번과의 어긋남(none·add·revise·flip)과 `divergence_reason` 이다. 관문이 켜진
-   프로젝트는 질문 없이·원문과 다른 답·자유 의견으로는 기록이 거절된다(자유 의견은 반영해 다시 묻는다). 스펙 영역
-   (`ax-client:interview_spec`)·플랜 등록(`ax-client:plan_set`)도 같다 — stage 는 `spec`·`plan`.
+   확신도 0~100, 70 미만이면 gaps). 관문이 켜져 있으면 현재 입력 훅의 `prompt_id` 로 질문을 등록한다.
+   「1. 추천 … 2. … 3. …」로 묻고 보기 밖 의견도 받는다. 질문과 답변을 함께 읽어 의미를 판단한다.
+   `user_answer`는 사용자 원문, `answer_context`에는 현재 `prompt_id`, `action`(동의·선택은 confirm,
+   보강·수정·모호한 답은 followup, 중단은 stop), 보기 선택 시 `option`(1부터)을 적는다.
+   `divergence`(none·add·revise·flip)와 `divergence_reason`으로 해석 근거를 남긴다.
+   `followup_required`면 의견을 반영한 질문을 같은 단계에 등록해 보여 준다.
+   스펙 영역(`ax-client:interview_spec`)과 플랜 등록(`ax-client:plan_set`)도 같은 계약을 따른다.
    판정이 `resume`·`next` 면 그 턴에 이어 간다 — 멈추는 것은 물을 것이 있을 때(stage `decision` 으로 등록) ·
    사용자가 멈추라고 했을 때 · 검사가 실패했을 때(§8 대로 보고)뿐이다. 관문이 켜지면 `Stop` 훅이 그 밖의 종료를 막는다.
 

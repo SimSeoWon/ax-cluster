@@ -107,6 +107,7 @@ class PlanSetReq(_IssueReq):
     user_answer: str = ""
     divergence: str = ""             # #1040 — 관문이 켜진 프로젝트의 동의 답 판정
     divergence_reason: str = ""
+    answer_context: dict | None = None
 
 
 class PlanTransitionReq(_IssueReq):
@@ -136,6 +137,7 @@ class InterviewStepReq(_IssueReq):
     category: str = ""
     divergence: str = ""             # #1040
     divergence_reason: str = ""
+    answer_context: dict | None = None
 
 
 class InterviewSpecReq(_IssueReq):
@@ -143,6 +145,7 @@ class InterviewSpecReq(_IssueReq):
     user_answer: str
     divergence: str = ""             # #1040
     divergence_reason: str = ""
+    answer_context: dict | None = None
 
 
 class InterviewPromptReq(BaseModel):
@@ -990,7 +993,8 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         from .. import plan_tools
         return _plan_call("set", req, lambda p: plan_tools.set_plan(
             req.issue_id, req.tasks, req.why, user_answer=req.user_answer, caller=f"8101:{p}",
-            divergence=req.divergence, divergence_reason=req.divergence_reason, project=p))
+            divergence=req.divergence, divergence_reason=req.divergence_reason, project=p,
+            answer_context=req.answer_context))
 
     @app.post("/api/v1/plan/propose")
     def plan_propose_ep(req: PlanProposeReq):
@@ -1020,7 +1024,8 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         from .. import interview
         return _plan_call("interview_step", req, lambda p: interview.record(
             req.issue_id, req.step, req.result, req.user_answer, category=req.category,
-            divergence=req.divergence, divergence_reason=req.divergence_reason, project=p))
+            divergence=req.divergence, divergence_reason=req.divergence_reason, project=p,
+            answer_context=req.answer_context))
 
     @app.post("/api/v1/interview/ask")
     def interview_ask_ep(req: InterviewAskReq):
@@ -1076,7 +1081,7 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         from .. import interview
         return _plan_call("interview_spec", req, lambda p: interview.write_spec(
             req.issue_id, req.content, req.user_answer, divergence=req.divergence,
-            divergence_reason=req.divergence_reason, project=p))
+            divergence_reason=req.divergence_reason, project=p, answer_context=req.answer_context))
 
     @app.post("/api/v1/signals")
     def writer_signal_ep(req: WriterSignalReq):

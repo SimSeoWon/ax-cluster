@@ -1,5 +1,5 @@
-"""대화 장부(`#1040`) 계약 테스트 — [중요] **질문 없이·지어낸 답·딴 얘기로는 단계가 기록되지 않는가,
-추천 선택은 확신도를 올리고 수정 요청은 깎는가, 등급이 답의 형태와 어긋나면 거절되는가.**
+"""대화 장부(`#1040`·`#1051`) 계약 테스트 — 실제 문답의 원문·세션과 LLM의 해석을 대조하고,
+확정·후속 질문·중단을 구분하는지 확인한다.
 
 임시 디렉토리만 쓴다 — 실 트윈 루트·Redmine 을 건드리지 않는다.
 실행: .venv/bin/python master/test_interview_ledger.py
@@ -35,6 +35,10 @@ def refused(fn, *a, **kw) -> str:
     return ""
 
 
+def prompt(root, text):
+    return L.record_prompt(root, text, session="codex", source="test")["id"]
+
+
 def t_ask_rules(root):
     ok = L.ask(root, 7, "classify", "버그인가?", "버그", ["수정", "둘로"], 60, "재현 여부")
     check("질문 등록", ok["ok"] and ok["confidence"] == 60 and ok["alternatives"] == ["수정", "둘로"], str(ok))
@@ -49,9 +53,10 @@ def t_ask_rules(root):
     check("앞 질문은 대체된다", len(qs) == 1 and qs[0]["question"] == "다시 묻기", str(qs))
 
 
-def t_judge_no_question(root):
-    L.record_prompt(root, "1번", source="test")
-    why = refused(L.judge, root, 8, "classify", "1번", divergence=L.NONE)
+def t_no_question(root):
+    answer = "1번"
+    why = refused(L.assess_answer, root, 8, "classify", answer, prompt_id=prompt(root, answer),
+                  action=L.CONFIRM, divergence=L.NONE, divergence_reason="추천 선택", option=1)
     check("질문 미등록 거절", "등록된 질문이 없다" in why, why)
 
 
@@ -76,60 +81,59 @@ def t_session_answers(root):
     check("지나간 턴 입력 ID는 재사용할 수 없다", "현재 사용자 입력" in why, why)
 
 
-def t_judge_fabricated(root):
-    L.ask(root, 9, "classify", "q", "버그", ["수정"], 80)
-    why = refused(L.judge, root, 9, "classify", "응", divergence=L.NONE)
-    check("질문 뒤 실제 입력 없음 → 원문 불일치 거절", "원문" in why, why)
-    L.record_prompt(root, "1번으로 가자")
-    why = refused(L.judge, root, 9, "classify", "1번으로 가자요", divergence=L.NONE)
+def t_fabricated_answer(root):
+    asked_by = prompt(root, "응")
+    L.ask(root, 9, "classify", "q", "버그", ["수정"], 80, prompt_id=asked_by)
+    decision = dict(action=L.CONFIRM, divergence=L.NONE, divergence_reason="추천 선택", option=1)
+    why = refused(L.assess_answer, root, 9, "classify", "응", prompt_id=asked_by, **decision)
+    check("질문 전 입력은 답변으로 쓸 수 없다", "답변보다 먼저 등록된 질문" in why, why)
+    answer_id = prompt(root, "1번으로 가자")
+    why = refused(L.assess_answer, root, 9, "classify", "1번으로 가자요", prompt_id=answer_id, **decision)
     check("원문이 다르면 거절", "원문" in why, why)
 
 
-def t_judge_2215(root):
+def t_unrelated_answer(root):
     """기준선 재현 R1 — #1037 22:15 답 원문은 승인으로 기록되지 않는다."""
-    L.ask(root, 1037, "classify", "신규 기능으로 볼까?", "신규 기능", ["수정"], 60, "분류 근거")
-    L.record_prompt(root, ANS_2215)
-    why = refused(L.judge, root, 1037, "classify", ANS_2215, divergence=L.NONE)
-    check("22:15 원문 + 어긋남 없음 → 거절(등급 불일치)", "어긋남 없음" in why, why)
-    why = refused(L.judge, root, 1037, "classify", ANS_2215, divergence=L.FLIP,
-                  divergence_reason="분류 질문에 답하지 않고 다른 작업을 지시")
-    check("22:15 원문 + 뒤집기 → 수정 요청 거절", "수정 요청" in why and "60 → 0" in why, why)
-    check("수정 요청으로 닫힌 질문은 다시 쓰지 못한다",
-          "등록된 질문이 없다" in refused(L.judge, root, 1037, "classify", ANS_2215, divergence=L.FLIP,
-                                    divergence_reason="x"))
+    L.ask(root, 1037, "classify", "신규 기능으로 볼까?", "신규 기능", ["수정"], 60, "분류 근거",
+          prompt_id=prompt(root, "1037 진행"))
+    decision = dict(prompt_id=prompt(root, ANS_2215), action=L.FOLLOWUP, divergence=L.FLIP,
+                    divergence_reason="분류 질문에 답하지 않고 다른 작업을 지시")
+    got = L.assess_answer(root, 1037, "classify", ANS_2215, **decision)
+    check("22:15 원문 → 후속 질문 필요, 원문 보존", got["ok"] and got["status"] == "followup_required"
+          and got["user_answer"] == ANS_2215 and "60 → 0" in got["note_line"], str(got))
+    why = refused(L.assess_answer, root, 1037, "classify", ANS_2215, **decision)
+    check("후속 질문 필요로 기록한 답을 확정에 재사용할 수 없다", "등록된 질문이 없다" in why, why)
 
 
-def t_judge_pick_and_confidence(root):
-    L.ask(root, 10, "specify", "이대로?", "확정", ["입력 장부 제외", "①④만"], 60, "범위")
-    L.record_prompt(root, "1번으로 확정하자")
-    got = L.judge(root, 10, "specify", "1번으로 확정하자", divergence=L.NONE)
-    check("추천 선택 → 확신도 상승", got["kind"] == "recommended" and got["confidence_after"] == 80, str(got))
+def t_choices_and_confidence(root):
+    L.ask(root, 10, "specify", "이대로?", "확정", ["입력 장부 제외", "①④만"], 60, "범위",
+          prompt_id=prompt(root, "이어서"))
+    answer = "그대로 확정하자"
+    got = L.assess_answer(root, 10, "specify", answer, prompt_id=prompt(root, answer), action=L.CONFIRM,
+                          divergence=L.NONE, divergence_reason="공개된 추천 내용에 동의", option=1)
+    check("추천 선택 → 확신도 상승 및 판단 근거", got["status"] == "answered" and got["pick"] == 1
+          and "60 → 80" in got["note_line"] and "공개된 추천 내용에 동의" in got["note_line"], str(got))
 
-    L.ask(root, 10, "impact", "q", "r", ["a", "b"], 70)
-    L.record_prompt(root, "2번")
-    why = refused(L.judge, root, 10, "impact", "2번", divergence=L.NONE)
-    check("다른 보기에 어긋남 없음 → 거절", "어긋남 없음" in why, why)
-    L.record_prompt(root, "2번")
-    got = L.judge(root, 10, "impact", "2번", divergence=L.REVISE, divergence_reason="추천 대신 대안")
-    check("다른 보기 + 수정 → 절반", got["kind"] == "alternative" and got["confidence_after"] == 35, str(got))
+    L.ask(root, 10, "impact", "어느 방안?", "등록 워커 전부", ["마스터만", "마스터와 .33"], 70,
+          prompt_id=prompt(root, "범위 정하자"))
+    answer = "마스터로만 가자"
+    choice = dict(prompt_id=prompt(root, answer), action=L.CONFIRM, divergence_reason="대안의 마스터만 선택")
+    why = refused(L.assess_answer, root, 10, "impact", answer, **choice, divergence=L.REVISE, option=4)
+    check("등록된 보기를 벗어난 선택 번호 거절", "보기 범위" in why, why)
+    why = refused(L.assess_answer, root, 10, "impact", answer, **choice, divergence=L.NONE, option=2)
+    check("다른 보기에 어긋남 없음 → 거절", "차이를 기록" in why, why)
+    got = L.assess_answer(root, 10, "impact", answer, **choice, divergence=L.REVISE, option=2)
+    check("자연어 대안 선택은 확인 상태로 기록", got["status"] == "answered" and got["pick"] == 2
+          and got["user_answer"] == answer and "70 → 35" in got["note_line"], str(got))
 
-    L.ask(root, 10, "plan", "q", "r", [], 90)
-    L.record_prompt(root, "1번으로 가자. 근데 로그도 남겨")
-    got = L.judge(root, 10, "plan", "1번으로 가자. 근데 로그도 남겨", divergence=L.ADD,
-                  divergence_reason="로그 요구 추가")
-    check("추천 + 보탬 → 보강 −10", got["confidence_after"] == 80 and "보강" in got["note_line"], str(got))
-    why = refused(L.judge, root, 10, "plan", "x", divergence="")
+    L.ask(root, 10, "plan", "q", "r", [], 90, prompt_id=prompt(root, "플랜 보자"))
+    answer = "그걸로 가자. 근데 로그도 남겨"
+    decision = dict(prompt_id=prompt(root, answer), action=L.FOLLOWUP, divergence_reason="로그 요구 추가", option=1)
+    why = refused(L.assess_answer, root, 10, "plan", answer, **decision, divergence="")
     check("등급 누락 거절", "divergence" in why, why)
-
-
-def t_affirm(root):
-    for text, want in (("응", "affirm"), ("응 진행해!", "affirm"), ("응! 1040에 노트로 붙여", "free"),
-                       ("1번으로 직접 진행해", "recommended"), ("3번", "alternative"), ("그래 근데 바꿔", "free"),
-                       ("ok", "affirm")):
-        kind, _ = L.classify_answer(text, 2)
-        check(f"답 형태 {text!r} → {want}", kind == want, kind)
-    kind, _ = L.classify_answer("4번", 2)
-    check("대안 수를 넘는 번호는 보기 선택이 아니다", kind == "free", kind)
+    got = L.assess_answer(root, 10, "plan", answer, **decision, divergence=L.ADD)
+    check("추천 + 보탬 → 후속 질문 필요 및 확신도 감소", got["status"] == "followup_required"
+          and "90 → 80" in got["note_line"] and "보강" in got["note_line"], str(got))
 
 
 def t_open_questions(root):
@@ -174,17 +178,27 @@ def t_record_gate(root):
             return str(e)
         return ""
 
-    why = refused_iv(1037, "classify", "버그로 예측", "응", divergence=L.NONE, **kw)
+    answer = "응"
+    why = refused_iv(1037, "classify", "버그로 예측", answer, divergence=L.NONE,
+                     divergence_reason="추천에 동의", **kw,
+                     answer_context={"prompt_id": prompt(root, answer), "action": L.CONFIRM, "option": 1})
     check("[중요] 관문 켬 — 질문 없이 분류 기록 거절", "등록된 질문이 없다" in why and not notes, why)
-    L.ask(root, 1037, "classify", "버그인가?", "버그", ["수정"], 60, "재현 여부")
-    L.record_prompt(root, ANS_2215)
-    why = refused_iv(1037, "classify", "버그로 예측", ANS_2215, divergence=L.FLIP, divergence_reason="딴 지시", **kw)
-    check("[중요] 관문 켬 — 22:15 원문은 수정 요청으로 거절·노트 0", "수정 요청" in why and not notes, why)
-    L.ask(root, 1037, "classify", "다시 — 버그인가?", "버그", ["수정"], 50, "재현 여부")
-    L.record_prompt(root, "1번 버그로 가자")
-    got = IV.record(1037, "classify", "버그로 예측", "1번 버그로 가자", divergence=L.NONE, **kw)
+    L.ask(root, 1037, "classify", "버그인가?", "버그", ["수정"], 60, "재현 여부",
+          prompt_id=prompt(root, "1037 진행"))
+    answer_id = prompt(root, ANS_2215)
+    got = IV.record(1037, "classify", "버그로 예측", ANS_2215, divergence=L.FLIP, divergence_reason="딴 지시", **kw,
+                    answer_context={"prompt_id": answer_id, "action": L.FOLLOWUP})
+    check("[중요] 관문 켬 — 22:15 원문은 후속 질문 필요·노트 0", got["ok"]
+          and got["status"] == "followup_required" and got["next"] == "classify" and got["written"] == []
+          and got["user_answer"] == ANS_2215 and not notes, str(got))
+    L.ask(root, 1037, "classify", "실증은 다음 단계에 넣고 지금은 버그로 분류할까요?", "버그", ["수정"],
+          50, "재현 여부", prompt_id=answer_id)
+    answer = "실증도 하고 버그로 가자"
+    got = IV.record(1037, "classify", "버그로 예측", answer, divergence=L.NONE, **kw,
+                    divergence_reason="분류 질문에서 버그를 선택",
+                    answer_context={"prompt_id": prompt(root, answer), "action": L.CONFIRM, "option": 1})
     check("관문 켬 — 실제 답이면 기록 + 노트에 확신도", got["ok"] and "## 확신도" in notes[-1]
-          and "50 → 70" in notes[-1], notes[-1][-120:])
+          and "50 → 70" in notes[-1] and answer in notes[-1], notes[-1][-120:])
 
     got = IV.record(1038, "classify", "버그", "응", category="bug", getter=getter, noter=noter, ledger_root=root)
     check("[중요] 가짜 getter + gate 미지정 → 관문 꺼짐(실 설정을 읽지 않는다)", got["ok"], str(got)[:200])
@@ -197,19 +211,29 @@ def t_set_plan_gate(root):
     tasks = [{"id": "T1", "goal": "g"}]
     iss = TK.FakeIssue(TK.spec_body())
     TK.propose(iss, 5, tasks)
+    kw = dict(getter=iss.get, updater=iss.update, ledger_root=root, gate=True)
+    answer = "1번으로 등록하자"
     try:
-        PT.set_plan(5, tasks, "등록", user_answer="1번으로 등록하자", getter=iss.get, updater=iss.update,
-                    divergence=L.NONE, ledger_root=root, gate=True)
+        PT.set_plan(5, tasks, "등록", user_answer=answer, divergence=L.NONE, divergence_reason="플랜 동의", **kw,
+                    answer_context={"prompt_id": prompt(root, answer), "action": L.CONFIRM, "option": 1})
         why = ""
     except PT.PlanToolError as e:
         why = str(e)
     check("[중요] 플랜 등록 — 질문 없으면 거절", "등록된 질문이 없다" in why, why)
-    L.ask(root, 5, "plan", "이 플랜 등록?", "등록", ["자율성 변경"], 80)
-    L.record_prompt(root, "1번으로 등록하자")
-    got = PT.set_plan(5, tasks, "등록", user_answer="1번으로 등록하자", getter=iss.get, updater=iss.update,
-                      divergence=L.NONE, ledger_root=root, gate=True)
+    L.ask(root, 5, "plan", "이 플랜 등록?", "등록", ["자율성 변경"], 80, prompt_id=prompt(root, "플랜 확인"))
+    writes = len(iss.writes)
+    answer = "검증도 같이 적어줘"
+    answer_id = prompt(root, answer)
+    got = PT.set_plan(5, tasks, "등록", user_answer=answer, divergence=L.ADD, divergence_reason="검증 계획 보강", **kw,
+                      answer_context={"prompt_id": answer_id, "action": L.FOLLOWUP})
+    check("플랜 보강 의견 — 후속 질문 필요, 본문과 노트 무변경", got["ok"] and got["status"] == "followup_required"
+          and got["next"] == "plan" and len(iss.writes) == writes, str(got))
+    L.ask(root, 5, "plan", "검증 내용을 함께 적은 플랜을 등록할까요?", "등록", [], 80, prompt_id=answer_id)
+    answer = "그렇게 등록하자"
+    got = PT.set_plan(5, tasks, "등록", user_answer=answer, divergence=L.NONE, divergence_reason="보강안 동의", **kw,
+                      answer_context={"prompt_id": prompt(root, answer), "action": L.CONFIRM, "option": 1})
     check("플랜 등록 — 실제 동의면 통과 + 노트에 확신도", got["ok"] and "확신도: 확신도 80 → 100"
-          in iss.writes[-1][1], iss.writes[-1][1][-160:])
+          in iss.writes[-1][1] and answer in iss.writes[-1][1], iss.writes[-1][1][-160:])
 
 
 def t_failures(root):
@@ -278,8 +302,8 @@ def t_stop_check(root):
 
 
 def main() -> int:
-    for fn in (t_ask_rules, t_judge_no_question, t_session_answers, t_judge_fabricated, t_judge_2215, t_judge_pick_and_confidence,
-               t_affirm, t_open_questions, t_record_gate, t_set_plan_gate, t_failures,
+    for fn in (t_ask_rules, t_no_question, t_session_answers, t_fabricated_answer, t_unrelated_answer,
+               t_choices_and_confidence, t_open_questions, t_record_gate, t_set_plan_gate, t_failures,
                t_stop_check):
         with tempfile.TemporaryDirectory(prefix="ax-ledger-") as d:
             try:
