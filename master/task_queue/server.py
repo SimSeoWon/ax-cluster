@@ -154,6 +154,14 @@ class InterviewPromptReq(BaseModel):
     source: str = ""
 
 
+class InterviewStopReq(BaseModel):
+    """`#1040` — Stop 훅이 「지금 턴을 끝내도 되나」를 묻는다."""
+    model_config = ConfigDict(extra="forbid")
+    project: str = ""
+    session: str = ""
+    stop_hook_active: bool = False
+
+
 class InterviewAskReq(_IssueReq):
     """`#1040` — 묻기 전에 질문 장부에 등록한다."""
     stage: str
@@ -1037,6 +1045,26 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         _tq_log(f"[ledger] prompt project={p} source={req.source or '-'} len={len(req.text)} → ok={got.get('ok')}",
                 root)
         return got
+
+    @app.post("/api/v1/interview/stop")
+    def interview_stop_ep(req: InterviewStopReq):
+        """멈춤 판정(`#1040` ②) — 잠금 활성 + 판정 resume/next + 정당 사유 없음이면 block. 오류는 막지 않는다."""
+        from .. import interview_ledger, issue_lock, plan_tools
+        bad = _mount_gate(req.project, require=True)
+        if bad:
+            return {**bad, "block": False}
+        p = getattr(_mount_gate, "last", "") or req.project.strip()
+        try:
+            active = issue_lock.current(issue_lock.default_root(p))
+            n = active["issue_id"] if active else None
+            verdict = plan_tools.start(n, project=p, materials=False) if n else None
+            got = interview_ledger.stop_check(interview_ledger.default_root(p), active_issue=n, verdict=verdict,
+                                              session=req.session)
+        except Exception as e:                               # noqa: BLE001 — fail-open
+            got = {"block": False, "reason": f"판정 실패 {type(e).__name__}: {e}"[:200], "error": True}
+        _tq_log(f"[ledger] stop project={p} session={req.session[:12] or '-'} → block={got.get('block')} "
+                f"{str(got.get('reason') or '')[:160]}", root)
+        return {"ok": True, **got}
 
     @app.post("/api/v1/interview/spec")
     def interview_spec_ep(req: InterviewSpecReq):

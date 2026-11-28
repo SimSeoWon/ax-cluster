@@ -229,9 +229,37 @@ def t_failures(root):
     check("rc bool 거절", "정수" in refused(L.record_check, root, 1, "c", True))
 
 
+def t_stop_check(root):
+    """T5 — 멈춤 판정. 00:27 재현: resume 인데 사유 없이 끝내면 막는다."""
+    res = {"verdict": "resume", "tasks": ["T3"]}
+    got = L.stop_check(root, active_issue=1039, verdict=res, session="s")
+    check("[중요] 00:27 — 잠금 활성 + resume + 사유 없음 → block", got["block"] and "resume" in got["reason"]
+          and "T3" in got["reason"], str(got))
+    check("[중요] 사유 문장에 명령형이 없다(사실만)", not any(w in got["reason"] for w in ("하라", "하세요", "해라", "할 것")),
+          got["reason"])
+    check("잠금 없음 → 통과", not L.stop_check(root, active_issue=None, verdict=res)["block"])
+    for v in ("stop", "plan_needed", "interview_needed", "plan_done", "blocked"):
+        check(f"판정 {v} → 통과", not L.stop_check(root, active_issue=1039, verdict={"verdict": v})["block"])
+    check("판정 모름(None) → 통과(fail-open)", not L.stop_check(root, active_issue=1039, verdict=None)["block"])
+    L.ask(root, 1039, "decision", "어느 쪽?", "A", ["B"], 80)
+    got = L.stop_check(root, active_issue=1039, verdict=res, session="s")
+    check("[중요] 답 대기 질문 있음 → 통과", not got["block"] and "답 대기" in got["reason"], str(got))
+    L.record_prompt(root, "A로 해", session="s")
+    check("답이 들어오면 다시 막는다", L.stop_check(root, active_issue=1039, verdict=res, session="s")["block"])
+    L.record_prompt(root, "일단 토큰 없으니 인수인계 작성하고 마무리하자", session="s")
+    got = L.stop_check(root, active_issue=1039, verdict=res, session="s")
+    check("[중요] 사용자 멈춤 지시(15:37 원문) → 통과", not got["block"] and "멈춤 지시" in got["reason"], str(got))
+    L.record_prompt(root, "계속", session="t")
+    blocks = [L.stop_check(root, active_issue=1039, verdict=res, session="t")["block"] for _ in range(4)]
+    check("연속 차단 상한 3 → 네 번째는 통과", blocks == [True, True, True, False], str(blocks))
+    L.record_prompt(root, "계속", session="t")
+    check("새 입력이면 차단 수 초기화", L.stop_check(root, active_issue=1039, verdict=res, session="t")["block"])
+
+
 def main() -> int:
     for fn in (t_ask_rules, t_judge_no_question, t_judge_fabricated, t_judge_2215, t_judge_pick_and_confidence,
-               t_affirm, t_open_questions, t_record_gate, t_set_plan_gate, t_failures):
+               t_affirm, t_open_questions, t_record_gate, t_set_plan_gate, t_failures,
+               t_stop_check):
         with tempfile.TemporaryDirectory(prefix="ax-ledger-") as d:
             try:
                 fn(Path(d))

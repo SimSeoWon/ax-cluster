@@ -314,8 +314,16 @@ def test_ledger_routes_live() -> None:
         check("[중요] 입력 원문은 큐 로그에 남지 않는다", secret not in tq_logs)
         r = c.post("/api/v1/interview/prompt", json={"text": secret}, headers=H)
         check("[중요] 태그 없음 → no_project_tag", r.json().get("status") == "no_project_tag", r.text[:200])
+        r = c.post("/api/v1/interview/stop", json={"project": "AXCluster", "session": "s"}, headers=H)
+        j = r.json()
+        check("[중요] 멈춤 판정 — 잠금 없음 → 200 · block False", r.status_code == 200 and j.get("block") is False
+              and "활성 일감 없음" in j.get("reason", ""), r.text[:200])
+        r = c.post("/api/v1/interview/stop", json={"session": "s"}, headers=H)
+        check("멈춤 판정 — 태그 없음 → 거절이지만 block False(fail-open)",
+              r.json().get("status") == "no_project_tag" and r.json().get("block") is False, r.text[:200])
         for path, body in (("/api/v1/interview/ask", ask),
-                           ("/api/v1/interview/prompt", {"project": "AXCluster", "text": "x"})):
+                           ("/api/v1/interview/prompt", {"project": "AXCluster", "text": "x"}),
+                           ("/api/v1/interview/stop", {"project": "AXCluster"})):
             r = c.post(path, json=body, headers={"Authorization": f"Bearer {wrk_t}"})
             check(f"[중요] worker 토큰 → 403 ({path})", r.status_code == 403, str(r.status_code))
     finally:

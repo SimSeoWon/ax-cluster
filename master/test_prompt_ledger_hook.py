@@ -1,4 +1,5 @@
-"""입력 장부 훅(`#1040` T2) — [중요] **사용자 입력 원문을 8101 로 보내고, 실패해도 세션을 막지 않는가.**
+"""입력 장부 훅(`#1040` T2)·멈춤 판정 훅(T5) — [중요] **원문을 8101 로 보내는가, 서버가 막으라 할 때만 막는가,
+실패해도 세션을 막지 않는가.**
 
 가짜 클라(`.ax/lib/axmaster/clientside/client_mcp.py`)를 임시 체크아웃에 심어 돌린다 — 실 마스터를 부르지 않는다.
 실행: .venv/bin/python master/test_prompt_ledger_hook.py
@@ -12,7 +13,9 @@ import sys
 import tempfile
 from pathlib import Path
 
-HOOK = Path(__file__).resolve().parent / "client" / "workshop" / "hooks" / "prompt_ledger.py"
+HOOKS = Path(__file__).resolve().parent / "client" / "workshop" / "hooks"
+HOOK = HOOKS / "prompt_ledger.py"
+STOP = HOOKS / "stop_gate.py"
 PASS = FAIL = 0
 
 FAKE = '''
@@ -28,6 +31,8 @@ def queue_api(root):
             raise RuntimeError("[미연결] 마스터에 닿지 않는다")
         if mode == "refuse":
             return {"ok": False, "status": "not_mounted"}
+        if mode == "block":
+            return {"ok": True, "block": True, "reason": "[AX 멈춤 판정] #1039 판정 resume"}
         return {"ok": True}
     return api
 '''
@@ -42,11 +47,11 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         print(f"  [실패] {name}" + (f" — {detail}" if detail else ""))
 
 
-def run(root: Path, payload, mode: str = "ok", extra=()) -> tuple[subprocess.CompletedProcess, dict]:
+def run(root: Path, payload, mode: str = "ok", extra=(), hook: Path = HOOK) -> tuple[subprocess.CompletedProcess, dict]:
     calls = root / "calls.json"
     calls.unlink(missing_ok=True)
     env = {"CALLS": str(calls), "FAKE_MODE": mode, "PATH": "/usr/bin:/bin", "PYTHONIOENCODING": "utf-8"}
-    p = subprocess.run([sys.executable, "-I", str(HOOK), "--root", str(root), *extra],
+    p = subprocess.run([sys.executable, "-I", str(hook), "--root", str(root), *extra],
                        input=payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False),
                        capture_output=True, text=True, env=env, timeout=30)
     return p, (json.loads(calls.read_text(encoding="utf-8")) if calls.is_file() else {})
@@ -80,6 +85,20 @@ def main() -> int:
         check("빈 입력은 보내지 않는다", p.returncode == 0 and not call, str(call))
         p, call = run(root, "not json")
         check("JSON 아님 → 조용히 rc 0", p.returncode == 0 and not call and p.stderr == "", p.stderr)
+
+        stop = {"session_id": "s-9", "stop_hook_active": True, "hook_event_name": "Stop", "cwd": str(root)}
+        p, call = run(root, stop, mode="block", hook=STOP)
+        out = json.loads(p.stdout or "{}")
+        check("[중요] Stop — 서버가 block 이면 decision block + 사실 사유", p.returncode == 0
+              and out.get("decision") == "block" and "resume" in out.get("reason", ""), p.stdout + p.stderr)
+        check("Stop — 판정 라우트·세션·stop_hook_active 전달", call.get("path") == "/api/v1/interview/stop"
+              and call["payload"] == {"session": "s-9", "stop_hook_active": True}, str(call))
+        check("Stop — stdout 은 ASCII(윈도우 콘솔 안전)", p.stdout.isascii(), p.stdout)
+        p, _ = run(root, stop, mode="ok", hook=STOP)
+        check("Stop — block 아님 → stdout 비움", p.returncode == 0 and p.stdout == "", p.stdout)
+        p, _ = run(root, stop, mode="raise", hook=STOP)
+        check("[중요] Stop — 마스터 실패 → 막지 않음(fail-open) + stderr 한 줄", p.returncode == 0
+              and p.stdout == "" and "[멈춤 판정]" in p.stderr, p.stdout + p.stderr)
 
         bare = root / "bare"
         bare.mkdir()
