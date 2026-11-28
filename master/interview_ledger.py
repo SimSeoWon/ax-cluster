@@ -1,0 +1,264 @@
+"""대화 장부 — 질문 장부와 입력 장부, 그리고 답 판정 (`#1040`).
+
+사용자 결정(2026-11-28, #1040 인터뷰 노트): 인터뷰·플랜 단계는 **사용자와 실제 문답이 있었을 때만** 기록된다.
+산문 규칙(「명시적 「예」」)은 지휘 모델이 「해당 없음」으로 넘길 수 있어서 #1037(11-27 22:15)에서
+승인 아닌 답이 분류 승인으로 기록됐다. 이 모듈은 그 판정을 코드로 옮긴다.
+
+    질문 장부   ask(issue, stage, question, recommended, alternatives, confidence, gaps)
+                — 단계마다 묻기 전에 등록한다. 추천 1번 필수 · 대안 0~3 · 확신도 0~100.
+    입력 장부   record_prompt(text, session, source)
+                — `UserPromptSubmit` 훅이 사용자의 **실제 입력 원문**을 적는다(모델이 쓰지 않는다).
+    판정        judge(issue, stage, user_answer, divergence, divergence_reason)
+                — ① 그 단계의 질문이 있다 ② 답이 질문 **뒤** 실제 입력과 원문으로 같다
+                  ③ 답이 보기 선택이거나 명시적 긍정이다. 자유 의견이면 「수정 요청」으로 돌려준다.
+                — 확신도: 추천 선택·어긋남 없음이면 오르고, 보강·수정·뒤집기면 깎인다.
+                  어긋남 등급과 이유는 에이전트가 적고, 계산과 일관성 검사는 여기서 한다.
+
+[주의] 확신도 점수로 진행을 막지 않는다 — 에이전트 자기 평가라 검증할 수 없다(사용자 결정). 막는 것은
+검증할 수 있는 것(질문 등록 · 원문 일치 · 답의 형태 · 등급의 일관성)뿐이다.
+[주의] 깎는 폭은 첫 값이다 — 실사용하며 고친다(사용자 결정, #1040 열린 결정).
+
+관문은 프로젝트 트윈 `config.yaml` 의 `interview_gate: enforce` 일 때만 켜진다(기본 꺼짐). 훅 배달이
+서버 조임보다 먼저다(`docs/13` §13.6) — 배달·check 를 확인한 뒤 켠다.
+"""
+from __future__ import annotations
+
+import fcntl
+import json
+import os
+import re
+from contextlib import contextmanager
+from datetime import datetime
+from pathlib import Path
+from uuid import uuid4
+
+SCHEMA = 1
+STATE_NAME = "interview_ledger.json"
+LOCK_NAME = ".interview_ledger.lock"
+CAP = 300                                   # 질문·입력 각각 최근 N 건만 남긴다
+
+STEPS = ("classify", "investigate", "specify", "reproduce", "impact")
+STAGES = STEPS + ("spec", "plan", "decision")   # decision = 인터뷰 밖 진행 중 결정(멈춤 사유로도 쓴다)
+GATED = STEPS + ("spec", "plan")
+MAX_ALTERNATIVES = 3
+GAPS_BELOW = 70                             # 이보다 낮으면 「빈 것」을 적어야 한다
+
+NONE, ADD, REVISE, FLIP = "none", "add", "revise", "flip"
+DIVERGENCE = {NONE: "어긋남 없음", ADD: "보강", REVISE: "수정", FLIP: "뒤집기"}
+RAISE = 20                                  # 추천 선택·어긋남 없음
+
+GATE_KEY, GATE_ON = "interview_gate", "enforce"
+
+
+class LedgerError(ValueError):
+    """장부 규칙 거절 — 사유 문장을 담는다. 아무것도 쓰지 않았다."""
+
+
+# ── 저장 ────────────────────────────────────────────────────────────────────
+
+def default_root(project: str = "") -> Path:
+    from master import issue_lock as IL
+    return IL.default_root(project) if project else IL.default_root()
+
+
+def _path(root) -> Path:
+    return Path(root) / STATE_NAME
+
+
+def _now() -> str:
+    return datetime.now().astimezone().isoformat(timespec="microseconds")
+
+
+def _load(root) -> dict:
+    p = _path(root)
+    if not p.exists():
+        return {"schema": SCHEMA, "questions": [], "prompts": []}
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise LedgerError(f"대화 장부를 못 읽었다 ({p}: {type(e).__name__}) — 덮어쓰지 않았다") from e
+    if (not isinstance(data, dict) or data.get("schema") != SCHEMA
+            or not isinstance(data.get("questions"), list) or not isinstance(data.get("prompts"), list)):
+        raise LedgerError(f"대화 장부 형식이 아니다 ({p}) — 덮어쓰지 않았다")
+    return data
+
+
+def _save(root, data: dict) -> None:
+    for key in ("questions", "prompts"):
+        if len(data[key]) > CAP:
+            del data[key][:len(data[key]) - CAP]
+    p = _path(root)
+    tmp = p.with_name(f"{STATE_NAME}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+    os.replace(tmp, p)
+
+
+@contextmanager
+def _locked(root):
+    d = Path(root)
+    d.mkdir(parents=True, exist_ok=True)
+    with open(d / LOCK_NAME, "a+") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
+def gate_enabled(project: str = "", *, registry=None) -> bool:
+    """프로젝트 트윈 `config.yaml` 의 `interview_gate: enforce` — 기본 꺼짐. 못 읽으면 꺼짐(종전 동작)."""
+    try:
+        if registry is None:
+            from master.projects.config import Registry
+            registry = Registry.load()
+        name = project or registry.active
+        return str(registry.config_of(name).raw.get(GATE_KEY, "")).strip() == GATE_ON
+    except Exception:                                    # noqa: BLE001 — 설정 못 읽음 = 관문 꺼짐
+        return False
+
+
+# ── 질문 장부 ────────────────────────────────────────────────────────────────
+
+def _text(value, what: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise LedgerError(f"{what} 이(가) 비었다")
+    return value.strip()
+
+
+def ask(root, issue_id, stage: str, question: str, recommended: str, alternatives=(), confidence=None,
+        gaps: str = "") -> dict:
+    """질문 하나를 등록한다. 같은 일감·단계의 답 안 받은 앞 질문은 이 질문으로 대체된다."""
+    n = int(issue_id)
+    if stage not in STAGES:
+        raise LedgerError(f"모르는 단계 {stage!r} — {list(STAGES)}")
+    q = _text(question, "질문")
+    rec = _text(recommended, "추천 1번")
+    alts = list(alternatives or [])
+    if len(alts) > MAX_ALTERNATIVES:
+        raise LedgerError(f"대안은 {MAX_ALTERNATIVES}개까지다 — 받은 {len(alts)}개")
+    alts = [_text(a, f"대안 {i + 2}번") for i, a in enumerate(alts)]
+    if isinstance(confidence, bool) or not isinstance(confidence, int) or not 0 <= confidence <= 100:
+        raise LedgerError("확신도는 0~100 정수다")
+    gaps = (gaps or "").strip()
+    if confidence < GAPS_BELOW and not gaps:
+        raise LedgerError(f"확신도 {confidence} < {GAPS_BELOW} — 무엇이 비었는지(gaps)를 적는다")
+    item = {"id": uuid4().hex[:12], "issue_id": n, "stage": stage, "at": _now(), "question": q,
+            "recommended": rec, "alternatives": alts, "confidence": confidence, "gaps": gaps,
+            "status": "open"}
+    with _locked(root):
+        data = _load(root)
+        for old in data["questions"]:
+            if old["issue_id"] == n and old["stage"] == stage and old["status"] == "open":
+                old["status"] = "replaced"
+        data["questions"].append(item)
+        _save(root, data)
+    return {"ok": True, **item, "log": [f"[ledger] #{n} {stage} 질문 등록 — 확신도 {confidence} · 대안 {len(alts)}"]}
+
+
+def open_questions(root, issue_id=None) -> list[dict]:
+    """답을 기다리는 질문 — 질문 뒤에 사용자 입력이 아직 없는 것."""
+    with _locked(root):
+        data = _load(root)
+    last_prompt = data["prompts"][-1]["at"] if data["prompts"] else ""
+    out = []
+    for q in data["questions"]:
+        if q["status"] != "open" or (issue_id is not None and q["issue_id"] != int(issue_id)):
+            continue
+        if not last_prompt or last_prompt < q["at"]:
+            out.append(dict(q))
+    return out
+
+
+# ── 입력 장부 ────────────────────────────────────────────────────────────────
+
+def record_prompt(root, text: str, *, session: str = "", source: str = "") -> dict:
+    """사용자 입력 원문 한 건 — 훅만 부른다. 빈 입력은 남기지 않는다."""
+    if not isinstance(text, str) or not text.strip():
+        return {"ok": False, "why": "빈 입력"}
+    item = {"id": uuid4().hex[:12], "at": _now(), "text": text, "session": str(session or "")[:80],
+            "source": str(source or "")[:40]}
+    with _locked(root):
+        data = _load(root)
+        data["prompts"].append(item)
+        _save(root, data)
+    return {"ok": True, "id": item["id"], "at": item["at"]}
+
+
+# ── 답 판정 ──────────────────────────────────────────────────────────────────
+
+# 명시적 긍정 — 낱말이 **전부** 이 목록이어야 한다(「응 진행해」는 긍정, 「응 근데 …」는 자유 의견).
+_AFFIRM_WORDS = frozenset((
+    "응", "네", "넵", "예", "그래", "좋아", "좋습니다", "맞아", "맞습니다", "이대로", "그대로", "그렇게",
+    "확정", "확정해", "확정하자", "진행", "진행해", "진행하자", "등록", "등록해", "등록하자",
+    "기록", "기록해", "기록하자", "가자", "해", "해줘", "ok", "okay", "yes"))
+_WORD = re.compile(r"[가-힣A-Za-z]+")
+_PICK = re.compile(r"(?:^|[^0-9])([1-4])\s*번")
+
+
+def _affirm(answer: str) -> bool:
+    words = [w.casefold() for w in _WORD.findall(answer)]
+    return bool(words) and all(w in _AFFIRM_WORDS for w in words)
+
+
+def classify_answer(answer: str, n_alternatives: int) -> tuple[str, int]:
+    """답의 형태 → (`recommended`·`alternative`·`affirm`·`free`, 고른 번호 또는 0)."""
+    m = _PICK.search(answer)
+    if m:
+        k = int(m.group(1))
+        if k == 1:
+            return "recommended", 1
+        if k - 1 <= n_alternatives:
+            return "alternative", k
+    if _affirm(answer):
+        return "affirm", 1
+    return "free", 0
+
+
+def confidence_after(before: int, divergence: str) -> int:
+    if divergence == NONE:
+        return min(100, before + RAISE)
+    if divergence == ADD:
+        return max(0, before - 10)
+    if divergence == REVISE:
+        return before // 2
+    return 0
+
+
+def judge(root, issue_id, stage: str, user_answer: str, *, divergence: str = "",
+          divergence_reason: str = "") -> dict:
+    """그 단계 질문에 대한 실제 답인지 판정하고 질문을 닫는다. 기록해도 되면 ok, 아니면 `LedgerError`.
+
+    자유 의견은 질문을 「수정 요청」으로 닫고(확신도 갱신) `LedgerError` — 에이전트는 반영해 다시 묻는다.
+    """
+    n = int(issue_id)
+    answer = _text(user_answer, "사용자 답")
+    if divergence not in DIVERGENCE:
+        raise LedgerError(f"어긋남 등급(divergence)을 적는다 — {list(DIVERGENCE)} 중 하나")
+    with _locked(root):
+        data = _load(root)
+        qs = [q for q in data["questions"] if q["issue_id"] == n and q["stage"] == stage and q["status"] == "open"]
+        if not qs:
+            raise LedgerError(f"#{n} {stage}: 등록된 질문이 없다 — interview_ask 로 먼저 묻고 실제 답을 받는다")
+        q = qs[-1]
+        match = [p for p in data["prompts"] if p["at"] > q["at"] and p["text"].strip() == answer]
+        if not match:
+            raise LedgerError(f"#{n} {stage}: 답이 질문 뒤 사용자의 실제 입력과 원문으로 같지 않다 — "
+                              "사용자가 입력한 문장을 그대로 넣는다")
+        kind, pick = classify_answer(answer, len(q["alternatives"]))
+        if kind in ("alternative", "free") and divergence == NONE:
+            raise LedgerError(f"#{n} {stage}: 추천 1번이 아닌 답({kind})에 「어긋남 없음」을 적을 수 없다")
+        if divergence != NONE and not (divergence_reason or "").strip():
+            raise LedgerError(f"#{n} {stage}: 어긋남 {DIVERGENCE[divergence]} — 이유(divergence_reason)를 적는다")
+        after = confidence_after(q["confidence"], divergence)
+        q.update(status="revision" if kind == "free" else "answered", answered_at=_now(),
+                 prompt_id=match[-1]["id"], kind=kind, pick=pick, divergence=divergence,
+                 divergence_reason=(divergence_reason or "").strip(), confidence_after=after)
+        _save(root, data)
+    line = (f"확신도 {q['confidence']} → {after} · {DIVERGENCE[divergence]}"
+            + (f" — {q['divergence_reason']}" if q["divergence_reason"] else "")
+            + f" · 답 형태 {kind}" + (f" {pick}번" if pick else ""))
+    if kind == "free":
+        raise LedgerError(f"#{n} {stage}: 보기 선택·명시적 긍정이 아니다 — 수정 요청으로 반영해 결과를 다시 "
+                          f"보이고 새로 묻는다 ({line})")
+    return {"ok": True, "question_id": q["id"], "kind": kind, "pick": pick, "confidence_before": q["confidence"],
+            "confidence_after": after, "note_line": line}

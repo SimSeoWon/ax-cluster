@@ -167,6 +167,7 @@ POLICY = {
     "POST /api/v1/plan/transition":                 MOUNT,
     "POST /api/v1/interview/step":                  MOUNT,     # #960 — 플랜과 같은 축
     "POST /api/v1/interview/spec":                  MOUNT,
+    "POST /api/v1/interview/ask":                   MOUNT,     # #1040 — 질문 장부(트윈)
     "POST /api/v1/plan/propose":                    MOUNT,     # #963
     "POST /api/v1/plan/autonomy":                   MOUNT,
 }
@@ -224,6 +225,7 @@ REQUIRE_TAG = (
     "POST /api/v1/plan/transition",
     "POST /api/v1/interview/step",              # 착수 전 인터뷰 (#960)
     "POST /api/v1/interview/spec",
+    "POST /api/v1/interview/ask",               # 질문·입력 장부 (#1040)
     "POST /api/v1/plan/propose",                # 플랜 제안·자율성 (#963)
     "POST /api/v1/plan/autonomy",
 )

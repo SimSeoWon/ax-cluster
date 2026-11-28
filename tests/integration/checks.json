@@ -1015,6 +1015,11 @@
     "timeout": 180
   },
   {
+    "path": "master/test_interview_ledger.py",
+    "count_pattern": "(?m)^OK test_interview_ledger: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
+    "timeout": 180
+  },
+  {
     "path": "master/test_spec_block.py",
     "count_pattern": "(?m)^OK test_spec_block: (?P<count>\\d+)/(?P<total>\\d+) 통과$",
     "timeout": 180

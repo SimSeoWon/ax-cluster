@@ -1272,6 +1272,25 @@ def interview_step_tool(issue_id: int, step: str, result: str, user_answer: str,
 
 
 @mcp.tool()
+def interview_ask_tool(issue_id: int, stage: str, question: str, recommended: str, confidence: int,
+                       alternatives: list[str] | None = None, gaps: str = "") -> str:
+    """사용자에게 묻기 **전에** 질문을 장부에 등록한다 (`#1040`).
+
+    `stage`: classify · investigate · specify · reproduce · impact(인터뷰 단계) · spec(스펙 영역) · plan(플랜 등록) ·
+    decision(진행 중 다른 결정). `recommended` 는 가장 추천하는 방안(필수), `alternatives` 는 다른 방안 0~3개다.
+    `confidence` 는 지금 사용자 의도를 얼마나 파악했는지 0~100 — 70 미만이면 `gaps`(무엇이 비었나)를 적는다.
+    등록한 뒤 질문을 「1. 추천 … 2. … 3. …」 형태로 보이고, 사용자가 보기 밖의 말을 해도 그대로 받는다.
+    관문이 켜진 프로젝트는 이 질문 없이 인터뷰·스펙·플랜 기록이 거절된다.
+    """
+    from .. import interview_ledger as L
+    try:
+        return json.dumps(L.ask(L.default_root(), issue_id, stage, question, recommended, alternatives or [],
+                                confidence, gaps), ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
 def interview_spec_tool(issue_id: int, content: str, user_answer: str) -> str:
     """착수 전 인터뷰의 마지막 — 확정 스펙(여섯 항목 제목)을 일감 본문의 스펙 영역(ax:spec)에 쓴다 (`#960`).
 

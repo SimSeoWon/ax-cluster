@@ -314,6 +314,8 @@ REQUESTER_SCOPE: tuple = (
     # `#960` — 착수 전 인터뷰 단계 기록·스펙 영역. 플랜과 같은 일감 본문·노트에 쓴다.
     ("POST", "/api/v1/interview/step", "", "exact"),
     ("POST", "/api/v1/interview/spec", "", "exact"),
+    # `#1040` — 질문 장부(묻기 전 등록).
+    ("POST", "/api/v1/interview/ask", "", "exact"),
     # `#963` — 플랜 제안·자율성 재제안. 같은 일감 노트에 쓴다.
     ("POST", "/api/v1/plan/propose", "", "exact"),
     ("POST", "/api/v1/plan/autonomy", "", "exact"),

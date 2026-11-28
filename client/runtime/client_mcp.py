@@ -1007,6 +1007,24 @@ def tool_interview_step(api, args: dict) -> dict:
     return api("POST", "/api/v1/interview/step", payload)
 
 
+def tool_interview_ask(api, args: dict) -> dict:
+    stage = str(args.get("stage") or "").strip()
+    question = str(args.get("question") or "")
+    recommended = str(args.get("recommended") or "")
+    if not stage or not question.strip() or not recommended.strip():
+        raise ClientError("stage · question · recommended 는 필수다")
+    confidence = args.get("confidence")
+    if isinstance(confidence, bool) or not isinstance(confidence, int):
+        raise ClientError("confidence 는 0~100 정수다")
+    alternatives = args.get("alternatives") or []
+    if not isinstance(alternatives, list):
+        raise ClientError("alternatives 는 목록이다")
+    return api("POST", "/api/v1/interview/ask", {
+        "issue_id": _issue_id(args.get("issue_id")), "stage": stage, "question": question,
+        "recommended": recommended, "confidence": confidence,
+        "alternatives": [str(a) for a in alternatives], "gaps": str(args.get("gaps") or "")})
+
+
 def tool_interview_spec(api, args: dict) -> dict:
     content = str(args.get("content") or "")
     answer = str(args.get("user_answer") or "")
@@ -1021,6 +1039,7 @@ ISSUE_TOOLS = {"issue_start": tool_issue_start, "issue_finish": tool_issue_finis
                "plan_start": tool_plan_start, "plan_set": tool_plan_set,
                "plan_transition": tool_plan_transition,
                "interview_step": tool_interview_step, "interview_spec": tool_interview_spec,
+               "interview_ask": tool_interview_ask,
                "plan_propose": tool_plan_propose, "plan_autonomy": tool_plan_autonomy}
 
 
@@ -1839,6 +1858,22 @@ TOOLS.extend([
          "result": {"type": "string"},
          "user_answer": {"type": "string"},
          "category": {"type": "string", "description": "classify 에서만 — bug · modify · feature …"}}}},
+    {"name": "interview_ask",
+     "description": "사용자에게 묻기 전에 질문을 장부에 등록한다(#1040). stage: classify · investigate · specify · "
+                    "reproduce · impact · spec · plan · decision. recommended 는 가장 추천하는 방안(필수), "
+                    "alternatives 는 다른 방안 0~3개, confidence 는 사용자 의도 파악 정도 0~100(70 미만이면 gaps 필수). "
+                    "등록 뒤 「1. 추천 … 2. …」 형태로 묻고, 보기 밖 답도 그대로 받는다. 관문이 켜진 프로젝트는 이 "
+                    "질문 없이 인터뷰·스펙·플랜 기록이 거절된다.",
+     "inputSchema": {"type": "object", "required": ["issue_id", "stage", "question", "recommended", "confidence"],
+                     "properties": {
+         "issue_id": {"type": "integer"},
+         "stage": {"type": "string", "enum": ["classify", "investigate", "specify", "reproduce", "impact",
+                                              "spec", "plan", "decision"]},
+         "question": {"type": "string"},
+         "recommended": {"type": "string"},
+         "alternatives": {"type": "array", "items": {"type": "string"}, "maxItems": 3},
+         "confidence": {"type": "integer", "minimum": 0, "maximum": 100},
+         "gaps": {"type": "string"}}}},
     {"name": "interview_spec",
      "description": "착수 전 인터뷰의 마지막 — 확정 스펙(여섯 항목 제목)을 일감 본문의 스펙 영역(ax:spec)에 쓴다. "
                     "모든 단계가 기록돼 있어야 열린다. 영역 밖 본문은 그대로 둔다. user_answer 는 요약에 대한 사용자 "

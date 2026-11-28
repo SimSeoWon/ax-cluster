@@ -139,6 +139,16 @@ class InterviewSpecReq(_IssueReq):
     user_answer: str
 
 
+class InterviewAskReq(_IssueReq):
+    """`#1040` — 묻기 전에 질문 장부에 등록한다."""
+    stage: str
+    question: str
+    recommended: str
+    confidence: int
+    alternatives: list[str] = []
+    gaps: str = ""
+
+
 
 
 # ─────────────────────────────────────────
@@ -925,6 +935,7 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         """플랜 도구 — 규칙 거절(`PlanError`)은 200 + ok:false + 사유(`plan_refused`)."""
         from .. import interview as IV
         from .. import interview_categories as IC
+        from .. import interview_ledger as IL
         from .. import plan_block as PB
         bad = _issue_gate(f"plan.{op}", req)
         if bad:
@@ -933,7 +944,7 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
             got = fn(getattr(_mount_gate, "last", "") or req.project.strip())
         except PB.PlanError as e:
             got = {"ok": False, "issue_id": req.issue_id, "status": "plan_refused", "why": str(e)}
-        except (IV.InterviewError, IC.CategoryError) as e:     # #960 — 인터뷰 규칙 거절도 같은 모양
+        except (IV.InterviewError, IC.CategoryError, IL.LedgerError) as e:   # #960·#1040 — 같은 모양
             got = {"ok": False, "issue_id": req.issue_id, "status": "interview_refused", "why": str(e)}
         except Exception as e:                               # noqa: BLE001
             got = {"ok": False, "issue_id": req.issue_id, "status": "error",
@@ -984,6 +995,14 @@ def _run_http_server(root: Path, port: int, host: str, lease_seconds: int = 1200
         from .. import interview
         return _plan_call("interview_step", req, lambda p: interview.record(
             req.issue_id, req.step, req.result, req.user_answer, category=req.category))
+
+    @app.post("/api/v1/interview/ask")
+    def interview_ask_ep(req: InterviewAskReq):
+        """질문 장부 등록(`#1040`) — 그 프로젝트 트윈의 장부에 쓴다."""
+        from .. import interview_ledger
+        return _plan_call("interview_ask", req, lambda p: interview_ledger.ask(
+            interview_ledger.default_root(p), req.issue_id, req.stage, req.question, req.recommended,
+            req.alternatives, req.confidence, req.gaps))
 
     @app.post("/api/v1/interview/spec")
     def interview_spec_ep(req: InterviewSpecReq):
