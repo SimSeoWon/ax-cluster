@@ -158,6 +158,7 @@ def resolve_priority_id(name: str, *, key: str = "", url: str = "", sender=None)
 # [주의] 이 상수는 **AX 인프라 축의 기본값**이다. 게임·유틸 소스 일감이 어디로 갈지는
 #   `<트윈>/config.yaml` 의 `redmine.project` 가 정한다(`#293`) — 폴백하지 않는다.
 AX_PROJECT_ID = "ax-cluster"
+AX_PROJECT_NUMERIC_ID = 3
 PROJECT_ID = AX_PROJECT_ID      # 하위 호환 — 기존 호출자가 이 이름을 쓴다
 
 
@@ -665,6 +666,7 @@ def get_issue(issue_id, *, key: str = "", url: str = "", sender=None, include_pr
     out = _issue_row(iss, base)
     out.update({
         "description": iss.get("description", ""),
+        "project_id": (iss.get("project") or {}).get("id"),
         "done_ratio": iss.get("done_ratio", 0),
         "created_on": iss.get("created_on"),
         "parent": (iss.get("parent") or {}).get("id"),

@@ -1350,6 +1350,25 @@ def wayfinder_dispatch_preview_tool(root_id: int, node_ids: list[int | str]) -> 
 
 
 @mcp.tool()
+def wayfinder_dispatch_tool(root_id: int, node_ids: list[int | str], confirm: bool = False,
+                            user_answer: str = "") -> str:
+    """분산 사이클 발주 (#1039). 기본 호출은 드라이런이다.
+
+    실제 발주는 사용자가 미리보기 대상의 발주를 요청한 뒤에만 confirm=True와 원문을 사용한다.
+    그때 조건을 다시 대조하고, 등록 워커에 예약·실행한 결과를 반환한다. 노드는 검수 대기로 인계한다.
+    """
+    from .. import wayfinder_dispatch
+    try:
+        if not confirm:
+            outcome = wayfinder_dispatch.preview(root_id, node_ids)
+        else:
+            outcome = wayfinder_dispatch.dispatch_cycle(root_id, node_ids, user_answer)
+        return json.dumps(outcome, ensure_ascii=False)
+    except Exception as e:                               # noqa: BLE001
+        return _fail(e)
+
+
+@mcp.tool()
 def wayfinder_sync_tool(root_id: int) -> str:
     """맵을 다시 계산해 바뀌었을 때만 Root 본문에 쓴다 (`#982`) — 새로 고침·정합 확인용.
 

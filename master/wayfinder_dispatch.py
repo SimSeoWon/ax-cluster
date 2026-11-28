@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from . import auth, issue_lock, map_block, plan_block, plan_start, spec_block, wayfinder
 from .work import runner
@@ -156,3 +157,91 @@ def run_assignment(lock_root, record: dict, worker, *, mode: str) -> dict:
                 "why": f"워커 실행 경로 오류 ({type(error).__name__})"}
     return {"rc": rc, "termination_confirmed": termination_confirmed,
             "why": f"워커 실행 종료 확인 (rc={rc})" if termination_confirmed else "원격 종료 미확인"}
+
+
+def _run_and_handoff(lock_root, rm, reservation: dict, mode: str) -> dict:
+    record, worker = reservation["record"], reservation["worker"]
+    issue_id = record["issue_id"]
+    result = run_assignment(lock_root, record, worker, mode=mode)
+    result.update(id=issue_id, worker=record["worker"], assignment_id=record["assignment_id"])
+    if not result["termination_confirmed"]:
+        result["state"] = issue_lock.NODE_RUNNING
+        return result
+    transition = issue_lock.advance_node_assignment(
+        lock_root, issue_id, assignment_id=record["assignment_id"], to=issue_lock.NODE_REVIEW,
+        by="master", why=result["why"])
+    if not transition["ok"]:
+        result.update(why=transition["why"], reason=transition.get("reason"))
+        return result
+    result["state"] = issue_lock.NODE_REVIEW
+    note = (f"웨이파인더 배정 검수 대기 — Root #{record['root_id']} · 워커 {record['worker']} · "
+            f"배정 {record['assignment_id']} · {result['why']}. 같은 티켓의 워커 작업·검증 노트를 확인한다.")
+    try:
+        written = rm.update_issue(issue_id, notes=note)
+    except Exception as error:
+        written = f"[주의] Redmine 기록 실패 ({type(error).__name__})"
+    result["redmine"] = written
+    return result
+
+
+def dispatch_cycle(root_id: int, node_ids, user_answer: str, *, rm=None, lock_root=None,
+                   workers=None, worker_mode=None, clean=None) -> dict:
+    """승인된 사이클을 예약·실행하고 확인된 종료를 검수 대기로 넘긴다."""
+    if not user_answer.strip():
+        return {"ok": False, "why": "사용자의 실제 발주 요청 원문이 필요하다"}
+    lock_root = issue_lock.default_root() if lock_root is None else lock_root
+    rm = wayfinder._port(rm)
+    checked = candidates(root_id, node_ids, rm=rm, lock_root=lock_root)
+    if not checked["ok"] or not checked["ready"]:
+        return checked
+
+    if worker_mode is None:
+        from .work import mode
+
+        worker_mode, _ = mode.current()
+    if worker_mode not in runner.SESSION1_MODES:
+        return {"ok": False, "root_id": checked["root_id"],
+                "why": f"티켓 발주를 지원하는 워커 지휘자 모드가 아니다 ({worker_mode})"}
+    if workers is None:
+        from . import redmine
+        from .client import bundle
+        from .projects.config import Registry
+        from .work import conductor
+
+        registry = Registry.load()
+        config = registry.config_of(runner.SELF_PROJECT)
+        if registry.active != runner.SELF_PROJECT:
+            return {"ok": False, "why": "AXCluster가 마운트되어 있어야 한다"}
+        if wayfinder._get(rm, checked["root_id"]).get("project_id") != redmine.AX_PROJECT_NUMERIC_ID:
+            return {"ok": False, "why": "AXCluster Redmine 프로젝트의 Root만 발주할 수 있다"}
+        probed = {}
+
+        def probe(*registration):
+            facts = bundle.probe(*registration)
+            probed[facts.host] = facts
+            return facts
+
+        readiness = conductor.worker_mode_readiness(
+            worker_mode, runner.SELF_PROJECT, registry=registry, prober=probe)
+        configured = {shop.host for shop in config.workshops.values() if shop.drivable and shop.user and shop.path}
+        workers = [probed[row["host"]] for row in readiness["hosts"] if row["ok"] and row["host"] in configured]
+        clean = runner.cleanliness(runner.SELF_PROJECT)
+    if not workers:
+        return {"ok": False, "root_id": checked["root_id"], "why": "발주할 수 있는 등록 워커가 없다",
+                "waiting": checked["waiting"]}
+
+    reservations = []
+    for node in checked["ready"]:
+        reserved = reserve_worker(lock_root, checked["root_id"], node["id"], workers, mode=worker_mode, clean=clean)
+        if reserved["ok"]:
+            reservations.append(reserved)
+        else:
+            checked["waiting"].append({"id": node["id"], "why": reserved["why"]})
+    results = []
+    if reservations:
+        with ThreadPoolExecutor(max_workers=len(reservations)) as pool:
+            jobs = [pool.submit(_run_and_handoff, lock_root, rm, reserved, worker_mode) for reserved in reservations]
+            results = [job.result() for job in jobs]
+    return {"ok": bool(results) and all(r.get("state") == issue_lock.NODE_REVIEW and r["rc"] == 0
+                                       and not r["redmine"].startswith("[주의]") for r in results),
+            "root_id": checked["root_id"], "waiting": checked["waiting"], "results": results}

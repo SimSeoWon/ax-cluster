@@ -1201,6 +1201,41 @@ def test_distributed_dispatch_preflight():
               result == {"rc": 0, "termination_confirmed": True, "why": "워커 실행 종료 확인 (rc=0)"}
               and not wrong["termination_confirmed"] and launch.call_count == 1, str(result))
 
+    def simulate_worker(worker, ticket, *, assignment_id, grant, mode, on_exit):
+        if ticket == issue_id:
+            on_exit()
+            return 0, "검증 결과 기록"
+        return 255, "연결 끊김"
+
+    with TemporaryDirectory() as tmp, \
+            patch.object(auth, "load_token", return_value=test_master_token), \
+            patch.object(dispatch.runner, "run_node_ticket", side_effect=simulate_worker) as launch:
+        issue_lock.acquire(tmp, 1039, branch="issue/1039", start_rev="a" * 40, logf=logf)
+        refused = dispatch.dispatch_cycle(ROOT, [issue_id, second_id], "", rm=rm, lock_root=tmp, workers=facts,
+                                           worker_mode="codex")
+        check("실제 발주 요청이 없으면 워커 실행 없이 거절", not refused["ok"] and not launch.called, str(refused))
+        batch = dispatch.dispatch_cycle(ROOT, [issue_id, second_id], "이번 묶음 발주해", rm=rm, lock_root=tmp,
+                                        workers=facts, worker_mode="codex")
+        state = issue_lock.node_assignments(tmp)
+        check("단독 일감 잠금 유지 중 배정 두 건의 실행과 검수 인계를 대역으로 검증",
+              launch.call_count == 2 and issue_lock.current(tmp)["issue_id"] == 1039
+              and state[issue_id]["state"] == issue_lock.NODE_REVIEW
+              and state[second_id]["state"] == issue_lock.NODE_RUNNING and not batch["ok"], str(batch))
+        check("종료가 확인된 일감에만 검사 인계 노트가 생기고 티켓은 열린 상태",
+              "검수 대기" in rm.issues[issue_id]["journals"][-1]["notes"]
+              and not rm.issues[second_id]["journals"]
+              and rm.issues[issue_id]["status"] == rm.issues[second_id]["status"] == "신규")
+        old = dict(first, record=state[issue_id])
+        issue_lock.advance_node_assignment(tmp, issue_id, assignment_id=old["record"]["assignment_id"],
+                                           to=issue_lock.NODE_REWORK, by="master", why="수정 요청", logf=logf)
+        again = dispatch.reserve_worker(tmp, ROOT, issue_id, facts, mode="codex")
+        with patch.object(dispatch, "run_assignment",
+                          return_value={"rc": 0, "termination_confirmed": True, "why": "늦은 종료"}):
+            stale = dispatch._run_and_handoff(tmp, rm, old, "codex")
+        check("이전 배정의 종료는 새 배정에 영향을 주지 않는다",
+              stale.get("reason") == "stale_assignment"
+              and issue_lock.node_assignments(tmp)[issue_id] == again["record"], str(stale))
+
 
 def main() -> int:
     for fn in (test_create_map_preview, test_create_map_confirm, test_create_map_refusals,
