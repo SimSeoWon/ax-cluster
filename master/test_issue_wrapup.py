@@ -176,6 +176,41 @@ def test_wait_per_service_922() -> None:
     check("모르는 상주는 전부 기다린다", W.WAIT_FOR.get("ax-new", W.ONESHOTS) == W.ONESHOTS)
 
 
+def test_wait_independent_1059() -> None:
+    """`#1059` — 대상이 여럿이면 상주마다 따로 기다린다. 끝난 상주부터 재기동하고 남은 상주만 rc 1."""
+    three = [V("ax-projects", stale=True), V("ax-task-queue", stale=True), V("ax-broker", dep=True)]
+    w = World(verdicts=three, after=[V("ax-projects"), V("ax-task-queue"), V("ax-broker", dep=True)], busy=10 ** 6)
+    old = W.WAIT_MAX
+    W.WAIT_MAX = 30
+    try:
+        r, log = go(w)
+    finally:
+        W.WAIT_MAX = old
+    restarted = [c[1] for c in w.did("restart")]
+    check("🔴 #1059 리뷰 큐가 계속 돌아도 projects·task-queue 는 재기동된다",
+          restarted == ["ax-projects", "ax-task-queue"], str(restarted))
+    check("🔴 #1059 broker 만 남아 rc 1 · 이유에 broker 와 막은 oneshot",
+          r.rc == W.RC_FAIL and "재기동하지 않았다 ['ax-broker']" in log and "ax-review-queue" in log
+          and not w.did("deliver"), log)
+    first_restart = next(i for i, c in enumerate(w.calls) if c[0] == "restart")
+    sleeps = [i for i, c in enumerate(w.calls) if c[0] == "sleep"]
+    check("#1059 기다릴 것 없는 상주는 첫 대기 전에 재기동", sleeps and first_restart < min(sleeps), str(w.calls))
+    check("#1059 재기동한 상주는 멈추기 전에 다시 판정한다",
+          "재기동함 ['ax-projects', 'ax-task-queue']" in log and len(w.did("fresh")) == 2, log)
+    check("#1059 다시 부르면 남은 상주만 재기동한다고 찍는다", "남은 상주만 재기동" in log, log)
+
+    w2 = World(verdicts=[V("ax-projects"), V("ax-task-queue"), V("ax-broker", dep=True)],
+               after=[V("ax-projects"), V("ax-task-queue"), V("ax-broker")])
+    r2, log2 = go(w2)
+    check("🔴 #1059 재실행: oneshot 이 끝났으면 broker 만 재기동하고 끝까지 간다",
+          [c[1] for c in w2.did("restart")] == ["ax-broker"] and r2.rc == W.RC_DONE, log2)
+
+    w3 = World(verdicts=three, after=[V("ax-projects"), V("ax-task-queue"), V("ax-broker")], busy=2)
+    r3, log3 = go(w3)
+    check("#1059 리뷰 큐가 끝나면 같은 회차에서 broker 도 재기동", r3.rc == W.RC_DONE
+          and [c[1] for c in w3.did("restart")] == ["ax-projects", "ax-task-queue", "ax-broker"], log3)
+
+
 def test_handoff_gate() -> None:
     w = World(verdicts=[V("ax-broker", dep=True)], after=[V("ax-broker")], handoff=False)
     r, log = go(w)
@@ -256,7 +291,7 @@ def test_r298_regressions() -> None:
 
 
 def main() -> int:
-    for fn in (test_clean_path, test_restart_only_judged, test_oneshot_wait, test_wait_per_service_922,
+    for fn in (test_clean_path, test_restart_only_judged, test_oneshot_wait, test_wait_per_service_922, test_wait_independent_1059,
                test_handoff_gate,
                test_stops, test_dry_run, test_r298_regressions):
         fn()

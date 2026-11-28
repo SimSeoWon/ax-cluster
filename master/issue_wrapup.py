@@ -13,7 +13,8 @@
     ① 마감 확인     — 그 일감의 마감 추적 기록(끝 커밋)이 있고, 일감 잠금이 그 일감에 잡혀 있지 않다
     ② 저장소 확인   — 운영 저장소가 main · 깨끗 · origin/main 과 같다 · 끝 커밋이 main 에 들어 있다
     ③ 신선도 판정   — `service_freshness.check()`: [중요] 옛 코드·[주의] 의존 변경으로 **판정된** 상주만 대상
-    ④ 재기동        — 그 상주를 실행 중에 쓰는 oneshot 만(`WAIT_FOR`, #922) 끝나길 기다린 뒤 `service_restart.restart`(기동 시각·상태 검증),
+    ④ 재기동        — 상주마다 그 상주를 실행 중에 쓰는 oneshot 만(`WAIT_FOR`, #922) 끝나길 따로 기다린 뒤(#1059 — 끝난 상주부터)
+                      `service_restart.restart`(기동 시각·상태 검증), 상한을 넘긴 상주만 남겨 rc 1 로 보고하고,
                       재기동 뒤 그 서비스를 다시 판정한다. 판정에 없는 서비스는 건드리지 않는다
     ⑤ 인수인계 확인 — 끝 커밋 **뒤에** 인수인계서 커밋이 main 에 있어야 한다. 없으면 **배달 전에 멈춘다(rc 2)** —
                       인수인계 내용은 지휘자가 쓴다(이때도 그때까지의 재기동을 노트로 남긴다, #922). 커밋·push 뒤 같은 명령을 다시 부르면 ③④는 할 일이 없어 지나간다
@@ -195,36 +196,53 @@ def run(issue_id: int, *, project: str = "AXCluster", repo: Path | None = None, 
     if targets and dry_run:
         say("restart", f"(dry-run) 재기동 대상 {targets}")
     elif targets:
-        waited = 0
-        watch = sorted({o for t in targets for o in WAIT_FOR.get(t, ONESHOTS)})   # 모르는 상주는 전부 기다린다
-        say("restart", f"기다릴 oneshot {watch or '없음'} (대상 {targets})")
-        while True:
+        # `#1059` — 상주마다 자기 oneshot(`WAIT_FOR`)만 기다린다. 기다릴 것이 끝난 상주부터 재기동하고,
+        # 상한을 넘긴 상주만 남겨 rc 1 로 보고한다(종전: 대상 전체 합집합이 끝날 때까지 아무것도 재기동하지 않았다).
+        waited, pending, done = 0, list(targets), []
+        watch_of = {t: tuple(WAIT_FOR.get(t, ONESHOTS)) for t in targets}   # 모르는 상주는 전부 기다린다
+        say("restart", f"기다릴 oneshot {sorted({o for t in targets for o in watch_of[t]}) or '없음'} "
+                       f"(대상 {targets}) — 상주별: "
+                       + " · ".join(f"{t}←{list(watch_of[t]) or '없음'}" for t in targets))
+
+        def recheck(units):
             try:
-                busy = [u for u in watch if d.active_state(u) in ("active", "activating", "deactivating")]
-            except Exception as e:                          # noqa: BLE001
-                return fail("restart", f"oneshot 상태 조회 실패 ({type(e).__name__}: {e}) — 재기동하지 않았다")
-            if not busy:
+                again = [v for v in d.freshness() if v.unit in units]
+            except Exception as e:                                  # noqa: BLE001
+                return f"재기동 뒤 신선도를 재지 못했다 ({type(e).__name__}: {e})"
+            left = [v.unit for v in again if v.stale or v.dep_changed or v.why]
+            return f"재기동 뒤에도 판정이 남았다 {left}" if left else ""
+
+        while pending:
+            units = sorted({o for t in pending for o in watch_of[t]})
+            try:
+                busy = {u for u in units if d.active_state(u) in ("active", "activating", "deactivating")}
+            except Exception as e:                                  # noqa: BLE001
+                return fail("restart", f"oneshot 상태 조회 실패 ({type(e).__name__}: {e}) — "
+                                       f"재기동하지 않았다 {pending}" + (f" (재기동함 {done})" if done else ""))
+            for unit in [t for t in pending if not busy.intersection(watch_of[t])]:
+                try:
+                    before, after = d.restart(unit)
+                except Exception as e:                              # noqa: BLE001
+                    return fail("restart", f"{unit} 재기동 실패 ({type(e).__name__}: {e})")
+                res.restarted.append((unit, after.get("ExecMainStartTimestamp", "")))
+                done.append(unit)
+                pending.remove(unit)
+                say("restart", f"{unit}: {before.get('ExecMainStartTimestamp', '?')} → "
+                               f"{after.get('ExecMainStartTimestamp', '?')} · {after.get('ActiveState', '?')}")
+            if not pending:
                 break
+            blocking = sorted(busy.intersection(o for t in pending for o in watch_of[t]))
             if waited >= WAIT_MAX:
-                return fail("restart", f"oneshot 이 {WAIT_MAX}초 넘게 돈다 {busy} — 재기동하지 않았다")
-            say("restart", f"oneshot 실행 중 {busy} — {WAIT_STEP}초 대기(누적 {waited}초)")
+                left = recheck(done) if done else ""
+                return fail("restart", f"oneshot 이 {WAIT_MAX}초 넘게 돈다 {blocking} — 재기동하지 않았다 {pending}"
+                                       + (f" (재기동함 {done}{' · ' + left if left else ''})" if done else "")
+                                       + " — oneshot 이 끝난 뒤 같은 명령을 다시 부르면 남은 상주만 재기동한다")
+            say("restart", f"oneshot 실행 중 {blocking} — {pending} 대기 · {WAIT_STEP}초(누적 {waited}초)")
             d.sleep(WAIT_STEP)
             waited += WAIT_STEP
-        for unit in targets:
-            try:
-                before, after = d.restart(unit)
-            except Exception as e:                                  # noqa: BLE001
-                return fail("restart", f"{unit} 재기동 실패 ({type(e).__name__}: {e})")
-            res.restarted.append((unit, after.get("ExecMainStartTimestamp", "")))
-            say("restart", f"{unit}: {before.get('ExecMainStartTimestamp', '?')} → "
-                           f"{after.get('ExecMainStartTimestamp', '?')} · {after.get('ActiveState', '?')}")
-        try:
-            again = [v for v in d.freshness() if v.unit in targets]
-        except Exception as e:                                      # noqa: BLE001
-            return fail("restart", f"재기동 뒤 신선도를 재지 못했다 ({type(e).__name__}: {e})")
-        left = [v.unit for v in again if v.stale or v.dep_changed or v.why]
+        left = recheck(targets)
         if left:
-            return fail("restart", f"재기동 뒤에도 판정이 남았다 {left}")
+            return fail("restart", left)
         say("restart", f"재기동 뒤 판정 깨끗 {targets}")
     else:
         say("restart", "재기동 대상 없음")
