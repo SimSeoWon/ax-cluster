@@ -37,12 +37,14 @@ description: AX 마스터에서 Redmine 일감을 **시작·재개·진행 마�
 ## 1. 도구 — `ax-projects` MCP
 
     ax-projects:plan_start_tool(issue_id)                       시작 판정 + 7단계 표 (읽기)
-    ax-projects:interview_step_tool(issue_id, step, result, user_answer, category)   착수 전 인터뷰 단계 노트 (#960)
+    ax-projects:interview_ask_tool(issue_id, stage, question, recommended, confidence, alternatives, gaps)   묻기 전 질문 장부 (#1040)
+    ax-projects:interview_step_tool(issue_id, step, result, user_answer, category, divergence, divergence_reason)   착수 전 인터뷰 단계 노트 (#960)
     ax-projects:interview_spec_tool(issue_id, content, user_answer)   인터뷰 끝 — 스펙 영역(ax:spec) 기록 (#960)
     ax-projects:plan_propose_tool(issue_id, tasks, checklist, why, autonomy)   플랜 제안 노트 — 태스크·완료 체크리스트·자율성 (#963)
     ax-projects:plan_set_tool(issue_id, tasks, why, user_answer)   등록 — 최신 제안과 같은 목록 + 사용자 동의 (#963)
     ax-projects:plan_autonomy_tool(issue_id, value, why, tasks)    자율성 변경 → 대기 태스크만 재제안(스킬 ax-autonomy)
     ax-projects:plan_transition_tool(issue_id, task_id, to, note)   상태 전이 — 상태를 바꾸는 유일한 쓰기
+    ax-projects:check_result_tool(issue_id, check, rc, paths, summary)   검사 결과 → 실패 장부 (#1040)
     ax-projects:issue_start_tool(issue_id)                      작업 시작 — 로컬 issue/<N> · 시작 리비전 기록 (#879)
     ax-projects:issue_finish_tool(issue_id, confirm=False)      작업 종료 — main 적용 · 마감 추적 등록 · 잠금 해제 (#879·#884)
 
@@ -100,12 +102,19 @@ RAG·온톨로지·보고서·최근 완료 일감)가 재료다 — 같은 조�
 
 질문하는 방식(#939)은 그대로다:
 
-    가설     「가설: …」 / 「확신도: 높음·중간·낮음 — 빈 것: …」 를 질문보다 먼저 보인다
-    질문     한 턴에 하나 · 「질문: …」 / 「추정 답: … (근거: 파일:줄)」
-    승인     명시적 「예」 · 「알아서 해」는 A/B 둘로 좁혀 다시 묻는다
+    장부     묻기 전에 ax-projects:interview_ask_tool — stage(단계·spec·plan·decision) · 추천 1번(필수) · 대안 0~3 ·
+             확신도 0~100(70 미만이면 gaps)
+    가설     「가설: …」 / 「확신도: N — 빈 것: …」 를 질문보다 먼저 보인다
+    질문     한 턴에 하나 · 「질문: …」 다음에 「1. 추천 … 2. … 3. …」 · 보기 밖의 채팅 답도 그대로 받는다
+    승인     user_answer 는 사용자가 친 문장 **그대로** · divergence 는 추천 1번과의 어긋남 —
+             none(추천 그대로·긍정) · add(보강) · revise(수정·다른 보기) · flip(부정·방향 전환) + divergence_reason.
+             자유 의견이면 도구가 「수정 요청」으로 거절한다 — 반영해 결과를 다시 보이고 새로 묻는다.
+             「알아서 해」는 A/B 둘로 좁혀 다시 묻는다
     멈춤     스펙 영역을 쓴 턴은 거기까지 — 플랜 등록·구현은 다음 턴
 
 `AskUserQuestion` 같은 선택지 도구로 물을 때도 같다 — 질문 문장에 가설과 추정 답을 싣고, 추천 선택지를 맨 앞에 둔다.
+🔴 `#1040` — 관문(`interview_gate: enforce`)이 켜진 프로젝트는 질문 장부·사용자 입력 원문(`UserPromptSubmit` 훅이
+적는다)·답 형태를 도구가 판정한다. 등록된 질문이 없거나 원문이 다르면 기록이 거절된다 — 단계를 건너뛸 수 없다.
 
 ## 3. 플랜을 짤 때 (`plan_needed`)
 
@@ -200,6 +209,12 @@ RAG·온톨로지·보고서·최근 완료 일감)가 재료다 — 같은 조�
   전이는 이미 됐다(경고만) — 사용자에게 그대로 보이고, 실제로 검사를 안 했으면 그 사실을 보고에 남긴다
 - 막히면 `차단` + 사유, 이번 범위가 아니면 `해당없음` + 사유
 - 응답의 `next` 가 다음 판정이다 — 다음 태스크를 고르는 것은 그 판정이지 내 짐작이 아니다
+- 🔴 `#1040` — 판정이 `resume`·`next` 면 **그 턴에 이어 간다.** 「재개했다」고 말하고 턴을 끝내지 않는다. 멈출 수 있는
+  것은 셋뿐이다: 사용자에게 물을 것이 있을 때(`ax-projects:interview_ask_tool` stage=`decision` 으로 등록하고 묻는다) · 판정이
+  `stop` 일 때 · 사용자가 멈추라고 했을 때. 관문이 켜진 프로젝트는 `Stop` 훅이 그 밖의 턴 종료를 막는다
+- 🔴 `#1040` — 검사가 실패하면 `ax-projects:check_result_tool(issue_id, check, rc, paths, summary)` 로 적고
+  `ax-projects:plan_start_tool` 판정을 다시 본다. `resume`(실패 경로가 이번 일감 변경 안)이면 고치고 같은 검사를
+  rc 0 으로 다시 적는다 · `stop`(변경 밖·경로 모름)이면 원인만 조사하고 고치지 않고 보고한다(공용 규칙 §1.1)
 - **개발 완료 체크리스트**(`C<n>`, `#963`)도 같은 도구로 **작업 중에** 표시한다 — `충족` + 근거(빈약하면 경고만) ·
   `제외` + 사유 + `user_answer`(사용자 답, 없으면 거절) · 다시 볼 때 `미확인` + 사유
 - 마감(`ax-projects:issue_finish_tool`)은 「미확인」 항목이 남으면 목록을 보이고 멈춘다(`step: checklist`) —

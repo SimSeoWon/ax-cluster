@@ -380,6 +380,9 @@ next task yourself** — milestone 1 failed exactly that way.
 (`rg`·`ls`·`cat`·`find`·`sed -n`·`head`·`git log/show/status`)이 `No such file or directory` 로
 실패하면 멈추지 않고 **확인된 경로로 다시 조회**하며, 그 실패는 마지막 보고에 한 줄로 남긴다.
 그 밖의 실패(쓰기·편집·게이트·검사·빌드·MCP 쓰기·git 쓰기·경로 부재가 아닌 조회 실패)는 위대로 멈춘다.
+[주의] **예외 둘 — 판정이 resume 인 자기 변경 실패** (`#1040`, 사용자 2026-11-28). `ax-plan` 일감에서 실패를
+`check_result_tool` 로 적고 `plan_start` 판정이 `resume`(실패 경로가 전부 이번 일감 변경 안)이면 고치고 계속한다 —
+`stop` 이면 위대로 멈춘다. 판정이 `resume`·`next` 면 그 턴에 이어 간다(관문이 켜지면 `Stop` 훅이 막는다).
 예방: 검색 대상 경로는 이번 세션에 존재를 확인한 것만 쓴다 — 짐작으로 넣지 않는다.
 (실측: 하루에 4번, 짐작한 경로 하나로 작업이 멈춰 사용자 재개를 기다렸다)
 

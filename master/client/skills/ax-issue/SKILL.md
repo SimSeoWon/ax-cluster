@@ -55,7 +55,8 @@ description: Redmine 일감(`#N`) 하나를 이 기계에서 구현할 때 쓴�
 ## 1. 도구 — `ax-client` MCP (마스터 8101 대행)
 
     ax-client:plan_start(issue_id)                                 시작 판정 + 7단계 표 (읽기)
-    ax-client:interview_step(issue_id, step, result, user_answer, category)   착수 전 인터뷰 단계 노트 (#960)
+    ax-client:interview_ask(issue_id, stage, question, recommended, confidence, alternatives, gaps)   묻기 전 질문 장부 (#1040)
+    ax-client:interview_step(issue_id, step, result, user_answer, category, divergence, divergence_reason)   착수 전 인터뷰 단계 노트 (#960)
     ax-client:interview_spec(issue_id, content, user_answer)       인터뷰 끝 — 스펙 영역(ax:spec) 기록 (#960)
     ax-client:plan_propose(issue_id, tasks, checklist, why, autonomy)   플랜 제안 노트 — 태스크·완료 체크리스트·자율성 (#963)
     ax-client:plan_set(issue_id, tasks, why, user_answer)          등록 — 최신 제안과 같은 목록 + 사용자 동의 (#963)
@@ -120,6 +121,13 @@ PowerShell 기준 변수(체크아웃 루트에서):
    단계마다 결과를 보이고 사용자 확인을 받은 뒤 `ax-client:interview_step` 으로 기록한다(`result`·`user_answer`
    필수, `category` 는 분류 단계에서만). 「다르다」면 그 단계를 다시 기록한다 — 최신 노트가 기준이다. 응답의
    `next` 가 다음 단계다. 질문은 한 턴에 하나, 가설·추정 답을 먼저 보인다. 스펙 영역을 쓴 턴은 거기서 멈춘다.
+   🔴 `#1040` — 묻기 **전에** `ax-client:interview_ask` 로 질문을 등록한다(stage · 추천 1번 필수 · 대안 0~3 ·
+   확신도 0~100, 70 미만이면 gaps). 「1. 추천 … 2. … 3. …」 로 묻고 보기 밖 채팅 답도 받는다. `user_answer` 는 사용자가
+   친 문장 **그대로**, `divergence` 는 추천 1번과의 어긋남(none·add·revise·flip)과 `divergence_reason` 이다. 관문이 켜진
+   프로젝트는 질문 없이·원문과 다른 답·자유 의견으로는 기록이 거절된다(자유 의견은 반영해 다시 묻는다). 스펙 영역
+   (`ax-client:interview_spec`)·플랜 등록(`ax-client:plan_set`)도 같다 — stage 는 `spec`·`plan`.
+   판정이 `resume`·`next` 면 그 턴에 이어 간다 — 멈추는 것은 물을 것이 있을 때(stage `decision` 으로 등록) ·
+   사용자가 멈추라고 했을 때 · 검사가 실패했을 때(§8 대로 보고)뿐이다. 관문이 켜지면 `Stop` 훅이 그 밖의 종료를 막는다.
 
    1-1. 플랜 짜기: `ax-client:search_context`(task_type=`user_command`, user_request=사용자 원문)로 기존 설계를
    찾고 **현재 소스와 대조한 뒤** 작은 태스크(목표·대상·선행·검증)를 **사용자와 대화로** 정한다.
