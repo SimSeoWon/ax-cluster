@@ -1,7 +1,7 @@
 # 현재 AX 작업 인수인계
 
-> #1040 마감 뒤 체크포인트(Claude, 2026-11-28). 절차 강제 — 질문·입력·실패 장부, 기록 관문, Stop 멈춤 판정을 main에 반영했다.
-> #1040 잠금 해제. ax-task-queue·ax-broker 15:19:22, ax-projects 15:19:27 KST 재기동 뒤 신선도 정상(색인기·리뷰 큐 종료를 기다려 2회차에 재기동). 이 인계 커밋 push 뒤 `issue_wrapup 1040` 재실행으로 배달하며 결과는 #1040 마감 노트.
+> #1049 마감 뒤 체크포인트(Claude, 2026-11-28). #1040 훅 경로 결함을 고치고 운영에서 입력 장부·Stop 차단을 실측한 뒤 AXCluster 관문을 켰다.
+> #1049 잠금 해제. 재기동 대상 없음(훅은 사건마다 새 프로세스, 서비스는 15:19 재기동본). 이 인계 커밋 push 뒤 `issue_wrapup 1049` 재실행으로 배달하며 결과는 #1049 마감 노트.
 > 결과·근거의 정본은 Redmine과 reports/다. 이 문서는 현재 작업·남은 관측·다음 행동 한 벌만 유지한다.
 
 ## 현재 상태
@@ -94,9 +94,12 @@
   `interview_step`·`interview_spec`·`plan_set` 은 관문(`<트윈>/config.yaml` `interview_gate: enforce`)이 켜지면 질문 등록·질문 뒤 원문 일치·보기 선택/긍정을 판정하고 확신도 증감을 노트에 남긴다(자유 의견 = 수정 요청 거절).
   `plan_start` 는 열린 실패가 이번 일감 변경(시작 리비전 이후 커밋+미커밋) 안이면 resume, 밖이면 stop. `Stop` 훅 `stop_gate.py` 는 잠금+resume/next+사유 없음이면 막는다(그 일감을 다룬 세션만 · 관문 꺼지면 통과).
   마스터 훅은 `master-local --apply` 로 설치됨(Codex 세션이 실행, `--check` 15/15). **Codex 훅은 사람이 `/hooks` 승인 필요.**
-  🔴 **남은 것(이 인계 직후)**: 배달 → AXCluster `interview_gate: enforce` 켜기 → 운영 실물 확인 → #1040 노트. `.33` 요청자 훅은 게임 프로젝트 배달 때. 비범위: 미호출 단정(21:55 유형) · `.33` Codex 프로젝트 hooks.json.
+  🔴 **AXCluster 관문 켜짐**(`AXCluster/config.yaml` `interview_gate: enforce`, 2026-11-28 15:30) — 마스터 인터뷰·스펙·플랜 기록은 이제 `ax-projects:interview_ask_tool` 로 먼저 묻고 사용자 원문 그대로 `user_answer` + `divergence` 를 넣어야 한다.
+  운영 실측(#1049): 설치 훅 명령(Claude·Codex) 입력 장부 기록 · 실 세션 Stop 3회 차단 후 상한 통과(`~/ax-state/.claude/logs/task_queue_2026-11-28.log` `[ledger]`).
+  남은 것: `.33` 요청자 훅은 게임 프로젝트 배달 때(그 프로젝트 관문은 배달·check 뒤) · Codex `/hooks` 승인 여부는 다음 Codex 세션에서 실기록으로 확인. 비범위: 미호출 단정(21:55 유형) · `.33` Codex 프로젝트 hooks.json.
+- **#1049 완료·100** — #1040 결함: `prompt_ledger.REPO_CLIENT` 가 `parents[3]`(master/)이라 마스터 훅 둘 다 무동작이었다 → `parents[4]` · 저장소 클라 실호출 검사(A/B). 커밋 `20182f5`.
 - **#1042 신규(버그/개선)** — doc_sync draft 가 문서 하나 실패로 배치 전체를 끝내 성공한 수정안까지 잃는다. 우회: `--id` 하나씩 실행.
-- 문서 최신화(사용자 승인, 미적용): `readme`·`onboarding`·`modules` codex 수정안 3건 — 배달 뒤 `doc_sync apply --confirm` 으로 적용하고 커밋은 따로 승인받는다. 수정안 파일은 세션 스크래치패드(`doc-sync-20261128-<id>.json`).
+- 문서 최신화 완료: `readme`·`onboarding`·`modules` codex 수정안 적용·커밋 `be4b920`(사용자 승인). 남은 지적(정보): onboarding Stop 조건에 `next` 누락 · modules `create_map` 규칙(처음 노드 전부 선행 없음) 덜 정확 · README 도구 표에 #1040 `interview_ask`·`check_result_tool` 없음 — 다음 doc_sync 때.
 - **#1038 완료·100** — 커밋 `7c4fe88`·`44480a0`·`591150e`, 리포트 223. 서버가 분산 노드 한 건과 실제 워커 한 대를 원자적으로 예약한다. 실행 종료를 확인하면 워커를 풀고 노드는 검수 대기로 유지한다. 승인된 재작업은 같은 티켓을 사용한다. 지도에 워커와 검수 상태가 표시되며 단독 중복 착수와 Redmine 직접 마감을 차단한다. 공식 통합 221/221, 잠금 검사 68/68.
 - **#1037 완료·100** — 커밋 `895f7e2`·`e7798e2`·`ffdef2e`, 리포트 222. 워커는 마스터가 서명한 티켓 한 건의 권한으로 스펙·플랜·노트를 읽고, 같은 티켓에 작업·검증 노트를 추가한다. 공식 통합 221/221, 실제 AX 앱과 Redmine 대역 왕복 270/270. 실제 발주에서 권한 발급·주입은 P3 범위다.
 - **#1008 다음 노드 P4가 Frontier** — P4는 원격 시작과 검수·마감 연결이다(검수 통과 `to="finished"` 해제, 수정 승인 `NODE_REWORK` 재예약). P5 실증은 P4 완료를 기다린다. #1039 마감 시 지도 갱신, 마감 전 대조 차이 0. 사용자가 선택하기 전 다음 노드는 선점하지 않는다.
