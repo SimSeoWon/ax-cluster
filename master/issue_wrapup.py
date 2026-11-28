@@ -19,6 +19,8 @@
     ⑤ 인수인계 확인 — 끝 커밋 **뒤에** 인수인계서 커밋이 main 에 있어야 한다. 없으면 **배달 전에 멈춘다(rc 2)** —
                       인수인계 내용은 지휘자가 쓴다(이때도 그때까지의 재기동을 노트로 남긴다, #922). 커밋·push 뒤 같은 명령을 다시 부르면 ③④는 할 일이 없어 지나간다
     ⑥ 배달          — `master.client update`(마운트된 프로젝트) rc0
+    ⑥-2 마스터 정렬 — `master.client master-local --apply` → `--check` rc0 (#1061 — 새 MCP 도구가 마스터
+                      Claude·Codex·agy 승인 목록에 빠지지 않게. 사람의 Codex `/hooks` 승인은 보존된다)
     ⑦ 기록          — 그 일감 Redmine 에 결과 노트
 
 종료 코드: 0 = 끝까지 완료 · 1 = 실패(사유를 찍고 멈춘다 — 고치지 않는다) · 2 = 인수인계서 대기.
@@ -78,6 +80,14 @@ def _deliver(repo: Path) -> tuple[int, str]:
     return r.returncode, (r.stdout + r.stderr)
 
 
+def _master_local(repo: Path, mode: str) -> tuple[int, str]:
+    """`#1061` — 마스터 로컬 CLI 셋의 ax-client 등록·승인 정렬(`--apply`) 또는 대조(`--check`)."""
+    env = dict(os.environ, AX_PROJECTS_ROOT=str(repo))
+    r = subprocess.run([sys.executable, "-m", "master.client", "master-local", mode], cwd=str(repo), env=env,
+                       capture_output=True, text=True, timeout=900)
+    return r.returncode, (r.stdout + r.stderr)
+
+
 def _track(issue_id: int, project: str):
     from master.context_search.paths import resolve
     from master.context_synth import issue_track as it
@@ -114,6 +124,7 @@ class Deps:
     restart: Callable = _restart
     active_state: Callable = _active_state
     deliver: Callable = _deliver
+    master_local: Callable = _master_local
     note: Callable = _note
     sleep: Callable = time.sleep
 
@@ -285,10 +296,21 @@ def run(issue_id: int, *, project: str = "AXCluster", repo: Path | None = None, 
         return fail("deliver", f"master.client update rc={rc} — {tail[-300:]}")
     say("deliver", f"master.client update rc0 — {tail[-200:]}")
 
+    # ⑥-2 마스터 정렬 (#1061)
+    for mode in ("--apply", "--check"):
+        try:
+            rc, text = d.master_local(repo, mode)
+        except Exception as e:                              # noqa: BLE001
+            return fail("master-local", f"master-local {mode} 예외 ({type(e).__name__}: {e}) — 배달은 끝났다")
+        tail = " · ".join(ln.strip() for ln in text.splitlines()[-3:] if ln.strip())
+        if rc:
+            return fail("master-local", f"master-local {mode} rc={rc} — {tail[-300:]} — 배달은 끝났다")
+        say("master-local", f"{mode} rc0 — {tail[-160:]}")
+
     # ⑦ 기록
     restarted = ", ".join(f"{u} {t}" for u, t in res.restarted) or "없음"
     note = (f"마감 뒤 단계(`master.issue_wrapup`, 공용 규칙 §1.9): main {head[:12]} · "
-            f"재기동 {restarted} · 배달 master.client update rc0.")
+            f"재기동 {restarted} · 배달 master.client update rc0 · 마스터 정렬 master-local --apply·--check rc0.")
     try:
         got = d.note(issue_id, note)
     except Exception as e:                                          # noqa: BLE001

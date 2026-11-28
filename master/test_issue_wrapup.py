@@ -36,7 +36,7 @@ class World:
 
     def __init__(self, *, verdicts=None, after=None, handoff=True, dirty="", branch="main",
                  origin=HEAD, track=True, lock=None, busy=0, deliver_rc=0, deliver_err=None,
-                 restart_err=None, active_err=None, fetch_rc=0, handoff_log_rc=0, note="ok"):
+                 restart_err=None, active_err=None, fetch_rc=0, handoff_log_rc=0, note="ok", ml_rc=None, ml_err=None):
         self.calls: list = []
         self.verdicts = verdicts if verdicts is not None else [V("ax-projects"), V("ax-broker")]
         self.after = after
@@ -46,6 +46,7 @@ class World:
         self.deliver_err, self.restart_err, self.active_err = deliver_err, restart_err, active_err
         self.fetch_rc, self.handoff_log_rc, self.note_v = fetch_rc, handoff_log_rc, note
         self.fresh_n = 0
+        self.ml_rc, self.ml_err = dict(ml_rc or {}), ml_err
 
     def git(self, repo, *args):
         self.calls.append(("git",) + args)
@@ -102,12 +103,19 @@ class World:
                 raise RuntimeError(self.deliver_err)
             return self.deliver_rc, "OK 192.168.0.43\n[완료] 배달·검사"
 
+        def master_local(repo, mode):
+            self.calls.append(("master_local", mode))
+            if self.ml_err:
+                raise RuntimeError(self.ml_err)
+            rc = self.ml_rc.get(mode, 0)
+            return rc, ("FAIL codex approvals" if rc else "[master-local] OK 15/15")
+
         def note(n, text):
             self.calls.append(("note", text))
             return self.note_v
 
         return W.Deps(git=self.git, track=track, lock=lock, freshness=freshness, restart=restart,
-                      active_state=active_state, deliver=deliver, note=note,
+                      active_state=active_state, deliver=deliver, master_local=master_local, note=note,
                       sleep=lambda s: self.calls.append(("sleep", s)))
 
     def did(self, kind):
@@ -243,6 +251,9 @@ def test_stops() -> None:
                                after=[V("ax-broker", stale=True)]), "판정이 남았다"),
         ("배달 실패", World(deliver_rc=1), "update rc=1"),
         ("노트 실패", World(note="[주의] Redmine 401"), "노트 실패"),
+        ("#1061 master-local --apply 실패", World(ml_rc={"--apply": 1}), "master-local --apply rc=1"),
+        ("#1061 master-local --check 실패", World(ml_rc={"--check": 1}), "master-local --check rc=1"),
+        ("#1061 master-local 예외", World(ml_err="timeout"), "master-local --apply 예외"),
     ]
     for name, w, key in cases:
         r, log = go(w)
@@ -290,8 +301,34 @@ def test_r298_regressions() -> None:
     check("R298-5 handoff git log 실패 → rc1 (rc2 아님)", r.rc == W.RC_FAIL and "인수인계서 커밋 조회 실패" in log, log)
 
 
+def test_master_local_align_1061() -> None:
+    """`#1061` — 배달 뒤 master-local --apply → --check 를 돌리고, 실패면 rc 1 · 노트 없음."""
+    w = World()
+    r, log = go(w)
+    kinds = [c[0] for c in w.calls if c[0] in ("deliver", "master_local", "note")]
+    check("#1061 순서 — 배달 → apply → check → 노트",
+          kinds == ["deliver", "master_local", "master_local", "note"]
+          and [c[1] for c in w.did("master_local")] == ["--apply", "--check"], str(w.calls))
+    check("#1061 정상 → rc 0 · 노트에 정렬 결과", r.rc == W.RC_DONE
+          and "master-local" in w.did("note")[0][1], log)
+    w = World(ml_rc={"--apply": 1})
+    r, log = go(w)
+    check("#1061 apply 실패 → check·노트 안 함", r.rc == W.RC_FAIL
+          and [c[1] for c in w.did("master_local")] == ["--apply"] and not w.did("note"), log)
+    w = World(ml_rc={"--check": 2})
+    r, log = go(w)
+    check("#1061 check 실패 → rc 1 · 노트 안 함", r.rc == W.RC_FAIL and not w.did("note")
+          and "배달은 끝났다" in log, log)
+    w = World()
+    r, log = go(w, dry_run=True)
+    check("#1061 dry-run 은 정렬 생략", not w.did("master_local"), log)
+    w = World(handoff=False)
+    r, log = go(w)
+    check("#1061 인수인계 대기(rc 2)면 정렬 안 함", r.rc == 2 and not w.did("master_local"), log)
+
+
 def main() -> int:
-    for fn in (test_clean_path, test_restart_only_judged, test_oneshot_wait, test_wait_per_service_922, test_wait_independent_1059,
+    for fn in (test_clean_path, test_restart_only_judged, test_oneshot_wait, test_wait_per_service_922, test_wait_independent_1059, test_master_local_align_1061,
                test_handoff_gate,
                test_stops, test_dry_run, test_r298_regressions):
         fn()
